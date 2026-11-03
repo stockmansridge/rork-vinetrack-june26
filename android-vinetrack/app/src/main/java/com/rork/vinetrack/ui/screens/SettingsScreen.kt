@@ -19,6 +19,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.MedicalServices
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Help
+import androidx.compose.material.icons.filled.Handyman
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Domain
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -80,6 +91,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
@@ -88,6 +100,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -144,6 +158,8 @@ fun SettingsScreen(
     var showDisclaimer by remember { mutableStateOf(false) }
     var showVineyardSwitcher by remember { mutableStateOf(false) }
     var showNameEditor by remember { mutableStateOf(false) }
+    var showSubscription by remember { mutableStateOf(false) }
+    var adminLanding by remember { mutableStateOf<AdminLanding?>(null) }
     var detailVineyard by remember { mutableStateOf<Vineyard?>(null) }
     val supportEmail = "jonathan@stockmansridge.com.au"
     fun openUrl(url: String) {
@@ -159,17 +175,43 @@ fun SettingsScreen(
     val versionLabel = remember {
         try {
             val pkg = context.packageManager.getPackageInfo(context.packageName, 0)
-            "Version ${pkg.versionName} (${pkg.longVersionCode})"
+            "${pkg.versionName} (${pkg.longVersionCode})"
         } catch (e: Exception) {
-            "Version 1.0"
+            "1.0"
         }
+    }
+
+    // These already-implemented screens are presented locally from Settings so
+    // no new ToolRoute, backend contract, or unrestricted admin route is needed.
+    if (showSubscription) {
+        val subscriptionState by vm.subscription.collectAsStateWithLifecycle()
+        SubscriptionScreen(
+            state = subscriptionState,
+            onPurchase = vm::purchaseSubscription,
+            onRestore = vm::restoreSubscriptionPurchases,
+            onRecheckAccess = vm::recheckSubscriptionAccess,
+            onSignOut = vm::signOut,
+            onBack = { showSubscription = false },
+            modifier = modifier,
+        )
+        return
+    }
+    if (adminLanding != null) {
+        val selected = adminLanding ?: AdminLanding.Dashboard
+        AdminDashboardScreen(
+            vm = vm,
+            modifier = modifier,
+            onBack = { adminLanding = null },
+            initialLanding = selected,
+        )
+        return
     }
 
     Scaffold(
         modifier = modifier,
         containerColor = vine.appBackground,
         topBar = {
-            TopAppBar(
+            CenterAlignedTopAppBar(
                 title = { Text("Settings") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
@@ -184,31 +226,33 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
-            // Account
+            // The first three destinations mirror the iOS Account group.
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Account", onLight = true)
+                SettingsSectionHeader("Account", Icons.Filled.Person, VineColors.Stone)
                 VineyardCard {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable { showNameEditor = true },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier.size(48.dp).clip(CircleShape).background(VineColors.Primary.copy(alpha = 0.15f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Icons.Filled.Person, contentDescription = null, tint = VineColors.Primary)
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            val accountName = state.userDisplayName?.takeIf { it.isNotBlank() } ?: vm.displayName
-                            Text(accountName ?: vm.userEmail ?: "Signed in", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                            Text(
-                                if (accountName != null) (vm.userEmail ?: "VineTrack account") else "Tap to add your name",
-                                fontSize = 13.sp,
-                                color = vine.textSecondary,
-                            )
-                        }
-                        Icon(Icons.Filled.Edit, contentDescription = "Edit name", tint = vine.textSecondary, modifier = Modifier.size(18.dp))
+                    PreferenceRow(
+                        Icons.Filled.Person,
+                        VineColors.Stone,
+                        "Name",
+                        state.userDisplayName?.takeIf { it.isNotBlank() } ?: vm.displayName ?: "Tap to add your name",
+                        onClick = { showNameEditor = true },
+                    )
+                    RowDivider(vine.cardBorder)
+                    PreferenceRow(
+                        Icons.Filled.Email,
+                        VineColors.Info,
+                        "Email",
+                        vm.userEmail ?: "Signed-in email unavailable",
+                    )
+                    if (onOpenTool != null) {
+                        RowDivider(vine.cardBorder)
+                        PreferenceRow(
+                            Icons.Filled.Fingerprint,
+                            VineColors.LeafGreen,
+                            "Biometric Sign-in",
+                            if (vm.biometricEnabled) "Face or fingerprint sign-in enabled" else "Sign in faster with biometrics",
+                            onClick = { onOpenTool(ToolRoute.BiometricSettings) },
+                        )
                     }
                 }
             }
@@ -220,7 +264,7 @@ fun SettingsScreen(
                     ?: state.vineyards.first()
                 val others = state.vineyards.filter { it.id != current.id }
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Vineyard", onLight = true)
+                    SettingsSectionHeader("Vineyard", Icons.Filled.Domain, VineColors.LeafGreen)
                     VineyardCard {
                         VineyardRow(
                             vineyard = current,
@@ -277,10 +321,10 @@ fun SettingsScreen(
             // set of grouped hubs rather than a flat list of every setup surface.
             if (onOpenTool != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Operations", onLight = true)
+                    SettingsSectionHeader("Operations", Icons.Filled.Handyman, VineColors.Orange)
                     VineyardCard {
                         PreferenceRow(
-                            Icons.Filled.Grass,
+                            Icons.Filled.GridView,
                             VineColors.LeafGreen,
                             "Vineyard Setup",
                             "Map, blocks, location, varieties & field setup",
@@ -289,7 +333,7 @@ fun SettingsScreen(
                         RowDivider(vine.cardBorder)
                         PreferenceRow(
                             Icons.Filled.WaterDrop,
-                            VineColors.Info,
+                            VineColors.Cyan,
                             "Spray & Equipment",
                             "Spray Management, Equipment & Tractors, Chemicals",
                             onClick = { onOpenTool(ToolRoute.SprayEquipment) },
@@ -304,7 +348,7 @@ fun SettingsScreen(
                         )
                         RowDivider(vine.cardBorder)
                         PreferenceRow(
-                            Icons.Filled.Agriculture,
+                            Icons.Filled.Handyman,
                             VineColors.EarthBrown,
                             "Trip Functions",
                             "Built-ins and custom vineyard trip functions",
@@ -321,7 +365,7 @@ fun SettingsScreen(
                         if (state.isSystemAdmin && vm.materialCostsAccess().isAllowed) {
                             RowDivider(vine.cardBorder)
                             PreferenceRow(
-                                Icons.Filled.Payments,
+                                Icons.Filled.Inventory2,
                                 VineColors.EarthBrown,
                                 "Material Library",
                                 "Standard materials, custom materials & default costs",
@@ -335,11 +379,11 @@ fun SettingsScreen(
             // Team — members, roles & invitations
             if (onOpenTool != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Team", onLight = true)
+                    SettingsSectionHeader("Team", Icons.Filled.Group, VineColors.Cyan)
                     VineyardCard {
                         PreferenceRow(
                             Icons.Filled.Group,
-                            VineColors.Info,
+                            VineColors.Cyan,
                             "Team & Access",
                             "Members, roles & invitations",
                             onClick = { onOpenTool(ToolRoute.TeamAccess) },
@@ -358,8 +402,16 @@ fun SettingsScreen(
 
             // App preferences (placeholders for upcoming settings)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Preferences & Data", onLight = true)
+                SettingsSectionHeader("Preferences & Data", Icons.Filled.Tune, VineColors.Indigo)
                 VineyardCard {
+                    PreferenceRow(
+                        Icons.Filled.CreditCard,
+                        VineColors.Pink,
+                        "Subscription",
+                        "Manage your plan",
+                        onClick = { showSubscription = true },
+                    )
+                    RowDivider(vine.cardBorder)
                     if (onOpenTool != null) {
                         PreferenceRow(
                             Icons.Filled.Tune,
@@ -379,7 +431,7 @@ fun SettingsScreen(
                         RowDivider(vine.cardBorder)
                         PreferenceRow(
                             Icons.Filled.CloudQueue,
-                            VineColors.Info,
+                            VineColors.Orange,
                             "Weather Data & Forecasting",
                             "Forecast source, station & sensors",
                             onClick = { onOpenTool(ToolRoute.WeatherData) },
@@ -440,27 +492,101 @@ fun SettingsScreen(
                     if (onOpenTool != null) {
                         RowDivider(vine.cardBorder)
                         PreferenceRow(
-                            Icons.Filled.Sync,
-                            VineColors.Cyan,
+                            Icons.Filled.CloudUpload,
+                            VineColors.Info,
                             "Sync",
                             "Cloud sync for pins, paddocks & trips",
                             onClick = { onOpenTool(ToolRoute.SyncStatus) },
                         )
                         RowDivider(vine.cardBorder)
                         PreferenceRow(
-                            Icons.Filled.GppGood,
+                            Icons.Filled.WifiOff,
                             VineColors.Success,
                             "Offline Readiness",
                             "Check this device is ready for no-service areas",
                             onClick = { onOpenTool(ToolRoute.OfflineReadiness) },
                         )
+                        RowDivider(vine.cardBorder)
+                        PreferenceRow(
+                            Icons.Filled.MedicalServices,
+                            VineColors.Cyan,
+                            "Sync Diagnostics",
+                            "Pending uploads, last sync & status",
+                            onClick = { onOpenTool(ToolRoute.SyncStatus) },
+                        )
                     }
+                    RowDivider(vine.cardBorder)
+                    PreferenceRow(
+                        Icons.Filled.Devices,
+                        VineColors.LeafGreen,
+                        "VineTrack Web Portal",
+                        "Manage setup, reports and team access from desktop",
+                        onClick = { openUrl("https://portal.vinetrack.com.au") },
+                    )
+                }
+            }
+
+            // Match the iOS System Admin hierarchy for implemented Android tools.
+            // Both the entry and AdminDashboardScreen independently enforce admin access.
+            if (state.isSystemAdmin) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SettingsSectionHeader("System Admin", Icons.Filled.AdminPanelSettings, VineColors.Purple)
+                    VineyardCard {
+                        PreferenceRow(
+                            Icons.Filled.AdminPanelSettings, VineColors.Purple,
+                            "Performance Diagnostics", "Capture startup & navigation timings",
+                            onClick = { adminLanding = AdminLanding.Dashboard },
+                        )
+                        RowDivider(vine.cardBorder)
+                        PreferenceRow(
+                            Icons.Filled.AdminPanelSettings, VineColors.Purple,
+                            "Admin Dashboard", "Engagement summary & user support",
+                            onClick = { adminLanding = AdminLanding.Dashboard },
+                        )
+                        RowDivider(vine.cardBorder)
+                        PreferenceRow(
+                            Icons.Filled.AdminPanelSettings, VineColors.Purple,
+                            "Feature Flags", "Platform-wide diagnostics & beta controls",
+                            onClick = { adminLanding = AdminLanding.FeatureFlags },
+                        )
+                        RowDivider(vine.cardBorder)
+                        PreferenceRow(
+                            Icons.Filled.AdminPanelSettings, VineColors.Purple,
+                            "System Admin Users", "Add or deactivate platform administrators",
+                            onClick = { adminLanding = AdminLanding.SystemAdmins },
+                        )
+                        RowDivider(vine.cardBorder)
+                        PreferenceRow(
+                            Icons.Filled.AdminPanelSettings, VineColors.Purple,
+                            "Billing Grants / Internal Access", "Grant or revoke manual unlimited licences",
+                            onClick = { adminLanding = AdminLanding.BillingGrants },
+                        )
+                        RowDivider(vine.cardBorder)
+                        PreferenceRow(
+                            Icons.Filled.Group, VineColors.Purple,
+                            "User Activity / Logins", "View user login recency, roles & devices",
+                            onClick = { adminLanding = AdminLanding.LoginActivity },
+                        )
+                        if (onOpenTool != null) {
+                            RowDivider(vine.cardBorder)
+                            PreferenceRow(
+                                Icons.Filled.Explore, VineColors.Purple,
+                                "Android Map Alignment", "System Admin Preview",
+                                onClick = { onOpenTool(ToolRoute.MapAlignment) },
+                            )
+                        }
+                    }
+                    Text(
+                        "Visible only to VineTrack platform administrators.",
+                        fontSize = 12.sp, color = vine.textSecondary,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
                 }
             }
 
             // Help & Support
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Help & Support", onLight = true)
+                SettingsSectionHeader("Help & Support", Icons.Filled.Help, VineColors.Success)
                 VineyardCard {
                     PreferenceRow(
                         Icons.Filled.Email,
@@ -479,19 +605,9 @@ fun SettingsScreen(
 
             // Account & Privacy
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Account & Privacy", onLight = true)
+                SettingsSectionHeader("Account & Privacy", Icons.Filled.PrivacyTip, VineColors.Info)
                 VineyardCard {
-                    if (onOpenTool != null) {
-                        PreferenceRow(
-                            Icons.Filled.Fingerprint,
-                            VineColors.LeafGreen,
-                            "Sign-in",
-                            if (vm.biometricEnabled) "Biometric unlock enabled" else "Sign in faster with biometric unlock",
-                            onClick = { onOpenTool(ToolRoute.BiometricSettings) },
-                        )
-                        RowDivider(vine.cardBorder)
-                    }
-                    PreferenceRow(
+                     PreferenceRow(
                         Icons.Filled.PrivacyTip,
                         VineColors.Info,
                         "Privacy Policy",
@@ -525,30 +641,15 @@ fun SettingsScreen(
                 }
             }
 
-            // About
+            // Match the iOS About labels and ordering.
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("About", onLight = true)
+                SettingsSectionHeader("About", Icons.Filled.Info, VineColors.Stone)
                 VineyardCard {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Box(
-                            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(VineColors.EarthBrown.copy(alpha = 0.15f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Icons.Filled.Info, contentDescription = null, tint = VineColors.EarthBrown, modifier = Modifier.size(20.dp))
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("VineTrack", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                            Text(versionLabel, fontSize = 12.sp, color = vine.textSecondary)
-                        }
-                    }
+                    SettingsValueRow("Version", versionLabel)
                     RowDivider(vine.cardBorder)
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("Backend", color = vine.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                        Text("Connected", color = VineColors.Success, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                    }
+                    SettingsValueRow("Disclaimer", "v1.0")
+                    RowDivider(vine.cardBorder)
+                    SettingsValueRow("Backend", "Connected", success = true)
                 }
             }
 
@@ -557,7 +658,7 @@ fun SettingsScreen(
             val canManageData = state.currentRole == "owner" || state.currentRole == "manager"
             if (canManageData && onOpenTool != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Data Tools", onLight = true)
+                    SettingsSectionHeader("Data Tools", Icons.Filled.FactCheck, VineColors.Orange)
                     VineyardCard {
                         PreferenceRow(
                             Icons.Filled.FactCheck,
@@ -565,35 +666,6 @@ fun SettingsScreen(
                             "Trip Audit",
                             "Find & fix trips on the wrong vineyard",
                             onClick = { onOpenTool(ToolRoute.TripAudit) },
-                        )
-                    }
-                }
-            }
-
-            // Platform admin — only for active system_admins (RPC-gated upstream).
-            if (state.isSystemAdmin && onOpenTool != null) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Platform", onLight = true)
-                    VineyardCard {
-                        PreferenceRow(
-                            Icons.Filled.AdminPanelSettings,
-                            VineColors.Destructive,
-                            "Admin",
-                            "Users, vineyards, blocks & feature flags",
-                            onClick = { onOpenTool(ToolRoute.Admin) },
-                        )
-                    }
-                    // Unreleased Android-only preview. Gated on the SAME
-                    // authoritative platform System Admin flag as the Admin
-                    // entry above; vineyard owner/manager/supervisor roles do
-                    // not qualify. The screen re-checks access itself.
-                    VineyardCard {
-                        PreferenceRow(
-                            Icons.Filled.Explore,
-                            VineColors.Purple,
-                            "Android Map Alignment",
-                            "System Admin Preview",
-                            onClick = { onOpenTool(ToolRoute.MapAlignment) },
                         )
                     }
                 }
@@ -922,6 +994,28 @@ private fun DisplayNameEditor(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
+}
+
+@Composable
+private fun SettingsSectionHeader(title: String, icon: ImageVector, tint: Color) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+        Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+    }
+}
+
+@Composable
+private fun SettingsValueRow(label: String, value: String, success: Boolean = false) {
+    val vine = LocalVineColors.current
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, modifier = Modifier.weight(1f), color = vine.textPrimary, fontSize = 16.sp)
+        Text(value, color = if (success) VineColors.Success else vine.textSecondary, fontSize = 16.sp)
+    }
 }
 
 @Composable
