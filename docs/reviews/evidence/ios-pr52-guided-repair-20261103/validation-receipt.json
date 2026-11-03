@@ -1,0 +1,143 @@
+{
+  "recorded_at": "2026-11-03T06:55:29.965297+00:00",
+  "release_decision": "HOLD: not all required validation and device acceptance gates passed",
+  "pr": 52,
+  "requested_source_sha": "cbe1795ad5d678a25d594e61eb607ef2656be4a0",
+  "managed_head_before_automatic_sync": "70058f1746c3e7e4cca4e0ed70fd52c467355dce",
+  "source_identity": "PR52 exact twelve-file import plus targeted corrections; NOT exact PR head or a merged commit",
+  "merge_sha": null,
+  "testflight_build": null,
+  "signed_source": null,
+  "corrected_source_files": 1306,
+  "corrected_manifest_sha256": "fae27f24f8d118e3a423edc439d6ddceb842ebcc0934e0053cf37138e56c4273",
+  "managed_native_results": [
+    {
+      "scope": "original pinned PR52 applied files, seven suites",
+      "passed": 70,
+      "seconds": 166
+    },
+    {
+      "scope": "new engine regressions before fix",
+      "passed": 6,
+      "failed": 1,
+      "failure": "testUnresolvedCorrectionCannotMintCompetingOperationAfterReopen: XCTAssertThrowsError did not throw"
+    },
+    {
+      "scope": "corrected engine first checkpoint",
+      "passed": 7,
+      "seconds": 85
+    },
+    {
+      "scope": "final corrected seven-suite selection",
+      "passed": 74,
+      "seconds": 89,
+      "selectors": [
+        "VineTrackTests/GuidedSyncCorrectionPolicyTests",
+        "VineTrackTests/GuidedSyncRepairEngineTests",
+        "VineTrackTests/TripActivityCancellationTests",
+        "VineTrackTests/TrackedSprayCompletionSyncTests",
+        "VineTrackTests/TripClosureStatusTests",
+        "VineTrackTests/SprayTankActualTests",
+        "VineTrackTests/TankDependencyVerificationTests"
+      ]
+    }
+  ],
+  "managed_native_limitations": "Aggregate runner results only; no final passing named XML/xcresult exposed. Counts are separate runs, not additive. Tests are simulator/unit selection, not live authenticated Guided Repair acceptance.",
+  "normal_simulator_build": "PASS via runChecks(appPath=ios); device Release/signing not verified; two existing asset URL notices",
+  "github_native": {
+    "run": 41581305846,
+    "job": 125736549423,
+    "head": "cbe1795ad5d678a25d594e61eb607ef2656be4a0",
+    "result": "FAILURE",
+    "xcode": "26.3",
+    "malloc_abort_count": 8,
+    "crashes": [
+      {
+        "active_case": "VineTrackTests.GuidedSyncRepairEngineTests testAuditLedgerIsDurableAndRetriesExactOriginalOperationId",
+        "message": "VineTrack(27709,0x1007e8200) malloc: *** error for object 0x25236c2c0: pointer being freed was not allocated"
+      },
+      {
+        "active_case": "VineTrackTests.GuidedSyncRepairEngineTests testAuditLedgerIsDurableAndRetriesExactOriginalOperationId",
+        "message": "VineTrack(28719,0x103034200) malloc: *** error for object 0x25236c2c0: pointer being freed was not allocated"
+      },
+      {
+        "active_case": "VineTrackTests.GuidedSyncRepairEngineTests testAuditLedgerIsDurableAndRetriesExactOriginalOperationId",
+        "message": "VineTrack(29657,0x102c60200) malloc: *** error for object 0x25236c2c0: pointer being freed was not allocated"
+      },
+      {
+        "active_case": "VineTrackTests.TrackedSprayCompletionSyncTests testFailedPrepareDoesNotPublishQueuedSuccess",
+        "message": "VineTrack(30962,0x102780200) malloc: *** error for object 0x25236c2e0: pointer being freed was not allocated"
+      },
+      {
+        "active_case": "VineTrackTests.TrackedSprayCompletionSyncTests testFirstEndAndIdentitySurviveReloadAndLaterRetry",
+        "message": "VineTrack(32113,0x1032b8200) malloc: *** error for object 0x25236c2e0: pointer being freed was not allocated"
+      },
+      {
+        "active_case": "VineTrackTests.TrackedSprayCompletionSyncTests testMissingAmbiguousManualTemplateAndWrongVineyardAreHeld",
+        "message": "VineTrack(32770,0x102130200) malloc: *** error for object 0x25236c2e0: pointer being freed was not allocated"
+      },
+      {
+        "active_case": "VineTrackTests.TrackedSprayCompletionSyncTests testNonSprayAndHistoricalEndDoNotCreateCompletionIntent",
+        "message": "VineTrack(33438,0x103350200) malloc: *** error for object 0x25236c2e0: pointer being freed was not allocated"
+      },
+      {
+        "active_case": "VineTrackTests.TrackedSprayCompletionSyncTests testUnreadableOutboxNeverBecomesEmptyAndOriginalBytesRemain",
+        "message": "VineTrack(34173,0x1046f0200) malloc: *** error for object 0x25236c2e0: pointer being freed was not allocated"
+      }
+    ],
+    "artifact_id": 13207747948,
+    "artifact_sha256": "ce8218c87e30147b93d42ea109f50bf713f4b4dcf6fab562e47287d44bfd7b21",
+    "underlying_cause": "Not established; no blind rerun or unproven memory-management change"
+  },
+  "backend_verification": {
+    "method": "SELECT-only production function/grant/RLS/trigger catalog; no customer rows or repair RPC execution",
+    "sql283_reconciliation_body_matches_deployment_whitespace_normalized": true,
+    "repair_rpc_authenticated_execute": true,
+    "repair_rpc_anon_execute": false,
+    "relevant_tables_rls": {
+      "spray_tank_actual_amendments": true,
+      "spray_tank_actuals": true,
+      "trip_activity_cancellation_receipts": true,
+      "trip_compliance_archive": true
+    },
+    "critical_findings": [
+      "Deployed tank-actual BEFORE UPDATE trigger requires a non-deleted parent Trip. Reconciliation deliberately starts from a deleted Trip and updates its live Actuals: static contract conflict would abort that transaction. No production mutation was used to demonstrate it.",
+      "Deployed reconciliation replay validates operation/vineyard/classification but not actor, attestation or exact evidence. Do not claim stronger replay validation. Client now independently compares archive creator and exact frozen evidence before cleanup.",
+      "Accepted Actual Use lost-response retry remains incomplete: original-vs-server quantity preflight can reject the already-accepted correction before the original operation is reconciled.",
+      "Full authenticated disposable-record RPC, failure, offline/restart and account/vineyard acceptance remains required."
+    ]
+  },
+  "navigation": "Source wiring confirmed: Backend Settings -> Sync Diagnostics -> Guided Repair; not tapped on a device.",
+  "corrections": [
+    "Freeze action-relevant review fields durably and resume the same unresolved operation; reject competing input fingerprints.",
+    "Stable chemical dictionary fingerprints and pre-freeze field validation.",
+    "Pin repair detail to its originating account/vineyard and discard stale inspection/verification; guard full-sync dispatch.",
+    "Archive exact first-tank drafts and frozen request evidence before deleted-Trip RPC; verify disk readback.",
+    "Require exact independent server compliance archive proof, matching receipt and original scope before local cleanup.",
+    "Reject foreign-owner Actuals/drafts and changed retained Trip/Spray/tank/journal evidence; do not swallow queue-retirement failures."
+  ],
+  "open_gates": [
+    "Resolve required Xcode26.3 native malloc failures and obtain a passing required workflow for the FINAL corrected commit.",
+    "Review/correct backend trigger compatibility and replay contract, then validate on authorised disposable records; no backend deployment made here.",
+    "Finish accepted-Actual lost-response reconciliation and legacy audits that lack frozen review fields.",
+    "Add direct legacy archive/changed-evidence cleanup and scope-race integration coverage; current tests do not certify this new network cleanup path.",
+    "Restore valid managed iOS service configuration: current Supabase URL was empty; configuration preserved.",
+    "Original affected iPhone must complete repair in place with authoritative receipt; no uninstall, data clear or queue reset.",
+    "After ALL gates, use authenticated PR integration, fresh ASC maximum and internal-only 3.1.9 build >=211; bind real merge/source/signing identity. No allocation/upload attempted."
+  ],
+  "preservation": {
+    "android_changed": false,
+    "production_records_mutated": false,
+    "repair_rpcs_invoked": false,
+    "original_device_replayed_or_cleared": false,
+    "config_preserved": true,
+    "historical_quantities_ids_evidence_changed": false,
+    "git_checkout_commit_push_reset_used": false
+  },
+  "evidence_hashes": {
+    "source-application.json": "e6862ef1bb7af8f2074596a3951a624644e5959a18be768bfba05c89a2651a42",
+    "live-backend-catalog.json": "3890451d5832e6a7a6c7c34b57c990dfbd06f0ba8b893011ddc86b0c4d53e9ff",
+    "pre-fix-engine-failure.log": "109747c91fd587bdf61b335f3f36fcdf09f940b4411c6625a8c0b3e0756ddbad",
+    "github-original-native-failure.log": "e1dea2fe904efe22fc33a10146a9ac87f3bce35d90bd7465e8225a33b6aeecc9"
+  }
+}

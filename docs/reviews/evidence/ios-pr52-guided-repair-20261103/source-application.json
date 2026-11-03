@@ -1,0 +1,55 @@
+{
+  "head": "cbe1795ad5d678a25d594e61eb607ef2656be4a0",
+  "base": "977868e9f480c46fb74c5f7352769dd8101ed0d8",
+  "method": "All existing changed files equal pinned base before applying exact head bytes",
+  "files": [
+    {
+      "path": ".github/workflows/ios-guided-sync-repair-native.yml",
+      "sha256": "2457d8f49d6411f3a6fc65738e7ae8958a28d81882d57e450ab16f00a1b9d573"
+    },
+    {
+      "path": "ios/VineTrack/App/GuidedSyncIssueRepairView.swift",
+      "sha256": "ec95e3b72816ca20b532cb028b53e36e72b19e3dbec59d3cdbb3dda6a3ee18a2"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/GuidedLegacyDeletedTripRepair.swift",
+      "sha256": "ef1cd07107153bae479d722d1d1e3b4844f905c10e5f065e28da43c224f224e0"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/GuidedSyncRepairEngine.swift",
+      "sha256": "665ede80a07bad974f0f35c4c9e04425cf9df7a4d362e99813b5b965451a68ba"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/GuidedSyncRepairVerification.swift",
+      "sha256": "da5069df09897274d4ba530c8b6e5485415b563fe79af9a91f65bb0d6f222c29"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TrackedSprayCompletionSync.swift",
+      "sha256": "2ff830393f229e1c822e91ea82bd76e2d1876533bbe4d39bc53f2e2925a0ec1c"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripDeletionJournal.swift",
+      "sha256": "76a290d1e15133e7a102d37e6c7a7f7c40618b92cda838ec429af5bde7db885c"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripSyncService.swift",
+      "sha256": "5dd0cfc653deb41d835b33a7ddf9395dd2c7dbc7b91f7a5f1f1342f8765a7adb"
+    },
+    {
+      "path": "ios/VineTrackTests/GuidedSyncCorrectionPolicyTests.swift",
+      "sha256": "16df0d78d0e0ca11f4f54632c6541d217c7947801eb051260fbcee872a1146bd"
+    },
+    {
+      "path": "ios/VineTrackTests/GuidedSyncRepairEngineTests.swift",
+      "sha256": "d477da601426f48fb5c9209f67e9fbf77ccddb5d51c2f7243902ae297f32d322"
+    },
+    {
+      "path": "sql/282_guided_reviewed_legacy_trip_deletion_reconciliation.sql",
+      "sha256": "a265ebbe10fc91b38643ffed59517d12d16f31762f00af8be9780e012036b640"
+    },
+    {
+      "path": "sql/283_reviewed_legacy_trip_application_attestation.sql",
+      "sha256": "7d96671f2a5e585532c27f62df87db32b8e0f011cf8923772af48e3f3b8cd4df"
+    }
+  ]
+}

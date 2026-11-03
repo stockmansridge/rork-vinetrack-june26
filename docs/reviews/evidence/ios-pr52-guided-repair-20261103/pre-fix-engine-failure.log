@@ -1,0 +1,94 @@
+Building with Xcode 27.1 (27A9275)
+Command line invocation:
+Build settings from command line:
+Resolving Package Graph
+Resolved source packages
+swift-crypto - https://github.com/apple/swift-crypto.git @ 4.5.2
+Supabase - https://github.com/supabase/supabase-swift.git @ 2.55.5
+swift-issue-reporting - https://github.com/pointfreeco/swift-issue-reporting @ 2.1.2
+RevenueCat - https://github.com/RevenueCat/purchases-ios.git @ 5.99.0
+swift-clocks - https://github.com/pointfreeco/swift-clocks @ 1.1.1
+swift-asn1 - https://github.com/apple/swift-asn1.git @ 1.7.3
+xctest-dynamic-overlay - https://github.com/pointfreeco/xctest-dynamic-overlay @ 1.13.1
+swift-http-types - https://github.com/apple/swift-http-types.git @ 1.8.0
+swift-concurrency-extras - https://github.com/pointfreeco/swift-concurrency-extras @ 1.4.3
+Writing result bundle at path:
+	/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/result-bundles/build-1793688255608708000/build.xcresult
+Build Preparation
+Build task concurrency set to 14 via user default IDEBuildOperationMaxNumberOfConcurrentCompileTasks
+note: Using codesigning identity override: -
+ComputePackagePrebuildTargetDependencyGraph
+Prepare packages
+CreateBuildRequest
+SendProjectDescription
+CreateBuildOperation
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (34 targets)
+GatherProvisioningInputs
+CreateBuildDescription
+ClangStatCache /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/SDKStatCaches.noindex/iphonesimulator27.1-24A94232-e829b21a6f8c9b70876ba0858053c04421d52c5dee28f89a436238487c04ba4c.sdkstatcache
+Failed to create FS event stream. Considering the cache up-to-date.
+[VineTrackTests] Compiling GuidedSyncRepairEngineTests.swift
+SwiftCompile normal arm64 (in target 'VineTrackTests' from project 'VineTrack')
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ResistancePlanRepositoryTests.swift:167:51: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+165 |     func makeRepo(
+166 |         server: (any ResistancePlanRemote)?,
+167 |         store: InMemoryResistancePlanLocalStore = InMemoryResistancePlanLocalStore(),
+    |                                                   `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+168 |         clock: Clock = Clock(),
+169 |         userId: String? = "user-1"
+VineTrack.InMemoryResistancePlanLocalStore.init:2:21: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+1 | class InMemoryResistancePlanLocalStore {
+2 | @MainActor internal init()}
+  |                     `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+3 | 
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ResistancePlanRevisionSyncTests.swift:147:51: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+145 |     func makeRepo(
+146 |         server: (any ResistancePlanRemote)?,
+147 |         store: InMemoryResistancePlanLocalStore = InMemoryResistancePlanLocalStore(),
+    |                                                   `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+148 |         clock: Clock
+149 |     ) -> ResistancePlanRepository {
+VineTrack.InMemoryResistancePlanLocalStore.init:2:21: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+1 | class InMemoryResistancePlanLocalStore {
+2 | @MainActor internal init()}
+  |                     `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+3 | 
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[VineTrackTests] Copy arm64-apple-ios-simulator.swiftsourceinfo -> VineTrackTests.swiftsourceinfo
+[VineTrackTests] Copy arm64-apple-ios-simulator.swiftmodule -> VineTrackTests.swiftmodule
+[VineTrackTests] Copy arm64-apple-ios-simulator.abi.json -> VineTrackTests.abi.json
+[VineTrackTests] Linking VineTrackTests
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrack.app/PlugIns/VineTrackTests.xctest (in target 'VineTrackTests' from project 'VineTrack')
+[VineTrackTests] Extract App Intents Metadata
+2026-11-02 23:44:33.669 appintentsmetadataprocessor[42491:1819094] Starting appintentsmetadataprocessor export
+2026-11-02 23:44:33.671 appintentsmetadataprocessor[42491:1819094] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+Signing VineTrackTests.xctest (in target 'VineTrackTests' from project 'VineTrack')
+Signing VineTrack.app (in target 'VineTrack' from project 'VineTrack')
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrack.app: replacing existing signature
+[VineTrack] Validate VineTrack.app
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/SDKExplicitPrecompiledModules
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/ExplicitPrecompiledModules
+Build Timing Summary
+SwiftEmitModule (1 task) | 11.294 seconds
+SwiftDriver (1 task) | 1.223 seconds
+Signing (2 tasks) | 0.379 seconds
+Ld (1 task) | 0.290 seconds
+SwiftCompile (1 task) | 0.196 seconds
+SwiftDriver Compilation (1 task) | 0.096 seconds
+CopySwiftLibs (1 task) | 0.028 seconds
+ExtractAppIntentsMetadata (1 task) | 0.024 seconds
+Copy (3 tasks) | 0.008 seconds
+Validate (1 task) | 0.001 seconds
+SwiftDriver Compilation Requirements (1 task) | 0.001 seconds
+Result bundle written to path:
+	/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/result-bundles/build-1793688255608708000/build.xcresult
+Test Build Succeeded
+Build completed in 18.411252s
+Syncing test products to simulator...
+Synced test products in 8.394129333s, running tests...
+1 of 7 tests failed
+
+VineTrackTests.GuidedSyncRepairEngineTests/testUnresolvedCorrectionCannotMintCompetingOperationAfterReopen: XCTAssertThrowsError failed: did not throw an error

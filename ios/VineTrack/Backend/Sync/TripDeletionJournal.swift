@@ -151,6 +151,29 @@ import Foundation
         try persistence.saveOrThrow(state, key: Self.key)
         return true // Tombstone and original evidence deliberately remain after acknowledgement.
     }
+    /// The explicitly reviewed legacy path is NOT an original-device receipt.
+    /// Store that provenance separately; never delete the original unscoped
+    /// or held evidence. Only the reviewed reconciliation coordinator invokes
+    /// this after the signed owner and an exact backend cancellation receipt
+    /// have been verified and the full original archive has been preserved.
+    func acknowledgeReviewedLegacy(_ intent: Intent, owner: UUID,
+                                   vineyard: UUID, operationId: UUID) throws {
+        var state = try load()
+        guard Self.matches(state.intents[intent.trip], intent),
+              intent.scope?.account == nil || intent.scope?.account == owner,
+              intent.scope?.vineyard == nil || intent.scope?.vineyard == vineyard,
+              try GuidedRepairAuditLedger.shared.history(
+                account: owner, vineyard: vineyard, record: intent.trip)
+                .contains(where: { $0.id == operationId &&
+                    $0.stages.contains(where: { $0.code == "SERVER_CANCEL_RECEIPT_AND_ARCHIVE_VERIFIED" })
+                })
+        else { throw Held(reason: "TRIP_REVIEW_ACK_SCOPE_UNVERIFIED") }
+        state.intents[intent.trip]?.acknowledgement =
+            "REVIEWED_LEGACY_SERVER_TOMBSTONE_" + operationId.uuidString.lowercased()
+        // reviewReason remains unchanged in original evidence for forensics.
+        try persistence.saveOrThrow(state, key: Self.key)
+    }
+
     /// An acknowledgement only applies to this exact account, vineyard and deletion revision.
     func replay(_ intent: Intent, account: UUID?, vineyard: UUID,
                 isCurrent: () -> Bool, remote: (Scope) async throws -> String) async throws -> Bool {
