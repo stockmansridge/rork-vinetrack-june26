@@ -23,7 +23,7 @@ nonisolated enum GuidedSyncRecordState: String, Sendable {
 }
 
 nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Sendable {
-    case recoverRecordedTank, manualVerifiedTank, amendActualUse, verifyCompleted, verifyCancellation, retryExisting, privateReview
+    case recoverRecordedTank, manualVerifiedTank, amendActualUse, verifyCompleted, verifyCancellation, reviewLegacyDeleted, retryExisting, privateReview
     var id: Self { self }
     var label: String {
         switch self {
@@ -32,6 +32,7 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
         case .amendActualUse: "Correct water and chemical Actual Use"
         case .verifyCompleted: "Verify original Trip completion"
         case .verifyCancellation: "Verify original deletion"
+        case .reviewLegacyDeleted: "Reconcile deleted Trip and linked records"
         case .retryExisting: "Retry existing operations for this vineyard"
         case .privateReview: "Copy issue for owner review"
         }
@@ -48,6 +49,8 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
             "Reads back the exact original ended Trip and checks its linked evidence before acknowledging the existing upload."
         case .verifyCancellation:
             "Only replays an already-recorded, original-account cancellation journal and independently verifies its server tombstone. Does not delete a different Trip."
+        case .reviewLegacyDeleted:
+            "The original server Trip is already deleted. After you confirm Applied or Not applied and supply an evidence note, the backend archives original compliance evidence, soft-deletes its remaining linked rows, and issues an exact cancellation receipt before any local queue is retired. It never restores the deleted Trip."
         case .retryExisting:
             "Runs the existing sync for this vineyard. Other eligible records in the same vineyard can also be retried. Original IDs and pending evidence are retained until the server accepts them."
         case .privateReview:
@@ -61,12 +64,17 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
 nonisolated enum GuidedSyncCorrectionPolicy {
     static func available(for issue: GuidedSyncRepairIssue, server: GuidedSyncRecordState,
                           actualAccepted: Bool = false) -> [GuidedSyncCorrection] {
-        guard issue.verifiedCurrentScope else { return [.privateReview] }
+        guard issue.verifiedCurrentScope else {
+            return issue.kind == .protectedQueue && server == .deleted
+                ? [.reviewLegacyDeleted, .privateReview] : [.privateReview]
+        }
         switch server {
         case .notChecked, .notVisible:
             return [.privateReview]
         case .deleted:
-            return issue.kind == .tripDeletion ? [.verifyCancellation, .privateReview] : [.privateReview]
+            return issue.kind == .tripDeletion
+                ? [.verifyCancellation, .reviewLegacyDeleted, .privateReview]
+                : [.privateReview]
         case .active, .ended, .standalone:
             switch issue.kind {
             case .tripDeletion:
@@ -346,6 +354,8 @@ private struct GuidedSyncIssueDetailView: View {
     @State private var evidenceNote = ""
     @State private var manualTime = Date()
     @State private var selectedOriginalSession: UUID?
+    @State private var legacyApplied = false
+    @State private var legacyDeletionConfirmed = false
 
     private var contextKey: String {
         (auth.userId?.uuidString ?? "none") + "|" + (store.selectedVineyardId?.uuidString ?? "none")
@@ -367,7 +377,10 @@ private struct GuidedSyncIssueDetailView: View {
         }.sorted { $0.tankNumber < $1.tankNumber }
     }
     private var eligible: Bool {
-        guard issue.verifiedCurrentScope, !isWorking, !syncStatus.isSyncing,
+        guard (issue.verifiedCurrentScope ||
+               (issue.kind == .protectedQueue && selected == .reviewLegacyDeleted &&
+                server == .deleted)),
+              !isWorking, !syncStatus.isSyncing,
               !tripSync.isSyncing, !spraySync.isSyncing,
               !TripActivityCancellationService.shared.isWorking,
               auth.isSignedIn, auth.userId == store.currentUserIdProvider?(),
@@ -382,7 +395,8 @@ private struct GuidedSyncIssueDetailView: View {
             for: issue, server: server, actualAccepted: actualAccepted)
     }
     private var reasonRequired: Bool {
-        selected == .manualVerifiedTank || selected == .amendActualUse
+        selected == .manualVerifiedTank || selected == .amendActualUse ||
+            selected == .reviewLegacyDeleted
     }
 
     var body: some View {
@@ -483,6 +497,16 @@ private struct GuidedSyncIssueDetailView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
+                if selected == .reviewLegacyDeleted {
+                    Picker("Was the spray actually applied?", selection: $legacyApplied) {
+                        Text("Not applied").tag(false)
+                        Text("Applied").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    Toggle("I confirm this original Trip was deliberately deleted", isOn: $legacyDeletionConfirmed)
+                    Text("The original Trip will remain deleted. Its linked Spray, Actual Use and cost records will be retained in the compliance archive before their live rows are retired. Choose Applied if any physical spray occurred.")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
                 if reasonRequired {
                     TextField("Explain the original evidence and why this correction is needed",
                               text: $evidenceNote, axis: .vertical)
@@ -498,7 +522,9 @@ private struct GuidedSyncIssueDetailView: View {
                     if selected == .privateReview { copyReview() }
                     else { confirming = true }
                 }
-                .disabled(selected != .privateReview && (!eligible || server == .notChecked))
+                .disabled(selected != .privateReview &&
+                    (!eligible || server == .notChecked ||
+                     (selected == .reviewLegacyDeleted && !legacyDeletionConfirmed)))
                 if awaitingFullSync {
                     Label(syncStatus.isSyncing
                         ? "Full dependency-chain sync is running"
@@ -707,7 +733,7 @@ private struct GuidedSyncIssueDetailView: View {
             .map { $0.key.uuidString + "=" + $0.value }.joined(separator: "|")
         let hash = GuidedRepairAuditLedger.fingerprint(
             "\(issue.id)|\(chosen.rawValue)|\(evidenceNote)|\(manualTime.timeIntervalSince1970)|" +
-            "\(selectedOriginalSession?.uuidString ?? "")|\(waterText)|\(orderedAmounts)")
+            "\(selectedOriginalSession?.uuidString ?? "")|\(waterText)|\(orderedAmounts)|reviewApplied=\(legacyApplied)")
         let operation: UUID
         do {
             operation = try GuidedRepairAuditLedger.shared.begin(
@@ -781,6 +807,21 @@ private struct GuidedSyncIssueDetailView: View {
                 // Original replay logic verifies the receipt/tombstone and
                 // cleans only entries explicitly included in that receipt.
                 requestFullSync(auditId: operation, owner: owner, vineyard: vineyard)
+            case .reviewLegacyDeleted:
+                guard server == .deleted, legacyDeletionConfirmed,
+                      issue.kind == .protectedQueue || issue.kind == .tripDeletion else {
+                    outcome = "Confirm the deliberate deletion and its original server tombstone first."
+                    return
+                }
+                let accepted = try await GuidedLegacyDeletedTripRepair.reconcile(
+                    tripId: issue.relatedTripId ?? issue.recordId,
+                    vineyard: vineyard, owner: owner, applied: legacyApplied,
+                    reason: evidenceNote, operationId: operation,
+                    store: store, tripSync: tripSync, spraySync: spraySync)
+                stage("REVIEWED_LEGACY_CANCELLATION_COMPLETE",
+                      "Original server tombstone, compliance archive and linked cancellation receipts verified.")
+                outcome = accepted
+                await verifyAfterCorrection(owner: owner, vineyard: vineyard)
             case .retryExisting:
                 guard server != .notChecked && server != .notVisible && server != .deleted else {
                     outcome = "The original server state has not been verified as writable."; return
@@ -796,6 +837,19 @@ private struct GuidedSyncIssueDetailView: View {
         if !awaitingFullSync {
             server = .notChecked
             serverExplanation = "Inspect the original record again to verify its state"
+        }
+    }
+
+    private func verifyAfterCorrection(owner: UUID, vineyard: UUID) async {
+        let result = await GuidedSyncRepairVerification.inspect(
+            issue: issue, vineyard: vineyard, owner: owner,
+            store: store, tripSync: tripSync, spraySync: spraySync)
+        independentReceipt = result
+        if let operation = activeAuditOperation {
+            try? GuidedRepairAuditLedger.shared.stage(
+                id: operation, account: owner, vineyard: vineyard,
+                code: result.verified ? "VERIFIED" : "RETAINS_ISSUE_" + result.code,
+                explanation: result.explanation)
         }
     }
 
@@ -817,11 +871,10 @@ private struct GuidedSyncIssueDetailView: View {
                 explanation: result.explanation)
         }
         // Verify does not mutate queues or create any new operation receipts.
-        await inspectAfterVerification()
+        resetInspectionAfterVerification()
     }
 
-    private func inspectAfterVerification() async {
-        guard !isWorking || true else { return }
+    private func resetInspectionAfterVerification() {
         // A new read on request is available above. Avoid calling inspect()
         // recursively while the verifier still holds its working state.
         actualAccepted = false
