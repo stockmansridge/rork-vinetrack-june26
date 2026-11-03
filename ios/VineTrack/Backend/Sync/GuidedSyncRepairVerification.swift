@@ -24,7 +24,7 @@ enum GuidedSyncRepairVerification {
         guard store.selectedVineyardId == vineyard,
               store.currentUserIdProvider?() == owner,
               SupabaseClientProvider.shared.client.auth.currentUser?.id == owner,
-              issue.verifiedCurrentScope else {
+              (issue.verifiedCurrentScope || issue.kind == .protectedQueue) else {
             return held("SCOPE_UNVERIFIED", "The original account/vineyard is not verified. No receipt was assumed.")
         }
         switch issue.kind {
@@ -173,7 +173,14 @@ enum GuidedSyncRepairVerification {
                     $0.vineyardId == vineyard.uuidString.lowercased() &&
                     ($0.state == .ACKED || $0.state == .CLEANED)
                 } ?? false
-                guard oldAck != nil || newAck else {
+                let reviewedArchiveAck = (try? GuidedRepairAuditLedger.shared.history(
+                    account: owner, vineyard: vineyard, record: tripId))?.contains(where: {
+                    $0.stages.contains(where: { $0.code == "SERVER_CANCEL_RECEIPT_AND_ARCHIVE_VERIFIED" }) &&
+                    GuidedLegacyDeletedTripRepair.archiveConfirmed(
+                        operationId: $0.id, tripId: tripId,
+                        vineyard: vineyard, owner: owner)
+                }) ?? false
+                guard oldAck != nil || newAck || reviewedArchiveAck else {
                     return held("CANCEL_ORIGINAL_ACK_UNAVAILABLE",
                         "Server tombstone exists, but the original cancellation journal has no durable acknowledgement.")
                 }
@@ -190,14 +197,65 @@ enum GuidedSyncRepairVerification {
                     explanation: "The original server tombstone, cancellation receipt and linked local queues have been checked.",
                     evidence: ["trip_id:\(tripId.uuidString.lowercased())",
                                oldAck != nil ? "verified_source:trip_deletion_journal"
-                                             : "verified_source:trip_activity_cancellation_receipt"])
+                                   : (newAck ? "verified_source:trip_activity_cancellation_receipt"
+                                             : "verified_source:reviewed_legacy_deletion_receipt")])
             } catch {
                 return held("DELETION_READ_FAILED", "Deletion evidence was unavailable; no old queue records were retired.")
             }
 
         case .protectedQueue:
-            return held("ORIGINAL_SCOPE_UNATTRIBUTED",
-                "This legacy ID has no verified local account/vineyard identity. It cannot be repaired or cleared from a different selected vineyard.")
+            // An unidentified legacy queue may ONLY be retired after an
+            // operator-reviewed server tombstone, server-owned cancellation
+            // receipt and exact original local archive. The current vineyard
+            // selection alone does not establish any upload authority.
+            do {
+                let history = try GuidedRepairAuditLedger.shared.history(
+                    account: owner, vineyard: vineyard, record: issue.recordId)
+                guard let reviewed = history.first(where: { entry in
+                    entry.stages.contains(where: { $0.code == "SERVER_CANCEL_RECEIPT_AND_ARCHIVE_VERIFIED" })
+                }), GuidedLegacyDeletedTripRepair.archiveConfirmed(
+                    operationId: reviewed.id, tripId: issue.recordId,
+                    vineyard: vineyard, owner: owner) else {
+                    return held("ORIGINAL_SCOPE_UNATTRIBUTED",
+                        "This original Trip has no reviewed cancellation receipt and source archive. It remains protected.")
+                }
+                let trip = try await SupabaseTripSyncRepository()
+                    .fetchTripForOccurrenceStart(
+                        tripId: issue.recordId, vineyardId: vineyard)
+                let receipt = try await SupabaseTripCancellationRemote()
+                    .readReceipt(tripId: issue.recordId.uuidString.lowercased(),
+                                 vineyardId: vineyard.uuidString.lowercased())
+                let sprays = try await SprayCompletionRepository()
+                    .fetchLinked(tripId: issue.recordId)
+                struct Row: Decodable { let id: UUID }
+                let actuals: [Row] = try await SupabaseClientProvider.shared.client
+                    .from("spray_tank_actuals").select("id")
+                    .eq("trip_id", value: issue.recordId.uuidString)
+                    .eq("vineyard_id", value: vineyard.uuidString)
+                    .is("deleted_at", value: nil).limit(1).execute().value
+                guard let trip, trip.deletedAt != nil, trip.vineyardId == vineyard,
+                      let receipt,
+                      TripActivityCancellation.string(receipt, "operation_id") == reviewed.id.uuidString.lowercased(),
+                      TripActivityCancellation.string(receipt, "trip_id") == issue.recordId.uuidString.lowercased(),
+                      TripActivityCancellation.string(receipt, "vineyard_id") == vineyard.uuidString.lowercased(),
+                      TripActivityCancellation.string(receipt, "status") == "CANCELLED_ACKED",
+                      sprays.isEmpty, actuals.isEmpty,
+                      !tripSync.isPendingUpsert(issue.recordId),
+                      !tripSync.isPendingDelete(issue.recordId),
+                      SprayTankActualStore.shared.pendingCount(tripId: issue.recordId) == 0,
+                      store.selectedVineyardId == vineyard,
+                      store.currentUserIdProvider?() == owner else {
+                    return held("REVIEWED_CANCELLATION_DEPENDENTS_PENDING",
+                        "The original server tombstone, linked records or queued local operations are not fully reconciled.")
+                }
+                return Result(verified: true, code: "REVIEWED_LEGACY_CANCELLATION_VERIFIED",
+                    explanation: "Original Trip remains deleted; its linked records and historical queue are reconciled under an audited cancellation receipt.",
+                    evidence: ["operation_id:\(reviewed.id.uuidString.lowercased())",
+                               "trip_id:\(issue.recordId.uuidString.lowercased())"])
+            } catch {
+                return held("REVIEWED_CANCELLATION_READ_FAILED",
+                    "The original cancellation evidence could not be independently read. Do not clear its queue.")
+            }
 
         case .other:
             return held("GENERIC_RECEIPT_UNVERIFIED",
