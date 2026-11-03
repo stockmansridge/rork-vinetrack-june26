@@ -24,6 +24,10 @@ protocol TripSyncRepositoryProtocol: Sendable {
     /// P0 3.1.9 Phase B: exact scoped readback of a live Trip's tank session IDs (lowercased).
     /// nil means the Trip is absent or soft-deleted.
     func fetchTankSessionIds(tripId: UUID, vineyardId: UUID) async throws -> Set<String>?
+    /// First-stage dependency upload for an original ended occurrence Trip.
+    /// Writes only its already recorded tank sessions, without finalising
+    /// the Trip or touching its Spray/Actual Use.
+    func establishOccurrenceTankSessions(_ trip: BackendTripUpsert, required: Set<String>) async throws
 }
 
 extension TripSyncRepositoryProtocol {
@@ -37,6 +41,11 @@ extension TripSyncRepositoryProtocol {
         throw TripOccurrenceCoverage.Failure.updateRequired
     }
     func fetchTankSessionIds(tripId: UUID, vineyardId: UUID) async throws -> Set<String>? {
+        throw TankSessionReadbackUnsupported()
+    }
+    func establishOccurrenceTankSessions(_ trip: BackendTripUpsert, required: Set<String>) async throws {
+        // Test fakes must explicitly implement the evidence-preserving stage;
+        // a missing transport never becomes an implicit server acknowledgement.
         throw TankSessionReadbackUnsupported()
     }
 }
