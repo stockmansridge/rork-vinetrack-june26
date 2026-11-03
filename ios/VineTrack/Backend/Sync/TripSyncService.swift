@@ -1125,8 +1125,7 @@ final class TripSyncService {
                         let required = requiredTankSessions(tripId)
                         var missing = TankDependencyVerification.missing(
                             required: required, in: TankDependencyVerification.ids(trip.tankSessions))
-                        if !missing.isEmpty, let actor = store.currentUserIdProvider?(),
-                           actor == auth?.userId {
+                        if !missing.isEmpty, let actor = store.currentUserIdProvider?() {
                             // Build 210 recovery: the original Start Tank code
                             // assigned the exact same timestamp to the original
                             // tank start and the confirmed Actual Use. The local
