@@ -975,7 +975,45 @@ struct BackendSettingsView: View {
 
 // MARK: - Sync Settings (extracted)
 
+// MARK: - Read-only Sync presentation snapshot
+//
+// The authoritative upload/hold gates must continue to consult disk on every
+// operational decision. This snapshot is ONLY for rendering Sync screens;
+// repeated SwiftUI body evaluations must not re-read retained evidence.
+@MainActor
+struct SyncReadOnlyPresentationSnapshot {
+    let ownerId: UUID?
+    let vineyardId: UUID?
+    let tripPendingUpserts: Int
+    let sprayPendingUpserts: Int
+    let retained: TripRetainedState
+    let legacySprayReceiptNotice: String?
+
+    static func capture(
+        ownerId: UUID?,
+        store: MigratedDataStore,
+        tripSync: TripSyncService,
+        spraySync: SprayRecordSyncService
+    ) -> Self {
+        // Perform existing read-only checks once per presentation refresh,
+        // never once per cell or per SwiftUI view invalidation.
+        let tripPending = tripSync.pendingUpsertCount
+        let sprayPending = spraySync.pendingUpsertCount
+        let retained = tripSync.retainedState
+        let notice = retained.sprays.isEmpty ? nil : store.legacySprayReceiptNotice
+        return Self(
+            ownerId: ownerId,
+            vineyardId: store.selectedVineyardId,
+            tripPendingUpserts: tripPending,
+            sprayPendingUpserts: sprayPending,
+            retained: retained,
+            legacySprayReceiptNotice: notice
+        )
+    }
+}
+
 struct SyncSettingsView: View {
+    @Environment(NewBackendAuthService.self) private var auth
     @Environment(MigratedDataStore.self) private var store
     @Environment(SyncStatusCenter.self) private var syncCenter
     @Environment(NetworkMonitor.self) private var network
@@ -1013,6 +1051,38 @@ struct SyncSettingsView: View {
     private var issueCenter: SyncIssueCenter { SyncIssueCenter.shared }
     @State private var isIssuesExpanded: Bool = false
     @State private var didCopyDiagnostics: Bool = false
+    @State private var displaySnapshot: SyncReadOnlyPresentationSnapshot?
+    @State private var displayRefreshSerial: Int = 0
+
+    private var displayRefreshID: String {
+        "\(auth.userId?.uuidString ?? "no-account")|\(store.selectedVineyardId?.uuidString ?? "no-vineyard")|\(displayRefreshSerial)"
+    }
+
+    private var currentDisplaySnapshot: SyncReadOnlyPresentationSnapshot? {
+        guard let snapshot = displaySnapshot,
+              snapshot.ownerId == auth.userId,
+              snapshot.vineyardId == store.selectedVineyardId else { return nil }
+        return snapshot
+    }
+
+    /// UI only. Never called by an upload, replay, cancellation or admission gate.
+    private func captureDisplaySnapshotIfIdle() {
+        guard auth.userId != nil, store.selectedVineyardId != nil else {
+            displaySnapshot = nil
+            return
+        }
+        guard !syncCenter.isSyncing, tripSync.syncStatus != .syncing,
+              sprayRecordSync.syncStatus != .syncing else { return }
+        displaySnapshot = SyncReadOnlyPresentationSnapshot.capture(
+            ownerId: auth.userId, store: store,
+            tripSync: tripSync, spraySync: sprayRecordSync
+        )
+    }
+
+    private var retainedSprayDisplayText: String {
+        guard let retained = currentDisplaySnapshot?.retained else { return "Checking…" }
+        return retained.inspectionError == nil ? String(retained.sprays.count) : "Review required"
+    }
 
     var body: some View {
         Form {
@@ -1305,6 +1375,21 @@ struct SyncSettingsView: View {
         }
         .navigationTitle("Sync")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: displayRefreshID) {
+            // Let the screen appear before doing any protected local inspection.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            captureDisplaySnapshotIfIdle()
+        }
+        .onChange(of: syncCenter.isSyncing) { _, isSyncing in
+            if !isSyncing { displayRefreshSerial &+= 1 }
+        }
+        .onChange(of: tripSync.syncStatus) { _, status in
+            if status != .syncing && !syncCenter.isSyncing { displayRefreshSerial &+= 1 }
+        }
+        .onChange(of: sprayRecordSync.syncStatus) { _, status in
+            if status != .syncing && !syncCenter.isSyncing { displayRefreshSerial &+= 1 }
+        }
     }
 
     // MARK: - Overall status header
@@ -1330,8 +1415,13 @@ struct SyncSettingsView: View {
 
             LabeledContent("Pending uploads", value: "\(syncCenter.pendingUpserts)")
                 .font(.footnote)
-            LabeledContent("Spray jobs held locally", value: tripSync.retainedState.inspectionError == nil ? "\(tripSync.retainedState.sprays.count)" : "Review required")
+            LabeledContent("Spray jobs held locally", value: retainedSprayDisplayText)
                 .font(.footnote)
+            if syncCenter.isSyncing {
+                Text("Retained counts are last-checked values; they refresh when sync finishes.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             LabeledContent("Pending deletes", value: "\(syncCenter.pendingDeletes)")
                 .font(.footnote)
             if let retrySummary = syncCenter.retrySummary {
@@ -1388,7 +1478,7 @@ struct SyncSettingsView: View {
             Text("Status")
         } footer: {
             Text(syncCenter.heldSprayPairs > 0
-                 ? (store.legacySprayReceiptNotice ?? "Held spray jobs cannot Start until the original paired-create receipt is verified. Refresh recovers eligible RPC attempts and syncs unrelated work; old REST-uncertain saves remain held.")
+                 ? (currentDisplaySnapshot?.legacySprayReceiptNotice ?? "Held spray jobs cannot Start until the original paired-create receipt is verified. Refresh recovers eligible RPC attempts and syncs unrelated work; old REST-uncertain saves remain held.")
                  : network.isOnline
                     ? "Everything you record is queued and uploaded automatically. Tap Refresh & sync now to push immediately."
                     : "You're offline. Records keep saving locally and will sync as soon as you reconnect.")
@@ -1533,7 +1623,13 @@ struct SyncSettingsView: View {
         }
     }
     private func tripStateFrom(_ status: TripSyncService.Status, lastSync: Date?) -> VineyardSyncState {
-        if status != .syncing, let summary = tripSync.retainedState.summary { return .held(summary) }
+        if status != .syncing {
+            if let summary = currentDisplaySnapshot?.retained.summary { return .held(summary) }
+            if currentDisplaySnapshot == nil {
+                if case .failure(let message) = status { return .failure(message) }
+                return .held("Checking retained Trip evidence; original records are unchanged.")
+            }
+        }
         switch status {
         case .held:
             if tripSync.pendingDeleteCount > 0 { return .held(tripSync.errorMessage ?? "Trip deletions retained. Open diagnostics to verify original scope.") }
@@ -1553,9 +1649,15 @@ struct SyncSettingsView: View {
         }
     }
     private func sprayStateFrom(_ status: SprayRecordSyncService.Status, lastSync: Date?) -> VineyardSyncState {
-        let retained = tripSync.retainedState
-        if status != .syncing, !retained.sprays.isEmpty || retained.inspectionError != nil {
-            return .held(retained.summary ?? "Saved spray evidence needs review.")
+        if status != .syncing {
+            if let retained = currentDisplaySnapshot?.retained,
+               !retained.sprays.isEmpty || retained.inspectionError != nil {
+                return .held(retained.summary ?? "Saved spray evidence needs review.")
+            }
+            if currentDisplaySnapshot == nil {
+                if case .failure(let message) = status { return .failure(message) }
+                return .held("Checking retained Spray evidence; original records are unchanged.")
+            }
         }
         switch status {
         case .held: return .idle // Do not repeat a stale spray count after receipt recovery.

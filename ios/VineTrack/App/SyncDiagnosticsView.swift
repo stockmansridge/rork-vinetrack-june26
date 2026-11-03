@@ -26,6 +26,33 @@ struct SyncDiagnosticsView: View {
     @Environment(FertiliserSyncService.self) private var fertiliserSync
     @Environment(SyncStatusCenter.self) private var syncStatusCenter
 
+    @State private var displaySnapshot: SyncReadOnlyPresentationSnapshot?
+    @State private var displayRefreshSerial: Int = 0
+
+    private var displayRefreshID: String {
+        "\(auth.userId?.uuidString ?? "no-account")|\(store.selectedVineyardId?.uuidString ?? "no-vineyard")|\(displayRefreshSerial)"
+    }
+
+    private var currentDisplaySnapshot: SyncReadOnlyPresentationSnapshot? {
+        guard let snapshot = displaySnapshot,
+              snapshot.ownerId == auth.userId,
+              snapshot.vineyardId == store.selectedVineyardId else { return nil }
+        return snapshot
+    }
+
+    private func captureDisplaySnapshotIfIdle() {
+        guard auth.userId != nil, store.selectedVineyardId != nil else {
+            displaySnapshot = nil
+            return
+        }
+        guard !syncStatusCenter.isSyncing, tripSync.syncStatus != .syncing,
+              sprayRecordSync.syncStatus != .syncing else { return }
+        displaySnapshot = SyncReadOnlyPresentationSnapshot.capture(
+            ownerId: auth.userId, store: store,
+            tripSync: tripSync, spraySync: sprayRecordSync
+        )
+    }
+
     @State private var copyConfirmation: String?
     @State private var isInspectingTripServer: Bool = false
     @State private var tripRecoveryReadbackV3: String?
@@ -79,6 +106,20 @@ struct SyncDiagnosticsView: View {
         }
         .navigationTitle("Sync Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: displayRefreshID) {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            captureDisplaySnapshotIfIdle()
+        }
+        .onChange(of: syncStatusCenter.isSyncing) { _, isSyncing in
+            if !isSyncing { displayRefreshSerial &+= 1 }
+        }
+        .onChange(of: tripSync.syncStatus) { _, status in
+            if status != .syncing && !syncStatusCenter.isSyncing { displayRefreshSerial &+= 1 }
+        }
+        .onChange(of: sprayRecordSync.syncStatus) { _, status in
+            if status != .syncing && !syncStatusCenter.isSyncing { displayRefreshSerial &+= 1 }
+        }
         .confirmationDialog("Export sensitive retained evidence?", isPresented: $confirmRecoveryExport, titleVisibility: .visible) {
             Button("Prepare read-only export") { prepareRecoveryExport() }
             Button("Cancel", role: .cancel) {}
@@ -115,6 +156,11 @@ struct SyncDiagnosticsView: View {
 
     private var entitiesSection: some View {
         Section {
+            if syncStatusCenter.isSyncing {
+                Text("Trip and Spray pending counts are last-checked values; they refresh after sync.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             ForEach(rows) { row in
                 EntityDiagnosticRow(row: row)
             }
@@ -193,13 +239,16 @@ struct SyncDiagnosticsView: View {
             }
     }
 
-    private var sprayFinalisationSummary: SprayFinalisationDiagnostics.Summary {
+    private func sprayFinalisationSummary(useLiveCounts: Bool = false) -> SprayFinalisationDiagnostics.Summary {
         let issues = SyncIssueCenter.shared.issues.values
         return SprayFinalisationDiagnostics.summary(
             trips: sprayTripInputs,
             actuals: sprayTankActualInputs,
             carriers: sprayCarrierInputs,
-            sprayRecordsPending: sprayRecordSync.pendingUpsertCount,
+            // Only explicit exports request a fresh authoritative queue count.
+            sprayRecordsPending: useLiveCounts
+                ? sprayRecordSync.pendingUpsertCount
+                : (currentDisplaySnapshot?.sprayPendingUpserts ?? 0),
             retryableFailures: issues.filter { $0.kind == .retryable }.count,
             permanentFailures: issues.filter { $0.kind == .permanent }.count
         )
@@ -208,13 +257,13 @@ struct SyncDiagnosticsView: View {
     @ViewBuilder
     private var sprayFinalisationSection: some View {
         let trips = SprayFinalisationDiagnostics.relevantTrips(sprayTripInputs)
-        let summary = sprayFinalisationSummary
+        let summary = sprayFinalisationSummary()
         Section {
             LabeledContent("Trips pending", value: "\(summary.tripsPending)")
             LabeledContent("Phase 5 held", value: "\(summary.tripsPhase5Held)")
             LabeledContent("Waiting for parent", value: "\(summary.tripsWaitingForParent)")
             LabeledContent("Tank actuals pending", value: "\(summary.tankActualsPending)")
-            LabeledContent("Spray records pending", value: "\(summary.sprayRecordsPending)")
+            LabeledContent("Spray records pending", value: currentDisplaySnapshot.map { String($0.sprayPendingUpserts) } ?? "Checking…")
             if summary.carrierBasisConversions > 0 {
                 LabeledContent("Carrier basis converted", value: "\(summary.carrierBasisConversions)")
             }
@@ -857,7 +906,8 @@ struct SyncDiagnosticsView: View {
             }
             HStack(spacing: 14) {
                 metric("All local", value: "\(audit.localAcrossAllVineyards)")
-                metric("Pending", value: "\(tripSync.pendingUpsertCount)", highlight: tripSync.pendingUpsertCount > 0)
+                metric("Pending", value: currentDisplaySnapshot.map { String($0.tripPendingUpserts) } ?? "Checking…",
+                       highlight: (currentDisplaySnapshot?.tripPendingUpserts ?? 0) > 0)
                 metric("Soft-deleted", value: "\(audit.remoteSoftDeleted)")
                 metric("Remote no-name", value: "\(audit.remoteMissingFunction)", highlight: audit.remoteMissingFunction > 0)
             }
@@ -1095,7 +1145,7 @@ struct SyncDiagnosticsView: View {
         let title: String
         let icon: String
         let localCount: Int
-        let pendingUpserts: Int
+        let pendingUpserts: Int?
         let pendingDeletes: Int
         let lastSync: Date?
         let status: GenericSyncStatus
@@ -1106,15 +1156,23 @@ struct SyncDiagnosticsView: View {
         case idle, syncing, success, held, failure
     }
 
-    private var rows: [DiagnosticRow] {
+    private var rows: [DiagnosticRow] { diagnosticRows() }
+
+    /// Explicit export takes fresh operational counts; screen rendering never
+    /// performs those repeated protected evidence reads.
+    private func diagnosticRows(useLiveCounts: Bool = false) -> [DiagnosticRow] {
         let vineyardId = store.selectedVineyardId
+        let tripPending: Int? = useLiveCounts
+            ? tripSync.pendingUpsertCount : currentDisplaySnapshot?.tripPendingUpserts
+        let sprayPending: Int? = useLiveCounts
+            ? sprayRecordSync.pendingUpsertCount : currentDisplaySnapshot?.sprayPendingUpserts
         return [
             DiagnosticRow(
                 id: "trips",
                 title: "Trips",
                 icon: "map",
                 localCount: filteredCount(store.trips, vineyardId: vineyardId) { $0.vineyardId },
-                pendingUpserts: tripSync.pendingUpsertCount,
+                pendingUpserts: tripPending,
                 pendingDeletes: tripSync.pendingDeleteCount,
                 lastSync: tripSync.lastSyncDate,
                 status: status(tripSync.syncStatus),
@@ -1125,7 +1183,7 @@ struct SyncDiagnosticsView: View {
                 title: "Spray Records",
                 icon: "drop.fill",
                 localCount: filteredCount(store.sprayRecords, vineyardId: vineyardId) { $0.vineyardId },
-                pendingUpserts: sprayRecordSync.pendingUpsertCount,
+                pendingUpserts: sprayPending,
                 pendingDeletes: sprayRecordSync.pendingDeleteCount,
                 lastSync: sprayRecordSync.lastSyncDate,
                 status: statusM(sprayRecordSync.syncStatus),
@@ -1339,10 +1397,10 @@ struct SyncDiagnosticsView: View {
         lines.append("Backend: \(SupabaseClientProvider.shared.isConfigured ? "connected" : "not_configured")")
         lines.append("")
         lines.append("Entities")
-        for r in rows {
+        for r in diagnosticRows(useLiveCounts: true) {
             lines.append("- \(r.title)")
             lines.append("  local: \(r.localCount)")
-            lines.append("  pending_upserts: \(r.pendingUpserts)")
+            lines.append("  pending_upserts: \(r.pendingUpserts.map(String.init) ?? "unknown")")
             lines.append("  pending_deletes: \(r.pendingDeletes)")
             lines.append("  last_sync: \(r.lastSync.map { df.string(from: $0) } ?? "never")")
             lines.append("  status: \(r.status.rawValue)")
@@ -1532,7 +1590,7 @@ struct SyncDiagnosticsView: View {
             trips: sprayTripInputs,
             actuals: sprayTankActualInputs,
             carriers: sprayCarrierInputs,
-            summary: sprayFinalisationSummary
+            summary: sprayFinalisationSummary(useLiveCounts: true)
         ))
         lines.append("\nTrip deletion recovery (uploads listed independently):")
         lines.append(tripSync.deletionRecoveryDiagnostics)
@@ -1578,7 +1636,8 @@ private struct EntityDiagnosticRow: View {
             }
             HStack(spacing: 14) {
                 metric("Local", value: "\(row.localCount)")
-                metric("Pending", value: "\(row.pendingUpserts)", highlight: row.pendingUpserts > 0)
+                metric("Pending", value: row.pendingUpserts.map(String.init) ?? "Checking…",
+                       highlight: (row.pendingUpserts ?? 0) > 0)
                 if row.pendingDeletes > 0 {
                     metric("Deletes", value: "\(row.pendingDeletes)", highlight: true)
                 }
@@ -1617,11 +1676,13 @@ private struct EntityDiagnosticRow: View {
         let (text, color): (String, Color) = {
             switch row.status {
             case .idle:
-                if row.pendingUpserts > 0 || row.pendingDeletes > 0 { return ("pending", .orange) }
+                if (row.pendingUpserts ?? 0) > 0 || row.pendingDeletes > 0 { return ("pending", .orange) }
+                if row.pendingUpserts == nil { return ("checking", .secondary) }
                 return ("idle", .secondary)
             case .syncing: return ("syncing", .blue)
             case .success:
-                if row.pendingUpserts > 0 || row.pendingDeletes > 0 { return ("pending", .orange) }
+                if (row.pendingUpserts ?? 0) > 0 || row.pendingDeletes > 0 { return ("pending", .orange) }
+                if row.pendingUpserts == nil { return ("checking", .secondary) }
                 return ("synced", .green)
             case .held: return ("retained work needs review", .orange)
             case .failure: return ("failed", .red)
