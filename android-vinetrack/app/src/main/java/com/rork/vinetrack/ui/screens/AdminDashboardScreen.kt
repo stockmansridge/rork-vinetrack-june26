@@ -95,6 +95,12 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
 
+/**
+ * Existing Android admin tools that Settings can open directly.
+ * This only selects an already implemented destination; it does not widen access.
+ */
+enum class AdminLanding { Dashboard, FeatureFlags, SystemAdmins, LoginActivity, BillingGrants }
+
 /** Internal navigation targets reachable from the Admin dashboard. */
 private sealed interface AdminDestination {
     data object AllUsers : AdminDestination
@@ -125,6 +131,7 @@ fun AdminDashboardScreen(
     vm: AppViewModel,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
+    initialLanding: AdminLanding = AdminLanding.Dashboard,
 ) {
     val adminRepo = vm.adminRepository
     val systemRepo = vm.systemAdminRepository
@@ -139,7 +146,17 @@ fun AdminDashboardScreen(
         return
     }
 
-    var destination by remember { mutableStateOf<AdminDestination?>(null) }
+    var destination by remember(initialLanding) {
+        mutableStateOf<AdminDestination?>(
+            when (initialLanding) {
+                AdminLanding.Dashboard -> null
+                AdminLanding.FeatureFlags -> AdminDestination.FeatureFlags
+                AdminLanding.SystemAdmins -> AdminDestination.SystemAdmins
+                AdminLanding.LoginActivity -> AdminDestination.LoginActivity
+                AdminLanding.BillingGrants -> AdminDestination.BillingGrants
+            }
+        )
+    }
 
     when (val dest = destination) {
         null -> AdminRoot(
@@ -150,14 +167,18 @@ fun AdminDashboardScreen(
             onOpen = { destination = it },
         )
         else -> {
-            BackHandler { destination = null }
+            val returnToCaller = {
+                if (initialLanding == AdminLanding.Dashboard) destination = null
+                else onBack?.invoke()
+            }
+            BackHandler { returnToCaller() }
             AdminDestinationHost(
                 destination = dest,
                 adminRepo = adminRepo,
                 systemRepo = systemRepo,
                 billingRepo = billingRepo,
                 modifier = modifier,
-                onBack = { destination = null },
+                onBack = returnToCaller,
                 onOpen = { destination = it },
             )
         }
