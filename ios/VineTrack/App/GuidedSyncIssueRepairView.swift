@@ -737,10 +737,24 @@ private struct GuidedSyncIssueDetailView: View {
             "\(selectedOriginalSession?.uuidString ?? "")|\(waterText)|\(orderedAmounts)|reviewApplied=\(legacyApplied)")
         let operation: UUID
         do {
+            var preferredOriginalCancellationID: UUID?
+            if chosen == .reviewLegacyDeleted,
+               let original = try TripCancellationIntentStore.shared.find(
+                   tripId: issue.recordId.uuidString.lowercased()), original.isOpen {
+                guard original.ownerId == owner.uuidString.lowercased(),
+                      original.vineyardId == vineyard.uuidString.lowercased(),
+                      original.classification == (legacyApplied ? "applied" : "not_applied"),
+                      let recordedID = UUID(uuidString: original.operationId) else {
+                    outcome = "A retained original cancellation requires its exact account, classification and operation ID. No new operation was generated."
+                    return
+                }
+                preferredOriginalCancellationID = recordedID
+            }
             operation = try GuidedRepairAuditLedger.shared.begin(
                 account: owner, vineyard: vineyard, record: issue.recordId,
                 correction: chosen.rawValue, inputHash: hash,
-                reason: reasonRequired ? evidenceNote : "Verified original queue review")
+                reason: reasonRequired ? evidenceNote : "Verified original queue review",
+                preferredOperationId: preferredOriginalCancellationID)
             activeAuditOperation = operation
         } catch {
             outcome = "The durable correction audit could not be saved. No write or retry was attempted."
