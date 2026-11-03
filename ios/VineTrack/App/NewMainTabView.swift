@@ -296,6 +296,10 @@ struct NewMainTabView: View {
         }
         // Manual "Sync now" requested from Sync settings or the status bar.
         .onChange(of: syncStatusCenter.manualSyncToken) { _, _ in
+            // An explicit "Sync now" is the user's own retry: lift the in-memory
+            // cooldown that stops a Trip whose last failure was non-retryable
+            // (or held) from being re-sent on every automatic sweep.
+            tripSync.clearRetryCooldowns()
             Task { await runFullSweep(alertRefresh: .refresh, startsManualDiagnostic: true) }
         }
         .sheet(item: $portalPromptTrigger) { trigger in

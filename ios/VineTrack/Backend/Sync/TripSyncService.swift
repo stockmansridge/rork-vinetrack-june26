@@ -122,6 +122,9 @@ final class TripSyncService {
         let failed: Bool
         let belongsToCurrentVineyard: Bool
         let originalTripPresent: Bool
+        /// Set only for a protected entry whose saved Trip belongs to another
+        /// vineyard of this account. Names where to resume; never uploads.
+        var resumeTarget: TripResumeTarget? = nil
     }
 
     func guidedQueueItems(vineyardId: UUID) -> [GuidedQueueItem] {
@@ -138,18 +141,26 @@ final class TripSyncService {
                 $0.acknowledgement == nil && $0.scope?.account == auth.userId &&
                     $0.scope?.vineyard == vineyardId
             }.map(\.trip))
+        // Read-only ownership lookup for entries outside the selected vineyard.
+        let savedSnapshots = (store.trips + store.tripRepo.loadAll())
+            .map { (tripId: $0.id, vineyardId: $0.vineyardId) }
+        let accountVineyards = store.vineyards.map { (id: $0.id, name: $0.name) }
         return allIds.sorted { $0.uuidString < $1.uuidString }.map { id in
             let scopedDeletion = originals[id].map {
                 $0.scope?.account == auth.userId && $0.scope?.vineyard == vineyardId &&
                     $0.scope?.trip == id
             } ?? false
+            let belongs = currentTrips[id] != nil || scopedDeletion
             return GuidedQueueItem(
                 id: id,
                 pendingUpload: metadata.pendingUpserts[id] != nil,
                 pendingDeletion: metadata.pendingDeletes[id] != nil || scopedDeletion,
                 failed: metadata.isUpsertFailed(id) || metadata.isDeleteFailed(id),
-                belongsToCurrentVineyard: currentTrips[id] != nil || scopedDeletion,
-                originalTripPresent: currentTrips[id] != nil)
+                belongsToCurrentVineyard: belongs,
+                originalTripPresent: currentTrips[id] != nil,
+                resumeTarget: belongs ? nil : TripResumeTarget.resolve(
+                    tripId: id, selectedVineyardId: vineyardId,
+                    persistedSnapshots: savedSnapshots, accountVineyards: accountVineyards))
         }
     }
 
@@ -382,10 +393,31 @@ final class TripSyncService {
         confirmedTankActuals = provider
     }
 
+    // MARK: - Deterministic-failure cooldown
+
+    /// In memory ON PURPOSE: a relaunch or an explicit "Sync now" is always one
+    /// fresh attempt, which is how a Trip heals after a server repair without
+    /// any local state being edited. Only deterministic server answers
+    /// (`nonRetryable` / `held`) are recorded; see `TripSyncRetryThrottle`.
+    private var retryThrottle = TripSyncRetryThrottle()
+
+    /// An explicit user Sync re-checks every Trip immediately.
+    func clearRetryCooldowns() { retryThrottle.clearAll() }
+
+    /// Trips currently waiting out a cooldown after a deterministic answer.
+    func coolingDownTripIds(now: Date = Date()) -> Set<UUID> {
+        Set(retryThrottle.entries.keys.filter { retryThrottle.isCoolingDown($0, now: now) })
+    }
+
     // MARK: - Dirty tracking
 
     func markTripDirty(_ id: UUID) {
         metadata.markDirty(id, at: Date())
+        // A new local edit is new evidence (for example the operator reviewed
+        // an unfinished tank), so the next sweep re-checks this Trip instead of
+        // waiting out a cooldown that was earned by the older data. Only this
+        // device's own edits arrive here: a remote pull never calls it.
+        retryThrottle.clear(id)
     }
 
     func markTripDeleted(_ id: UUID) {
@@ -599,6 +631,15 @@ final class TripSyncService {
                   "selected_vineyard_pending: \(pending.count)",
                   "other_or_unattributed_queue_ids: \(metadata.pendingUpserts.count - pending.count)",
                   "other_vineyard_records: PROTECTED_NOT_INSPECTED"]
+        // The four lines above are different projections of the same queue. This
+        // splits every queued ID into exactly one explained bucket (read-only).
+        let recordedCancellations = Set(((try? store.tripDeletionJournal.load().intents) ?? [:]).keys)
+            .union(metadata.pendingDeletes.keys)
+        lines += TripQueueScopeBreakdown.evaluate(
+            queuedIds: Set(metadata.pendingUpserts.keys),
+            selectedVineyardId: vineyard,
+            snapshots: (store.trips + store.tripRepo.loadAll()).map { (tripId: $0.id, vineyardId: $0.vineyardId) },
+            cancelledIds: recordedCancellations).lines
         let reader = SupabaseTripSyncRepository()
         for local in pending.prefix(25) {
             guard store.currentUserIdProvider?() == account,
@@ -1247,6 +1288,13 @@ final class TripSyncService {
             || TripCancellationIntentStore.shared.blocksReplay(tripId: id) {
             dirty.removeValue(forKey: id)
         }
+        // A deterministic server answer is not re-sent on every sweep. The
+        // Trip, its tank sessions and its saved actions stay exactly as they
+        // are and its reason stays on screen; only the network attempt waits.
+        let sweepStartedAt = Date()
+        for id in Array(dirty.keys) where retryThrottle.isCoolingDown(id, now: sweepStartedAt) {
+            dirty.removeValue(forKey: id)
+        }
         if !dirty.isEmpty {
             // An admin end wins over an offline active snapshot regardless of its
             // client timestamp. Read before replay; do not upload that snapshot.
@@ -1385,9 +1433,20 @@ final class TripSyncService {
                                 // but original Trip finalisation is still unacknowledged.
                                 metadata.markParentsEstablished([tripId])
                                 tankDependencyHolds.removeValue(forKey: tripId)
+                                retryThrottle.clear(tripId)
                                 // Clearing an obsolete error is NOT a Trip completion
                                 // receipt: the original finalise journal stays queued.
                                 SyncIssueCenter.shared.clearIssues([tripId])
+                            } catch let failure as TripSyncStageFailure {
+                                // The stage that stopped, the request, the HTTP status
+                                // and the server's own code are kept. Evidence is not
+                                // touched: the original Trip, sessions and journal stay.
+                                tankDependencyHolds[tripId] = TankDependencyVerification.patchReadbackMismatch
+                                metadata.markUpsertsFailed([tripId])
+                                retryThrottle.record(failure, now: Date())
+                                SyncIssueCenter.shared.recordFailure(
+                                    id: tripId, entity: "Trips", detail: failure.syncFailureDetail,
+                                    queuedAt: ts, payloadKeys: [], vineyardId: vineyardId)
                             } catch {
                                 tankDependencyHolds[tripId] = TankDependencyVerification.patchReadbackMismatch
                                 metadata.markUpsertsFailed([tripId])
@@ -1433,10 +1492,19 @@ final class TripSyncService {
                 payloads: payloads,
                 queuedAt: dirty,
                 vineyardId: vineyardId
-            ) { try await repository.upsertTrips($0) }
+            ) { payloads in
+                do { try await repository.upsertTrips(payloads) }
+                catch let failure as TripSyncStageFailure {
+                    // Remember a deterministic answer so the next sweep does
+                    // not send the identical request again.
+                    retryThrottle.record(failure, now: Date())
+                    throw failure
+                }
+            }
             // The parent row demonstrably exists for everything uploaded, so
             // children may upload even while finalisation stays queued.
             metadata.markParentsEstablished(result.uploaded)
+            for id in result.uploaded { retryThrottle.clear(id) }
             // Phase B: a Trip whose actuals depend on tank sessions stays queued until an exact
             // server readback contains every required session.
             var unverifiedTank: Set<UUID> = []

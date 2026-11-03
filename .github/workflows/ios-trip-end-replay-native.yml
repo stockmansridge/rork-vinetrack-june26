@@ -1,0 +1,97 @@
+name: iOS Trip End replay and failure-classification native validation
+
+# Feeds the app's REAL occurrence journal, request builders and failure classifier the answers a real
+# PostgREST + PostgreSQL gave to the app's own Trip End requests. The answers are the golden fixtures
+# written by scripts/test-trip-end-http-contract.py (checked against the SQL by the
+# "Occurrence SQL contracts" workflow). No network, secret or project URL is used here.
+# This is NOT proof of the deployed schema, a non-production project or the original iPhone.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/VineTrack/Backend/Sync/TripSyncStageFailure.swift'
+      - 'ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift'
+      - 'ios/VineTrack/Backend/Sync/TripResumeTarget.swift'
+      - 'ios/VineTrack/Backend/Sync/TripQueuedUploadScope.swift'
+      - 'ios/VineTrack/Backend/Sync/TripClosureStatus.swift'
+      - 'ios/VineTrack/Backend/Sync/TripSyncService.swift'
+      - 'ios/VineTrack/Backend/Sync/SyncQueueDiagnostics.swift'
+      - 'ios/VineTrack/Backend/Models/TripOccurrenceCoverage.swift'
+      - 'ios/VineTrack/Backend/Models/BackendTrip.swift'
+      - 'ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift'
+      - 'ios/VineTrackTests/TripEndServerReplayTests.swift'
+      - 'ios/VineTrackTests/TripEndServerGoldenFixtures.swift'
+      - 'ios/VineTrackTests/TripSyncStageFailureTests.swift'
+      - 'ios/VineTrackTests/TripOccurrenceJournalTests.swift'
+      - 'scripts/gen-trip-end-native-fixtures.py'
+      - '.github/workflows/ios-trip-end-replay-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A prior source SHA's failure evidence is never cancelled by later commits.
+concurrency:
+  group: ios-trip-end-replay-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Confirm exact source and native toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          git rev-parse HEAD > "$RUNNER_TEMP/ios-trip-end-replay-source.txt"
+          XCODE_ROOT="/Applications/Xcode_26.3.app/Contents/Developer"
+          test -x "$XCODE_ROOT/usr/bin/xcodebuild" || {
+            echo "::error::Xcode 26.3 unavailable"; exit 2;
+          }
+          echo "DEVELOPER_DIR=$XCODE_ROOT" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_ROOT"
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+      - name: Select native iOS simulator
+        id: sim
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIM=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; a=json.load(sys.stdin)["devices"]; d=[x["udid"] for k,v in a.items() if "iOS" in k for x in v if x.get("isAvailable",False) and "iPhone" in x.get("name","")]; print(d[0] if d else "")')
+          test -n "$SIM"
+          echo "id=$SIM" >> "$GITHUB_OUTPUT"
+      - name: Build iOS app and replay the Trip End against the real server answers
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project ios/VineTrack.xcodeproj -scheme VineTrack -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.id }}" \
+            -resultBundlePath "$RUNNER_TEMP/iOSTripEndReplay.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:VineTrackTests/TripEndServerReplayTests \
+            -only-testing:VineTrackTests/TripSyncStageFailureTests \
+            -only-testing:VineTrackTests/TripSyncDeterministicFailureTests \
+            -only-testing:VineTrackTests/TripOccurrenceJournalTests \
+            -only-testing:VineTrackTests/TankDependencyVerificationTests \
+            -only-testing:VineTrackTests/TripQueuedUploadScopeTests \
+            -only-testing:VineTrackTests/TripClosureStatusTests \
+            INFOPLIST_KEY_VineTrackSourceRevision="${{ github.sha }}" \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/ios-trip-end-replay.log"
+      - name: Preserve source and validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-trip-end-replay-native-receipts
+          path: |
+            ${{ runner.temp }}/iOSTripEndReplay.xcresult
+            ${{ runner.temp }}/ios-trip-end-replay.log
+            ${{ runner.temp }}/ios-trip-end-replay-source.txt
+          if-no-files-found: warn
+          retention-days: 14

@@ -99,10 +99,22 @@ nonisolated enum TripClosureStatus {
         return Result(state: .closedSynced, reasons: [])
     }
 
+    /// The terminal-state line of the copied status. Only a fresh server read may
+    /// be labelled as the server's state: for every other kind of evidence the
+    /// active/end values come from this device's own row, and printing them as
+    /// `server_terminal` made a locally ended Trip look server-confirmed while
+    /// the server still had it active.
+    static func terminalLine(_ input: Input) -> String {
+        if input.evidence == .freshRead {
+            return "  server_terminal: active=\(input.serverIsActive); end_time_set=\(input.serverEndTime != nil)"
+        }
+        return "  server_terminal: not_read (evidence=\(input.evidence.rawValue)); local_row_active=\(input.serverIsActive); local_row_end_time_set=\(input.serverEndTime != nil)"
+    }
+
     static func diagnosticLines(_ input: Input, _ result: Result) -> [String] {
         [
             "trip_closure: trip=\(input.tripId) state=\(result.state.rawValue) evidence=\(input.evidence.rawValue)",
-            "  server_terminal: active=\(input.serverIsActive); end_time_set=\(input.serverEndTime != nil)",
+            terminalLine(input),
             "  locally_ended: \(input.locallyEnded)",
             "  unresolved_markers: \(input.unresolvedMarkers.count)",
             "  occurrence_pending: \(input.occurrencePending.map(String.init) ?? "unreadable"); held=\(input.occurrenceHeldReason != nil)",

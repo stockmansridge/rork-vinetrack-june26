@@ -22,6 +22,39 @@ nonisolated enum OccurrenceCreateBlockUUID {
     }
 }
 
+/// The two Trip bodies the occurrence chain sends as JSON objects. They are built here, and only here, so the
+/// native replay tests can feed the app's own output to the answers a real PostgREST gave.
+nonisolated enum OccurrenceWirePayload {
+    typealias JSON = TripOccurrenceCoverage.JSON
+
+    /// Routine fields of the Trip. Authority, route identity and lifecycle can only go through their dedicated
+    /// RPCs, so none of these keys may appear in the Trip details PATCH.
+    static let authorityKeys: [String] = [
+        "id", "vineyard_id", "created_by", "occurrence_coverage", "row_sequence", "completed_paths", "skipped_paths",
+        "sequence_index", "current_row_number", "next_row_number", "paddock_id", "paddock_ids", "tracking_pattern",
+        "start_time", "end_time", "is_active", "operator_user_id"]
+
+    private static func encoded(_ trip: BackendTripUpsert) throws -> [String: JSON] {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return try JSONDecoder().decode([String: JSON].self, from: encoder.encode(trip))
+    }
+
+    /// `p_trip` of the create operation before block ids are canonicalised.
+    static func tripMetadata(_ trip: BackendTripUpsert) throws -> [String: JSON] {
+        var metadata = try encoded(trip)
+        metadata.removeValue(forKey: "occurrence_coverage")
+        return metadata
+    }
+
+    /// Body of the Trip details PATCH sent before the first action and again after finalise.
+    static func nonAuthorityFields(_ trip: BackendTripUpsert) throws -> [String: JSON] {
+        var fields = try encoded(trip)
+        for key in authorityKeys { fields.removeValue(forKey: key) }
+        return fields
+    }
+}
+
 nonisolated enum OccurrenceParentBootstrapPolicy {
     static func mayReplay(_ rpc: String, parentOnly: Bool) -> Bool {
         !parentOnly || rpc == "create_trip_with_occurrences_v1" ||
@@ -162,14 +195,34 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     /// journal until Actual Use is independently accepted. No fabricated tank,
     /// changed quantity, Trip End, Spray completion or new identity is written.
     func establishOccurrenceTankSessions(_ trip: BackendTripUpsert, required: Set<String>) async throws {
-        guard !trip.isActive, trip.endTime != nil, !required.isEmpty,
-              let localCoverage = trip.occurrenceCoverage,
-              let localDocument = TripOccurrenceCoverage.read(localCoverage),
-              Set(trip.tankSessions.map(\.id)).count == trip.tankSessions.count,
-              Set(trip.tankSessions.map(\.tankNumber)).count == trip.tankSessions.count,
-              required.isSubset(of: TankDependencyVerification.ids(trip.tankSessions)),
-              let account = provider.client.auth.currentUser?.id
-        else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        // Each local precondition stops with its OWN fixed code. They used to
+        // share one generic reconciliation error, so a stopped Trip could not
+        // say which check had stopped it.
+        func admission(_ code: String, _ detail: String) -> TripSyncStageFailure {
+            verificationFailure(.admission, trip, endpoint: "local/tank-staging", code: code, detail: detail)
+        }
+        guard !trip.isActive, trip.endTime != nil else {
+            throw admission(TripSyncVerificationCode.tripNotEnded, "Trip is not ended locally")
+        }
+        guard !required.isEmpty else {
+            throw admission(TripSyncVerificationCode.noRequiredSessions, "No tank session is required by a local Tank Actual")
+        }
+        guard let localCoverage = trip.occurrenceCoverage,
+              let localDocument = TripOccurrenceCoverage.read(localCoverage) else {
+            throw admission(TripSyncVerificationCode.coverageUnreadable, "Local occurrence coverage is missing or unreadable")
+        }
+        guard Set(trip.tankSessions.map(\.id)).count == trip.tankSessions.count else {
+            throw admission(TripSyncVerificationCode.duplicateSession, "Two local tank sessions share one id")
+        }
+        guard Set(trip.tankSessions.map(\.tankNumber)).count == trip.tankSessions.count else {
+            throw admission(TripSyncVerificationCode.duplicateTankNumber, "Two local tank sessions share one tank number")
+        }
+        guard required.isSubset(of: TankDependencyVerification.ids(trip.tankSessions)) else {
+            throw admission(TripSyncVerificationCode.requiredNotLocal, "A tank session required by a local Tank Actual is not on the local Trip")
+        }
+        guard let account = provider.client.auth.currentUser?.id else {
+            throw admission(TripSyncVerificationCode.noAccount, "No signed-in account")
+        }
         try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString)
         // End is retained in the original WAL. Create and activate the exact
         // original server parent first, without replaying the queued finalise.
@@ -178,17 +231,35 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         // sync_version alone is not advanced by every existing Trip writer.
         // Re-encoding a Date would truncate PostgreSQL microseconds and make
         // a valid compare-and-swap fail, so retain the original text verbatim.
-        let snapshot: PostgrestResponse<[BackendTrip]> = try await provider.client.from("trips").select()
-            .eq("vineyard_id", value: trip.vineyardId.uuidString)
-            .eq("id", value: trip.id.uuidString).limit(2).execute()
+        let readEndpoint = "GET rest/v1/trips"
+        func readFailure(_ code: String, _ detail: String) -> TripSyncStageFailure {
+            verificationFailure(.tankStagingRead, trip, endpoint: readEndpoint, code: code, detail: detail)
+        }
+        let snapshot: PostgrestResponse<[BackendTrip]>
+        do {
+            snapshot = try await provider.client.from("trips").select()
+                .eq("vineyard_id", value: trip.vineyardId.uuidString)
+                .eq("id", value: trip.id.uuidString).limit(2).execute()
+        } catch {
+            throw stageError(error, .tankStagingRead, trip, endpoint: readEndpoint)
+        }
         let rawRows = try JSONDecoder().decode([TripOccurrenceCoverage.JSON].self, from: snapshot.data)
-        guard provider.client.auth.currentUser?.id == account,
-              snapshot.value.count == 1, rawRows.count == 1,
-              let existing = snapshot.value.first, existing.deletedAt == nil, existing.endTime == nil,
-              existing.isActive == true,
-              let remoteDocument = TripOccurrenceCoverage.read(existing.occurrenceCoverage),
-              localDocument.planId == remoteDocument.planId
-        else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        guard provider.client.auth.currentUser?.id == account else {
+            throw readFailure(TripSyncVerificationCode.serverRowMismatch, "Signed-in account changed during the read")
+        }
+        guard snapshot.value.count == 1, rawRows.count == 1, let existing = snapshot.value.first else {
+            throw readFailure(TripSyncVerificationCode.serverRowMismatch,
+                              "Expected exactly one server Trip row, found \(snapshot.value.count)")
+        }
+        guard existing.deletedAt == nil, existing.endTime == nil, existing.isActive == true else {
+            throw readFailure(TripSyncVerificationCode.serverRowMismatch,
+                              "Server Trip is deleted, ended or inactive (deleted=\(existing.deletedAt != nil), ended=\(existing.endTime != nil), active=\(String(describing: existing.isActive)))")
+        }
+        guard let remoteDocument = TripOccurrenceCoverage.read(existing.occurrenceCoverage),
+              localDocument.planId == remoteDocument.planId else {
+            throw readFailure(TripSyncVerificationCode.serverRowMismatch,
+                              "Server occurrence plan does not match the local original plan")
+        }
 
         let serverSessions = existing.tankSessions ?? []
         let originalById = Dictionary(trip.tankSessions.map { ($0.id, $0) },
@@ -199,7 +270,10 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         for server in serverSessions {
             guard let local = originalById[server.id],
                   TankSessionReceiptMatch.canStage(local: local, remote: server)
-            else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            else {
+                throw readFailure(TripSyncVerificationCode.serverSessionConflict,
+                                  "A server tank session conflicts with the original local session; nothing was overwritten")
+            }
         }
         let serverIds = TankDependencyVerification.ids(serverSessions)
         if required.isSubset(of: serverIds),
@@ -212,12 +286,16 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         // the read and PATCH must leave the original local journal untouched.
         guard let revision = existing.syncVersion,
               let updatedAt = rawRows[0][occurrence: "updated_at"]?.occurrenceString,
-              !updatedAt.isEmpty else { throw TripOccurrenceCoverage.Failure.reconciliation }
+              !updatedAt.isEmpty else {
+            throw readFailure(TripSyncVerificationCode.revisionMissing, "Server Trip revision or updated_at is missing")
+        }
         guard let url = TripTankCASRequestURL.make(
             baseURL: provider.supabaseURL, tripId: trip.id,
             vineyardId: trip.vineyardId, syncVersion: revision,
             rawUpdatedAt: updatedAt)
-        else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        else {
+            throw readFailure(TripSyncVerificationCode.requestInvalid, "Could not build the compare-and-swap request")
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"; request.timeoutInterval = 30
         let token = try await provider.client.auth.session
@@ -229,15 +307,41 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         request.httpBody = try encoder.encode(["tank_sessions": trip.tankSessions])
-        let (bytes, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              provider.client.auth.currentUser?.id == account
-        else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        let patchEndpoint = "PATCH rest/v1/trips (tank_sessions, compare-and-swap)"
+        let exchange: (Data, URLResponse)
+        do { exchange = try await URLSession.shared.data(for: request) }
+        catch { throw stageError(error, .tankStagingPatch, trip, endpoint: patchEndpoint) }
+        let (bytes, response) = exchange
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            // The body is the only evidence of WHY the server refused. Keep the
+            // HTTP status and PostgREST code instead of flattening them away.
+            if VineyardWriteAuthority.shared.handleServerCode(
+                (try? JSONDecoder().decode(PostgrestError.self, from: bytes))?.code,
+                vineyardId: trip.vineyardId.uuidString) {
+                throw VineyardWriteAuthority.Restricted(reason: "VT_READ_ONLY")
+            }
+            throw stageFailure(.tankStagingPatch, trip, endpoint: patchEndpoint,
+                               httpStatus: (response as? HTTPURLResponse)?.statusCode, body: bytes)
+        }
+        guard provider.client.auth.currentUser?.id == account else {
+            throw verificationFailure(.tankStagingPatch, trip, endpoint: patchEndpoint,
+                                      code: TripSyncVerificationCode.serverRowMismatch,
+                                      detail: "Signed-in account changed during the update")
+        }
         let accepted = try JSONDecoder().decode([TripOccurrenceCoverage.JSON].self, from: bytes)
         guard accepted.count == 1,
               accepted[0][occurrence: "id"]?.occurrenceString?.lowercased() == trip.id.uuidString.lowercased()
-        else { throw TripOccurrenceCoverage.Failure.reconciliation }
-        let verified = try await fetchTripForOccurrenceStart(tripId: trip.id, vineyardId: trip.vineyardId)
+        else {
+            // Zero rows means the server revision moved between the read and
+            // this compare-and-swap. Nothing was written; the next pass re-reads.
+            throw verificationFailure(.tankStagingPatch, trip, endpoint: patchEndpoint,
+                                      code: TripSyncVerificationCode.casNoMatch,
+                                      detail: "Compare-and-swap matched \(accepted.count) rows",
+                                      httpStatus: http.statusCode)
+        }
+        let verified: BackendTrip?
+        do { verified = try await fetchTripForOccurrenceStart(tripId: trip.id, vineyardId: trip.vineyardId) }
+        catch { throw stageError(error, .tankStagingReadback, trip, endpoint: readEndpoint) }
         guard provider.client.auth.currentUser?.id == account,
               let verified, verified.deletedAt == nil,
               required.isSubset(of: TankDependencyVerification.ids(verified.tankSessions ?? [])),
@@ -246,7 +350,58 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
                       TankSessionReceiptMatch.equivalent(local: local, remote: server)
                   }) == true
               })
-        else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        else {
+            throw verificationFailure(.tankStagingReadback, trip, endpoint: readEndpoint,
+                                      code: TripSyncVerificationCode.readbackMismatch,
+                                      detail: "Independent read-back does not contain every original tank session")
+        }
+    }
+
+    // MARK: Typed stage failures
+
+    /// A local verification step stopped without an HTTP error. Retryable by
+    /// default (it never was throttled before), `held` only when the immutable
+    /// occurrence journal itself is held.
+    private func verificationFailure(_ stage: TripSyncStageFailure.Stage, _ trip: BackendTripUpsert,
+                                     endpoint: String, code: String, detail: String? = nil,
+                                     operationId: String? = nil, httpStatus: Int? = nil,
+                                     journalHeld: Bool = false) -> TripSyncStageFailure {
+        TripSyncStageFailure(stage: stage, tripId: trip.id, operationId: operationId, endpoint: endpoint,
+                             httpStatus: httpStatus, serverMessage: detail, verificationCode: code,
+                             journalHeld: journalHeld, disposition: journalHeld ? .held : .retryable)
+    }
+
+    /// A raw `URLSession` request answered non-2xx. The server's own code and
+    /// message are read from the body; nothing is guessed.
+    private func stageFailure(_ stage: TripSyncStageFailure.Stage, _ trip: BackendTripUpsert,
+                              endpoint: String, httpStatus: Int?, body: Data,
+                              operationId: String? = nil) -> TripSyncStageFailure {
+        TripSyncStageFailure(stage: stage, tripId: trip.id, endpoint: endpoint,
+                             httpStatus: httpStatus, body: body, operationId: operationId)
+    }
+
+    /// An occurrence RPC rejection, with everything the server said.
+    private func stageFailure(_ rejection: OccurrenceRPCFailure, rpc: String, trip: BackendTripUpsert,
+                              operationId: String?, journalHeld: Bool) -> TripSyncStageFailure {
+        TripSyncStageFailure(rejection: rejection, rpc: rpc, tripId: trip.id,
+                             operationId: operationId, journalHeld: journalHeld)
+    }
+
+    /// The immutable occurrence journal is held; nothing is replayed.
+    private func heldFailure(_ trip: BackendTripUpsert, stage: TripSyncStageFailure.Stage,
+                             reason: String?, detail: String? = nil) -> TripSyncStageFailure {
+        let text = [detail, reason].compactMap { $0 }.joined(separator: ": ")
+        return verificationFailure(stage, trip, endpoint: "local/occurrence-journal",
+                                   code: TripSyncVerificationCode.journalHeld,
+                                   detail: text.isEmpty ? nil : text, journalHeld: true)
+    }
+
+    /// SDK and transport errors become typed failures; cancellation, write
+    /// restriction, scope conflict and other typed errors flow unchanged.
+    private func stageError(_ error: Error, _ stage: TripSyncStageFailure.Stage, _ trip: BackendTripUpsert,
+                            endpoint: String, operationId: String? = nil) -> Error {
+        TripSyncStageFailure.wrapping(error, stage: stage, tripId: trip.id,
+                                      operationId: operationId, endpoint: endpoint) ?? error
     }
 
     private func requireTripWrite(_ id: UUID) async throws -> UUID {
@@ -295,9 +450,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     func prepareOccurrenceCreation(_ trip: BackendTripUpsert, ownerId: UUID) throws {
         try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString)
         guard let coverage = trip.occurrenceCoverage else { throw TripOccurrenceCoverage.Failure.updateRequired }
-        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-        var metadata = try JSONDecoder().decode([String: TripOccurrenceCoverage.JSON].self, from: encoder.encode(trip))
-        metadata.removeValue(forKey: "occurrence_coverage")
+        let metadata = try OccurrenceWirePayload.tripMetadata(trip)
         // Swift JSONEncoder serialises UUIDs in upper case, but the deployed
         // occurrence RPC checks JSON array membership using case-sensitive text.
         // Canonicalise only NEW requests. Never rewrite a durable original WAL.
@@ -340,7 +493,9 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         if TripOccurrenceJournal.needsOriginalCreationAbsenceCheck(initial) {
             try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString)
             try deletion.requireNotCancelled(trip.id)
-            let remote = try await fetchTripForOccurrenceStart(tripId: trip.id, vineyardId: trip.vineyardId)
+            let remote: BackendTrip?
+            do { remote = try await fetchTripForOccurrenceStart(tripId: trip.id, vineyardId: trip.vineyardId) }
+            catch { throw stageError(error, .admission, trip, endpoint: "GET rest/v1/trips (creation absence check)") }
             let checkedSession = try await provider.client.auth.session
             guard checkedSession.user.id == account,
                   checkedSession.refreshToken == session.refreshToken else {
@@ -348,24 +503,41 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             }
             // A row already on the server is NOT permission to re-create it.
             // It requires a separate accepted-operation receipt reconciliation.
-            guard remote == nil else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            guard remote == nil else {
+                throw heldFailure(trip, stage: .admission, reason: initial.heldReason,
+                                  detail: "The Trip already exists on the server, so its original creation is not re-sent")
+            }
             try deletion.requireNotCancelled(trip.id)
             try journal.releaseHeldOriginalCreationAfterVerifiedServerAbsence(
                 expectedCoverage: initial.acknowledged)
         }
         if initial.creationConfirmed != false || !initial.pending.contains(where: { $0.rpc == "create_trip_with_occurrences_v1" }) {
-            let recovery = try await occurrenceRequest(rpc: "get_trip_occurrence_recovery_v1", params: .object([
-                "p_trip_id": .string(trip.id.uuidString.lowercased()),
-                "p_operation_ids": .array(initial.pending.prefix(256).map { .string($0.id) })]), accessToken: session.accessToken)
+            let recoveryRPC = "get_trip_occurrence_recovery_v1"
+            let recovery: TripOccurrenceCoverage.JSON
+            do {
+                recovery = try await occurrenceRequest(rpc: recoveryRPC, params: .object([
+                    "p_trip_id": .string(trip.id.uuidString.lowercased()),
+                    "p_operation_ids": .array(initial.pending.prefix(256).map { .string($0.id) })]), accessToken: session.accessToken)
+            } catch let rejection as OccurrenceRPCFailure {
+                // A read-only recovery lookup never holds the journal.
+                throw stageFailure(rejection, rpc: recoveryRPC, trip: trip, operationId: nil, journalHeld: false)
+            } catch let urlError as URLError {
+                throw stageError(urlError, .occurrenceRecovery, trip, endpoint: "rpc/\(recoveryRPC)")
+            }
             let currentSession = try await provider.client.auth.session
             guard currentSession.user.id == account, currentSession.refreshToken == session.refreshToken else { throw TripOccurrenceCoverage.Failure.scopeConflict }
             try journal.recover(recovery)
         }
-        guard try journal.load()?.heldReason == nil else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        if let held = try journal.load()?.heldReason {
+            throw heldFailure(trip, stage: .occurrenceRecovery, reason: held)
+        }
         // Existing trip data/session establishment must precede occurrence links and finalisation.
         var sessionsEstablished = false
         for _ in 0..<128 {
-            guard let state = try journal.load(), state.heldReason == nil else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            // A journal that vanished mid-replay is a reconciliation fault; a
+            // HELD journal is a named state with its own reason.
+            guard let state = try journal.load() else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            if let held = state.heldReason { throw heldFailure(trip, stage: .occurrenceAction, reason: held) }
             guard let op = state.pending.first else { break }
             // Do not replay path edits or End before Actual Use has receipts.
             if !OccurrenceParentBootstrapPolicy.mayReplay(op.rpc, parentOnly: parentOnly) { break }
@@ -374,7 +546,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
                 let beforeRequest = try await provider.client.auth.session
                 guard beforeRequest.user.id == account, beforeRequest.refreshToken == session.refreshToken else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                 if !sessionsEstablished && !["create_trip_with_occurrences_v1", "activate_trip_occurrences_v1"].contains(op.rpc) {
-                    try await updateOccurrenceNonAuthorityFields(trip, accessToken: session.accessToken)
+                    try await updateOccurrenceNonAuthorityFields(trip, accessToken: session.accessToken, operationId: op.id)
                     let establishedSession = try await provider.client.auth.session
                     guard establishedSession.user.id == account, establishedSession.refreshToken == session.refreshToken else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                     sessionsEstablished = true
@@ -385,51 +557,68 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
                 let currentSession = try await provider.client.auth.session
             guard currentSession.user.id == account, currentSession.refreshToken == session.refreshToken else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                 try journal.acknowledge(result)
-            } catch {
-                let message = String(describing: error)
-                if let rejection = error as? OccurrenceRPCFailure, rejection.code != "OCCURRENCE_SYNC_UNAVAILABLE" {
+            } catch let rejection as OccurrenceRPCFailure {
+                // The server answered and refused this exact operation. Whether
+                // that HOLDS the immutable journal is a separate decision:
+                // a tank-link or tank-review answer depends on server data that
+                // can be repaired, so it is reported but never held.
+                var held = false
+                if let reason = OccurrenceHoldPolicy.holdReason(for: rejection) {
                     let current = try await provider.client.auth.session
                     guard current.user.id == account, current.refreshToken == session.refreshToken else { throw TripOccurrenceCoverage.Failure.scopeConflict }
-                    try journal.hold(message.contains("UPDATE_REQUIRED") || message.contains("UNSUPPORTED") ? "OCCURRENCE_UPDATE_REQUIRED" : "OCCURRENCE_CONFLICT")
+                    try journal.hold(reason)
+                    held = true
                 }
-                throw error
+                throw stageFailure(rejection, rpc: op.rpc, trip: trip, operationId: op.id, journalHeld: held)
+            } catch let urlError as URLError {
+                throw stageError(urlError, .forRPC(op.rpc), trip, endpoint: "rpc/\(op.rpc)", operationId: op.id)
             }
         }
-        guard let state = try journal.load(), state.heldReason == nil else {
-            throw TripOccurrenceCoverage.Failure.reconciliation
-        }
+        guard let state = try journal.load() else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        if let held = state.heldReason { throw heldFailure(trip, stage: .occurrenceAction, reason: held) }
         try deletion.requireNotCancelled(trip.id)
         if parentOnly {
-            guard OccurrenceParentBootstrapPolicy.parentOperationsAcknowledged(
-                state.pending.map(\.rpc)) else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            guard OccurrenceParentBootstrapPolicy.parentOperationsAcknowledged(state.pending.map(\.rpc)) else {
+                throw verificationFailure(.parentActivate, trip, endpoint: "local/occurrence-journal",
+                                          code: TripSyncVerificationCode.parentOperationsPending,
+                                          detail: "The original create or activate operation is still pending")
+            }
             // The exact original parent must exist independently on the server.
-            let remote = try await fetchTripForOccurrenceStart(
-                tripId: trip.id, vineyardId: trip.vineyardId)
+            let parentReadEndpoint = "GET rest/v1/trips (parent read-back)"
+            let remote: BackendTrip?
+            do { remote = try await fetchTripForOccurrenceStart(tripId: trip.id, vineyardId: trip.vineyardId) }
+            catch { throw stageError(error, .parentActivate, trip, endpoint: parentReadEndpoint) }
             let checkedSession = try await provider.client.auth.session
             guard checkedSession.user.id == account,
-                  checkedSession.refreshToken == session.refreshToken,
-                  let remote, remote.deletedAt == nil,
+                  checkedSession.refreshToken == session.refreshToken else {
+                throw TripOccurrenceCoverage.Failure.scopeConflict
+            }
+            guard let remote, remote.deletedAt == nil,
                   OccurrenceParentBootstrapPolicy.isActiveOriginalServerParent(remote.isActive),
                   remote.endTime == nil,
                   TripOccurrenceCoverage.read(remote.occurrenceCoverage)?.planId == originalDocument.planId
-            else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            else {
+                throw verificationFailure(.parentActivate, trip, endpoint: parentReadEndpoint,
+                                          code: TripSyncVerificationCode.parentReadbackMismatch,
+                                          detail: "The server Trip is missing, deleted, ended, inactive or from a different plan")
+            }
             sendEstablished = true
             return
         }
-        guard state.pending.isEmpty else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        guard state.pending.isEmpty else {
+            throw verificationFailure(.occurrenceAction, trip, endpoint: "local/occurrence-journal",
+                                      code: TripSyncVerificationCode.operationsPending,
+                                      detail: "\(state.pending.count) saved action(s) are still pending after replay")
+        }
         try await updateOccurrenceNonAuthorityFields(trip, accessToken: session.accessToken)
         sendEstablished = true
     }
 
-    private func updateOccurrenceNonAuthorityFields(_ trip: BackendTripUpsert, accessToken: String) async throws {
+    private func updateOccurrenceNonAuthorityFields(_ trip: BackendTripUpsert, accessToken: String,
+                                                    operationId: String? = nil) async throws {
         try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        var fields = try JSONDecoder().decode([String: TripOccurrenceCoverage.JSON].self, from: encoder.encode(trip))
         // Authority, route identity and lifecycle can only go through their dedicated RPCs.
-        for key in ["id", "vineyard_id", "created_by", "occurrence_coverage", "row_sequence", "completed_paths", "skipped_paths",
-                    "sequence_index", "current_row_number", "next_row_number", "paddock_id", "paddock_ids", "tracking_pattern",
-                    "start_time", "end_time", "is_active", "operator_user_id"] { fields.removeValue(forKey: key) }
+        let fields = try OccurrenceWirePayload.nonAuthorityFields(trip)
         var components = URLComponents(url: provider.supabaseURL.appendingPathComponent("rest/v1/trips"), resolvingAgainstBaseURL: false)
         components?.queryItems = [URLQueryItem(name: "id", value: "eq.\(trip.id.uuidString.lowercased())"), URLQueryItem(name: "select", value: "id")]
         guard let url = components?.url else { throw TripOccurrenceCoverage.Failure.invalidAction }
@@ -439,13 +628,19 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("return=representation", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONEncoder().encode(fields)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let patchEndpoint = "PATCH rest/v1/trips (non-authority fields)"
+        let exchange: (Data, URLResponse)
+        do { exchange = try await URLSession.shared.data(for: request) }
+        catch { throw stageError(error, .nonAuthorityPatch, trip, endpoint: patchEndpoint, operationId: operationId) }
+        let (data, response) = exchange
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let code = (try? JSONDecoder().decode(PostgrestError.self, from: data))?.code
             if VineyardWriteAuthority.shared.handleServerCode(code, vineyardId: trip.vineyardId.uuidString) {
                 throw VineyardWriteAuthority.Restricted(reason: "VT_READ_ONLY")
             }
-            throw TripOccurrenceCoverage.Failure.reconciliation
+            throw stageFailure(.nonAuthorityPatch, trip, endpoint: patchEndpoint,
+                               httpStatus: (response as? HTTPURLResponse)?.statusCode, body: data,
+                               operationId: operationId)
         }
         let rows: [TripOccurrenceCoverage.JSON]
         do { rows = try JSONDecoder().decode([TripOccurrenceCoverage.JSON].self, from: data) }
@@ -454,7 +649,10 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             throw error
         }
         guard rows.count == 1, rows.first?[occurrence: "id"]?.occurrenceString?.lowercased() == trip.id.uuidString.lowercased() else {
-            throw TripOccurrenceCoverage.Failure.reconciliation
+            throw verificationFailure(.nonAuthorityPatch, trip, endpoint: patchEndpoint,
+                                      code: TripSyncVerificationCode.nonAuthorityNoRow,
+                                      detail: "The Trip details update answered \(rows.count) rows instead of exactly the Trip",
+                                      operationId: operationId, httpStatus: http.statusCode)
         }
     }
 
@@ -485,20 +683,17 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             if let writeVineyard, VineyardWriteAuthority.shared.handleServerCode((try? JSONDecoder().decode(PostgrestError.self, from: data))?.code, vineyardId: writeVineyard.uuidString) {
                 throw VineyardWriteAuthority.Restricted(reason: "VT_READ_ONLY")
             }
-            let text = String(data: data, encoding: .utf8) ?? ""
-            let range = text.range(of: "OCCURRENCE_[A-Z_]+", options: .regularExpression)
-            throw OccurrenceRPCFailure(code: range.map { String(text[$0]) } ?? "OCCURRENCE_SYNC_UNAVAILABLE")
+            // Keep everything the server said. The token is read from the raw
+            // body exactly as before; no body without a token is relabelled
+            // as a synthetic "unavailable" any more.
+            throw OccurrenceRPCFailure.from(
+                httpStatus: (response as? HTTPURLResponse)?.statusCode ?? 0, body: data)
         }
         do { return try JSONDecoder().decode(TripOccurrenceCoverage.JSON.self, from: data) }
         catch {
             RecoveryDecodeEvidence.record(error, source: "supabase_response", operation: "rpc.\(rpc)")
             throw error
         }
-    }
-
-    private struct OccurrenceRPCFailure: Error, LocalizedError {
-        let code: String
-        var errorDescription: String? { "Occurrence sync needs review (\(code)). Saved work was retained." }
     }
 
     func fetchAllAccessibleTrips() async throws -> [BackendTrip] {
@@ -674,5 +869,36 @@ nonisolated private struct SoftDeleteTripRequest: Encodable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case tripId = "p_trip_id"
+    }
+}
+
+// MARK: - Typed wrapping of SDK and transport errors
+
+nonisolated extension TripSyncStageFailure {
+    /// Turns an SDK or transport error into a typed stage failure.
+    ///
+    /// Returns nil when the error must flow unchanged:
+    ///  * `VT_READ_ONLY` - `SyncQueuePush.hold` reads exactly this code from a
+    ///    `PostgrestError` to stop writing for a read-only vineyard.
+    ///  * cancellation (`CancellationError`, `URLError.cancelled`).
+    ///  * scope, storage, restriction and decoding errors, which already have
+    ///    their own meaning and handling.
+    static func wrapping(_ error: Error, stage: Stage, tripId: UUID,
+                         operationId: String?, endpoint: String) -> TripSyncStageFailure? {
+        if let existing = error as? TripSyncStageFailure { return existing }
+        if let postgrest = error as? PostgrestError {
+            if postgrest.code == "VT_READ_ONLY" { return nil }
+            let message: String? = postgrest.message
+            return TripSyncStageFailure(
+                stage: stage, tripId: tripId, operationId: operationId, endpoint: endpoint,
+                postgrestCode: postgrest.code, serverMessage: message,
+                occurrenceCode: PostgrestAnswer.occurrenceToken(in: message ?? ""))
+        }
+        if let urlError = error as? URLError {
+            if urlError.code == .cancelled { return nil }
+            return TripSyncStageFailure(stage: stage, tripId: tripId, operationId: operationId,
+                                        endpoint: endpoint, transportCode: urlError.errorCode)
+        }
+        return nil
     }
 }

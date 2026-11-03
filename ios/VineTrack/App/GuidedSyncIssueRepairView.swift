@@ -17,6 +17,10 @@ nonisolated struct GuidedSyncRepairIssue: Identifiable, Hashable, Sendable {
     let detail: String
     let verifiedCurrentScope: Bool
     let originalActualAvailable: Bool
+    /// A protected Trip that belongs to another vineyard of this account. Only
+    /// names where to resume; the Trip is never uploaded from the wrong vineyard.
+    var resumeVineyardId: UUID? = nil
+    var resumeVineyardName: String? = nil
 }
 
 nonisolated enum GuidedSyncRecordState: String, Sendable {
@@ -341,8 +345,13 @@ struct GuidedSyncIssueRepairView: View {
                 ? .protectedQueue : (deletion ? .tripDeletion : .tripUpload)
             let recordedActual = pendingActuals.contains { $0.tripId == entry.id }
             let explanation: String
+            // A server read that places this ID in the selected vineyard
+            // contradicts a saved snapshot elsewhere: offer no resume then.
+            let resume = legacyServerScope[entry.id] == nil ? entry.resumeTarget : nil
             if !entry.belongsToCurrentVineyard {
-                if legacyServerScope[entry.id] == .selectedDeleted {
+                if let resume {
+                    explanation = "This Trip belongs to \(resume.vineyardName). It is paused here so it can never be uploaded into the wrong vineyard. Switch to \(resume.vineyardName) to resume it with its original IDs."
+                } else if legacyServerScope[entry.id] == .selectedDeleted {
                     explanation = "The authenticated server confirms this original Trip is soft-deleted in the selected vineyard. Review the archived original Spray/Actual evidence and obtain an exact cancellation receipt. No automatic cleanup."
                 } else if legacyServerScope[entry.id] == .selectedNotDeleted {
                     explanation = "This ID exists in the selected vineyard, but the original device snapshot and operation receipt are unverified. Do not re-upload or clear."
@@ -366,7 +375,9 @@ struct GuidedSyncIssueRepairView: View {
                     : (deletion ? "Trip deletion" : "Trip upload / completion"),
                 detail: explanation,
                 verifiedCurrentScope: entry.belongsToCurrentVineyard,
-                originalActualAvailable: recordedActual && entry.originalTripPresent))
+                originalActualAvailable: recordedActual && entry.originalTripPresent,
+                resumeVineyardId: resume?.vineyardId,
+                resumeVineyardName: resume?.vineyardName))
         }
 
         // Include already accepted Actual Use linked to a failed Trip, as
@@ -475,7 +486,9 @@ private struct GuidedSyncIssueDetailView: View {
     @Environment(TripSyncService.self) private var tripSync
     @Environment(SprayRecordSyncService.self) private var spraySync
     @Environment(SyncStatusCenter.self) private var syncStatus
+    @Environment(\.dismiss) private var dismiss
 
+    @State private var switchingVineyard = false
     @State private var originatingContext: String?
     @State private var server: GuidedSyncRecordState = .notChecked
     @State private var serverExplanation = "Not checked"
@@ -505,6 +518,29 @@ private struct GuidedSyncIssueDetailView: View {
     }
     private var originalActual: SprayTankActual? {
         SprayTankActualStore.shared.records.first { $0.id == issue.recordId }
+    }
+    /// The vineyard that owns this protected Trip, offered only while the
+    /// signed-in account is unchanged and still belongs to that vineyard.
+    private var resumeVineyard: Vineyard? {
+        guard let target = issue.resumeVineyardId, originatingContext == contextKey,
+              auth.isSignedIn, auth.userId == store.currentUserIdProvider?(),
+              target != store.selectedVineyardId else { return nil }
+        return store.vineyards.first { $0.id == target }
+    }
+
+    /// Selecting the owning vineyard is the same action as the header switcher.
+    /// It uploads nothing itself: the ordinary sweep for the newly selected
+    /// vineyard then runs every normal gate under that vineyard's own identity.
+    private func switchToOwningVineyard(_ vineyard: Vineyard) async {
+        guard !switchingVineyard else { return }
+        switchingVineyard = true
+        defer { switchingVineyard = false }
+        await store.prepareAndSelectVineyard(vineyard)
+        if store.selectedVineyardId == vineyard.id {
+            dismiss()
+        } else {
+            outcome = "The switch to \(vineyard.name) did not complete. Nothing was changed. Try again."
+        }
     }
     private var originalTrip: Trip? {
         let tripId = issue.relatedTripId ?? (
@@ -569,6 +605,24 @@ private struct GuidedSyncIssueDetailView: View {
                         .font(.caption2.monospaced())
                 }
                 Text(issue.detail).font(.subheadline)
+                if let vineyard = resumeVineyard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("This Trip belongs to \(vineyard.name).", systemImage: "arrow.triangle.swap")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Switch to \(vineyard.name) to resume it. Nothing is uploaded into the wrong vineyard, and the original IDs and saved work are kept.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button {
+                            Task { await switchToOwningVineyard(vineyard) }
+                        } label: {
+                            HStack {
+                                Label("Switch to \(vineyard.name) and sync", systemImage: "arrow.right.circle.fill")
+                                if switchingVineyard { Spacer(); ProgressView() }
+                            }
+                        }
+                        .disabled(switchingVineyard || syncStatus.isSyncing || tripSync.isSyncing || spraySync.isSyncing)
+                    }
+                    .padding(.vertical, 4)
+                }
                 if let trip = originalTrip {
                     NavigationLink {
                         TripDetailView(trip: trip)

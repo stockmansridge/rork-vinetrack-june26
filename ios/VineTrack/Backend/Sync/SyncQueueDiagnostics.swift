@@ -197,6 +197,12 @@ nonisolated enum BackendErrorDiagnostics {
     /// Classifies any upload/download error into retryable vs permanent with a
     /// stable reason code and an operator-friendly sentence.
     static func classify(_ error: Error, endpoint: String) -> SyncFailureDetail {
+        // A typed stage failure already knows exactly what stopped. It is
+        // matched BEFORE every text heuristic below, because its sanitised
+        // server message can contain digits such as "502" or "42501" that a
+        // substring match would mistake for something else.
+        if let stage = error as? TripSyncStageFailure { return stage.syncFailureDetail }
+
         let raw = String(describing: error)
         let sanitised = sanitise(raw)
         let lowered = raw.lowercased()
@@ -393,7 +399,7 @@ final class SyncIssueCenter {
                 "entity: \(entities.contains(issue.entity) ? issue.entity : "OTHER_VERIFIED_ENTITY")",
                 "last_failed_operation: \(operations.contains(issue.operation) ? issue.operation : "OTHER_OPERATION")",
                 "last_failed_attempt_at: \(issue.lastAttemptAt.ISO8601Format()); observed_attempts: \(issue.attemptCount)",
-                "failure_code: \(codes.contains(issue.reasonCode) ? issue.reasonCode : "UNCLASSIFIED_FAILURE_REQUIRES_PRIVATE_REVIEW")",
+                "failure_code: \(codes.contains(issue.reasonCode) || TripSyncStageFailure.isExportSafe(issue.reasonCode) ? issue.reasonCode : "UNCLASSIFIED_FAILURE_REQUIRES_PRIVATE_REVIEW")",
                 "retry_classification: \(issue.kind.rawValue); server_ack: unknown_requires_receipt"]
         }
         return lines.joined(separator: "\n")

@@ -1,0 +1,83 @@
+name: Occurrence SQL contracts (local PostgreSQL only)
+
+# Runs the occurrence authority SQL and the tank-link UUID-case repair against a throw-away
+# PostgreSQL 17 on a Unix socket inside the runner, and replays the app's real Trip End requests
+# over HTTP through a pinned, checksum-verified PostgREST bound to 127.0.0.1. No secret, project
+# URL or remote database is read or reachable. This is a contract proof of the shipped SQL and wire
+# shapes, NOT of the deployed schema, GoTrue, the Spray/portal triggers or the original iPhone.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sql/276_trip_occurrence_authority_v1.sql'
+      - 'sql/277_trip_occurrence_reports_v2.sql'
+      - 'sql/278_trip_occurrence_recovery_v1.sql'
+      - 'sql/occurrence_setup_uuid_case_identity.sql'
+      - 'sql/occurrence_tank_link_uuid_case_identity.sql'
+      - 'sql/occurrence_tank_link_uuid_case_identity_verify.sql'
+      - 'sql/tests/276_trip_occurrence_bootstrap.sql'
+      - 'sql/284_guided_repair_archived_actual_tombstone_contract.sql'
+      - 'sql/tests/284_guided_repair_contract_tests.sql'
+      - 'scripts/test-trip-occurrence-authority.py'
+      - 'scripts/test-tank-link-case-contract.py'
+      - 'scripts/test-pr52-postgres-contract.py'
+      - 'scripts/test-trip-end-http-contract.py'
+      - 'scripts/gen-trip-end-native-fixtures.py'
+      - 'ios/VineTrackTests/TripEndServerGoldenFixtures.swift'
+      # The HTTP contract statically compares the app's own field lists with the server's.
+      - 'ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift'
+      - 'ios/VineTrack/Backend/Models/BackendTrip.swift'
+      - '.github/workflows/sql-occurrence-contracts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sql-occurrence-contracts-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install PostgreSQL 17 binaries (local, disposable)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-17
+          test -x /usr/lib/postgresql/17/bin/initdb
+          /usr/lib/postgresql/17/bin/postgres --version
+      - name: Occurrence authority suite on the shipped SQL (includes the tank-link repair)
+        shell: bash
+        run: python3 scripts/test-trip-occurrence-authority.py
+      - name: Tank-link UUID-case contract (red baseline, fail-closed, idempotent, iOS wire shape end to end)
+        shell: bash
+        run: python3 scripts/test-tank-link-case-contract.py
+      - name: PR52 guided repair contract
+        shell: bash
+        run: python3 scripts/test-pr52-postgres-contract.py
+      - name: Install pinned PostgREST (checksum-verified, local only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pgrst"
+          curl --fail --silent --show-error --location \
+            --output "$RUNNER_TEMP/pgrst/postgrest.tar.xz" \
+            "https://github.com/PostgREST/postgrest/releases/download/v16.5/postgrest-v16.5-linux-static-x86-64.tar.xz"
+          echo "5099e7ada38f9f6846cd87c14c5f158b7c165f1e9959665ad412e61f4dceba95  $RUNNER_TEMP/pgrst/postgrest.tar.xz" | sha256sum --check --strict
+          tar -xJf "$RUNNER_TEMP/pgrst/postgrest.tar.xz" -C "$RUNNER_TEMP/pgrst" postgrest
+          "$RUNNER_TEMP/pgrst/postgrest" --version
+      - name: Real HTTP Trip End contract (PostgREST in front of the local PostgreSQL)
+        shell: bash
+        env:
+          POSTGREST_BIN: ${{ runner.temp }}/pgrst/postgrest
+        run: python3 scripts/test-trip-end-http-contract.py

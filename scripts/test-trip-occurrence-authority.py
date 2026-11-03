@@ -508,7 +508,7 @@ if __name__ == '__main__':
         subprocess.run([str(BIN/'initdb'),'-D',str(data),'-A','trust','--no-locale'],env=ENV,check=True,capture_output=True)
         subprocess.run([str(BIN/'pg_ctl'),'-D',str(data),'-l',str(log),'-o',f"-k {work} -p 55439 -c listen_addresses=''",'-w','start'],env=ENV,check=True,capture_output=True)
         try:
-            for file in ['sql/tests/276_trip_occurrence_bootstrap.sql','sql/276_trip_occurrence_authority_v1.sql','sql/277_trip_occurrence_reports_v2.sql','sql/278_trip_occurrence_recovery_v1.sql','sql/occurrence_setup_uuid_case_identity.sql']:
+            for file in ['sql/tests/276_trip_occurrence_bootstrap.sql','sql/276_trip_occurrence_authority_v1.sql','sql/277_trip_occurrence_reports_v2.sql','sql/278_trip_occurrence_recovery_v1.sql','sql/occurrence_setup_uuid_case_identity.sql','sql/occurrence_tank_link_uuid_case_identity.sql']:
                 source = ROOT/file
                 if file.endswith('_bootstrap.sql'):
                     # Keep psql meta-command semantics and resolve this fixture's

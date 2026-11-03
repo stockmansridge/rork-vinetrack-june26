@@ -52,6 +52,78 @@ nonisolated struct TripQueuedScopeSummary: Equatable {
     }
 }
 
+/// Read-only, mutually exclusive explanation of every queued Trip upload ID.
+///
+/// The totals shown elsewhere (queue entries, failures, selected-vineyard work,
+/// cancelled history) are different projections, which made healthy current
+/// work look unhealthy next to old protected entries. Each ID falls into
+/// exactly one bucket here, so the buckets always add up to the global count.
+/// Never uploads, clears or acknowledges anything.
+nonisolated struct TripQueueScopeBreakdown: Equatable, Sendable {
+    nonisolated struct OtherVineyardEntry: Equatable, Sendable {
+        let tripId: UUID
+        let vineyardId: UUID
+    }
+
+    /// Live work saved under the selected vineyard.
+    let selectedVineyardLive: Int
+    /// Trips with a recorded cancellation: history, not live work.
+    let cancelledHistory: Int
+    /// Saved on this device under exactly one other vineyard: resumable there.
+    let otherVineyardSavedOnDevice: [OtherVineyardEntry]
+    /// No saved snapshot, or snapshots under several vineyards: stays protected.
+    let unattributedOrAmbiguous: Int
+
+    var total: Int {
+        selectedVineyardLive + cancelledHistory + otherVineyardSavedOnDevice.count + unattributedOrAmbiguous
+    }
+
+    static func evaluate(
+        queuedIds: Set<UUID>,
+        selectedVineyardId: UUID,
+        snapshots: [(tripId: UUID, vineyardId: UUID)],
+        cancelledIds: Set<UUID>
+    ) -> Self {
+        let owners = Dictionary(grouping: snapshots, by: { $0.tripId })
+            .mapValues { Set($0.map(\.vineyardId)) }
+        var live = 0
+        var history = 0
+        var unattributed = 0
+        var others: [OtherVineyardEntry] = []
+        for id in queuedIds.sorted(by: { $0.uuidString < $1.uuidString }) {
+            if cancelledIds.contains(id) {
+                history += 1
+            } else if let vineyards = owners[id], vineyards.count == 1, let owner = vineyards.first {
+                if owner == selectedVineyardId {
+                    live += 1
+                } else {
+                    others.append(OtherVineyardEntry(tripId: id, vineyardId: owner))
+                }
+            } else {
+                unattributed += 1
+            }
+        }
+        return Self(selectedVineyardLive: live, cancelledHistory: history,
+                    otherVineyardSavedOnDevice: others, unattributedOrAmbiguous: unattributed)
+    }
+
+    /// Fixed keys only. Trip and vineyard IDs, never names or content.
+    var lines: [String] {
+        var out = [
+            "queue_breakdown_total: \(total)",
+            "queue_breakdown_selected_vineyard_live: \(selectedVineyardLive)",
+            "queue_breakdown_cancelled_history: \(cancelledHistory)",
+            "queue_breakdown_other_vineyard_saved_on_device: \(otherVineyardSavedOnDevice.count)",
+            "queue_breakdown_unattributed_or_ambiguous_owner: \(unattributedOrAmbiguous)",
+            "queue_breakdown_note: buckets_are_mutually_exclusive; trip_deletions_and_tank_actuals_are_separate_queues"
+        ]
+        for entry in otherVineyardSavedOnDevice {
+            out.append("other_vineyard_queue_entry: trip=\(entry.tripId.uuidString.lowercased()); saved_vineyard=\(entry.vineyardId.uuidString.lowercased()); action: select_that_vineyard_to_resume; no_cross_vineyard_replay")
+        }
+        return out
+    }
+}
+
 /// Global legacy IDs still prevent a full-sync receipt, but a held Trip
 /// belonging only to a foreign/unidentified scope is not a CURRENT vineyard
 /// error. Never delete its queue entry or report a fully drained upload.
