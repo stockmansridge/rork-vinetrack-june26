@@ -172,11 +172,20 @@ final class TripSyncService {
 
     /// P0 3.1.9 Phase B: tank session IDs referenced by local Tank actuals for a Trip.
     private var requiredTankSessions: (UUID) -> Set<String> = { _ in [] }
+    /// Source of independently confirmed original Actual Use. Injectable only
+    /// for native tests; production always reads the durable Actual store.
+    private var confirmedTankActuals: (UUID) -> [SprayTankActual] = { tripId in
+        SprayTankActualStore.shared.records.filter { $0.tripId == tripId }
+    }
     /// Last fixed Phase B hold code per Trip; diagnostics only, never quantities.
     private(set) var tankDependencyHolds: [UUID: String] = [:]
 
     func configureTankDependencies(_ provider: @escaping (UUID) -> Set<String>) {
         requiredTankSessions = provider
+    }
+
+    func configureConfirmedTankActuals(_ provider: @escaping (UUID) -> [SprayTankActual]) {
+        confirmedTankActuals = provider
     }
 
     // MARK: - Dirty tracking
@@ -1114,8 +1123,49 @@ final class TripSyncService {
                         // Previously step 2 was skipped, causing the Trip/Actual
                         // and Spray completion to wait on one another forever.
                         let required = requiredTankSessions(tripId)
-                        let missing = TankDependencyVerification.missing(
+                        var missing = TankDependencyVerification.missing(
                             required: required, in: TankDependencyVerification.ids(trip.tankSessions))
+                        if !missing.isEmpty, let actor = store.currentUserIdProvider?() {
+                            // Build 210 recovery: the original Start Tank code
+                            // assigned the exact same timestamp to the original
+                            // tank start and the confirmed Actual Use. The local
+                            // Actual is retained even if an old server pull
+                            // replaced the Trip snapshot with zero sessions.
+                            // Restore only those independently recorded facts.
+                            let scope = TripOccurrenceJournal.Scope(
+                                ownerId: actor.uuidString.lowercased(),
+                                vineyardId: vineyardId.uuidString.lowercased(),
+                                tripId: tripId.uuidString.lowercased())
+                            if let journal = try? TripOccurrenceJournal(scope: scope),
+                               let state = try? journal.load(),
+                               state.heldReason == nil,
+                               state.pending.contains(where: {
+                                   $0.rpc == "finalize_trip_occurrences_v1"
+                               }) {
+                                let linked = Set(store.sprayRecords.filter {
+                                    $0.canonicalTripId == tripId &&
+                                    $0.vineyardId == vineyardId &&
+                                    !$0.isTemplate
+                                }.map(\.id))
+                                let actuals = confirmedTankActuals(tripId).filter {
+                                    $0.tripId == tripId && $0.vineyardId == vineyardId
+                                }
+                                if let recovered = ConfirmedTankStartRecovery.restore(
+                                    trip: trip, missingSessionIds: missing,
+                                    confirmedActuals: actuals,
+                                    linkedSprayIds: linked, ownerId: actor
+                                ) {
+                                    // This local disk write must succeed BEFORE any
+                                    // parent/session/actual network replay. If not,
+                                    // the original actual and End WAL remain held.
+                                    try store.updateTripOrThrow(recovered)
+                                    trip = recovered
+                                    missing = TankDependencyVerification.missing(
+                                        required: required,
+                                        in: TankDependencyVerification.ids(trip.tankSessions))
+                                }
+                            }
+                        }
                         if !missing.isEmpty {
                             tankDependencyHolds[tripId] = TankDependencyVerification.requiredSessionMissing
                             metadata.markUpsertsFailed([tripId])
@@ -1943,6 +1993,61 @@ nonisolated enum TankSessionReceiptMatch {
             return "TRIP_LOCAL_TANK_FILL_END_DIFFERS_\(differenceBucket(local.fillEndTime, remote.fillEndTime))"
         }
         return nil
+    }
+}
+
+/// A narrow recovery for build 210's "Actual exists, Trip has zero tank
+/// sessions" condition. Production Start Tank assigns one immutable timestamp
+/// to BOTH TankSession.startTime and SprayTankActual.confirmedAt. Therefore,
+/// when the original owner/Trip/Spray/session identity all match, these facts
+/// are already durable in the confirmed Actual: not guessed.
+nonisolated enum ConfirmedTankStartRecovery {
+    static func restore(
+        trip: Trip, missingSessionIds: Set<String>,
+        confirmedActuals: [SprayTankActual], linkedSprayIds: Set<UUID>,
+        ownerId: UUID
+    ) -> Trip? {
+        guard trip.coverageBasis == .occurrence, !trip.isActive,
+              let endedAt = trip.endTime, endedAt >= trip.startTime,
+              !missingSessionIds.isEmpty, linkedSprayIds.count == 1,
+              Set(trip.tankSessions.map(\.id)).count == trip.tankSessions.count,
+              Set(trip.tankSessions.map(\.tankNumber)).count == trip.tankSessions.count
+        else { return nil }
+        var recovered = trip
+        var events: [String] = []
+        for requiredId in missingSessionIds.sorted() {
+            guard let sessionId = UUID(uuidString: requiredId),
+                  !recovered.tankSessions.contains(where: { $0.id == sessionId }) else {
+                return nil
+            }
+            let matches = confirmedActuals.filter {
+                $0.tripId == trip.id && $0.vineyardId == trip.vineyardId &&
+                $0.confirmedBy == ownerId && linkedSprayIds.contains($0.sprayRecordId) &&
+                TankDependencyVerification.normalized($0.tankSessionId) == requiredId
+            }
+            // A conflicting correction, alternative identity, invalid time or
+            // reused tank number must remain a protected hold.
+            guard matches.count == 1, let actual = matches.first,
+                  actual.tankNumber >= 1,
+                  actual.confirmedAt >= trip.startTime,
+                  actual.confirmedAt <= endedAt,
+                  !recovered.tankSessions.contains(where: { $0.tankNumber == actual.tankNumber })
+            else { return nil }
+            recovered.tankSessions.append(TankSession(
+                id: sessionId, tankNumber: actual.tankNumber,
+                startTime: actual.confirmedAt
+            ))
+            recovered.totalTanks = max(recovered.totalTanks, actual.tankNumber)
+            // End time, row start/end, fill times and paths are NOT present
+            // in the immutable Actual; leave them absent, never infer.
+            events.append("tank=\(sessionId.uuidString.lowercased()) actual=\(actual.id.uuidString.lowercased())")
+        }
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        for event in events {
+            recovered.manualCorrectionEvents.append(
+                "\(timestamp) recovered_original_tank_start_from_confirmed_actual \(event) unverified_fields=tank_end,rows,fill,paths")
+        }
+        return recovered
     }
 }
 

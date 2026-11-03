@@ -92,6 +92,102 @@ import Testing
                 "The exact original finalise must remain intact until Actual Use is verified")
     }
 
+    @Test func build210OriginalActualRestoresOnlyOriginalTankStartAndReplaysStage() async throws {
+        let fixture = try EndFixture()
+        defer { fixture.cleanUp() }
+        let finalise = try fixture.prepareJournalWithPendingFinalise()
+        let (store, metadata, service, auth) = fixture.service()
+        _ = auth
+        let remote = try fixture.serverTrip(
+            active: true, coverage: #require(try fixture.journal.load()).acknowledged)
+        fixture.remote = [remote]
+        var ended = remote.toTrip()
+        ended.isActive = false
+        ended.endTime = fixture.endedAt
+        ended.tankSessions = []             // Build 210's exact broken local state.
+        let sessionId = UUID(), sprayId = UUID(), actualId = UUID()
+        let originalStart = fixture.endedAt.addingTimeInterval(-300)
+        let actual = try SprayTankActual(
+            id: actualId, vineyardId: fixture.vineyard, sprayRecordId: sprayId,
+            tripId: fixture.trip, tankSessionId: sessionId.uuidString,
+            tankNumber: 1, waterVolumeL: 250, chemicals: [],
+            confirmedAt: originalStart, confirmedBy: fixture.account)
+        store.trips = [ended]
+        store.tripRepo.saveSlice(store.trips, for: fixture.vineyard)
+        store.sprayRecords = [SprayRecord(
+            id: sprayId, tripId: fixture.trip, vineyardId: fixture.vineyard)]
+        metadata.markDirty(fixture.trip, at: Date())
+        service.configurePhase5EndGate { $0 == fixture.trip }
+        service.configureTankDependencies { $0 == fixture.trip
+            ? [sessionId.uuidString.lowercased()] : [] }
+        service.configureConfirmedTankActuals { $0 == fixture.trip ? [actual] : [] }
+
+        try await service.pushLocalTrips(vineyardId: fixture.vineyard)
+
+        let recovered = try #require(store.trips.first { $0.id == fixture.trip })
+        let session = try #require(recovered.tankSessions.first)
+        #expect(recovered.tankSessions.count == 1)
+        #expect(session.id == sessionId)
+        #expect(session.tankNumber == actual.tankNumber)
+        #expect(session.startTime == actual.confirmedAt)
+        #expect(session.endTime == nil && session.startRow == nil && session.endRow == nil)
+        #expect(session.pathsCovered.isEmpty)
+        #expect(recovered.endTime == fixture.endedAt && !recovered.isActive)
+        #expect(recovered.manualCorrectionEvents.contains {
+            $0.contains("recovered_original_tank_start_from_confirmed_actual") &&
+            $0.contains(actualId.uuidString.lowercased())
+        })
+        #expect(fixture.stagedSessions == [sessionId.uuidString.lowercased()])
+        #expect(metadata.pendingUpserts[fixture.trip] != nil)
+        #expect(try fixture.journal.load()?.pending.first?.id == finalise.id)
+        let fromDisk = try #require(store.tripRepo.load(for: fixture.vineyard)
+            .first(where: { $0.id == fixture.trip }))
+        #expect(fromDisk.tankSessions == recovered.tankSessions)
+    }
+
+    @Test func build210RecoveryRefusesForeignOrContradictoryActual() throws {
+        let vineyard = UUID(), owner = UUID(), tripId = UUID(), sprayId = UUID()
+        let start = Date(timeIntervalSince1970: 1_793_660_000)
+        var ended = Trip(id: tripId, vineyardId: vineyard,
+                         startTime: start, endTime: start.addingTimeInterval(600),
+                         isActive: false)
+        // A legacy/no-occurrence Trip must never be reconstructed by this path.
+        let sessionId = UUID()
+        let actual = try SprayTankActual(
+            vineyardId: vineyard, sprayRecordId: sprayId, tripId: tripId,
+            tankSessionId: sessionId.uuidString, tankNumber: 1,
+            waterVolumeL: 100, chemicals: [],
+            confirmedAt: start.addingTimeInterval(200), confirmedBy: owner)
+        let required: Set<String> = [sessionId.uuidString.lowercased()]
+        let linked: Set<UUID> = [sprayId]
+        #expect(ConfirmedTankStartRecovery.restore(
+            trip: ended, missingSessionIds: required,
+            confirmedActuals: [actual], linkedSprayIds: linked, ownerId: owner) == nil)
+        let fixture = try EndFixture()
+        defer { fixture.cleanUp() }
+        _ = try fixture.prepareJournalWithPendingFinalise()
+        ended.occurrenceCoverage = try #require(try fixture.journal.load()?.acknowledged)
+        #expect(ConfirmedTankStartRecovery.restore(
+            trip: ended, missingSessionIds: required,
+            confirmedActuals: [actual], linkedSprayIds: linked,
+            ownerId: UUID()) == nil)
+        #expect(ConfirmedTankStartRecovery.restore(
+            trip: ended, missingSessionIds: required,
+            confirmedActuals: [actual, actual], linkedSprayIds: linked,
+            ownerId: owner) == nil)
+        #expect(ConfirmedTankStartRecovery.restore(
+            trip: ended, missingSessionIds: required,
+            confirmedActuals: [actual], linkedSprayIds: [UUID()],
+            ownerId: owner) == nil)
+        var active = ended
+        active.isActive = true
+        active.endTime = nil
+        #expect(ConfirmedTankStartRecovery.restore(
+            trip: active, missingSessionIds: required,
+            confirmedActuals: [actual], linkedSprayIds: linked,
+            ownerId: owner) == nil)
+    }
+
     @Test func missingOriginalTankSessionHoldsWithoutMintingReplacement() async throws {
         let fixture = try EndFixture()
         defer { fixture.cleanUp() }
