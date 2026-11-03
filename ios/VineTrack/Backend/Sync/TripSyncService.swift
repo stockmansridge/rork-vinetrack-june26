@@ -187,7 +187,7 @@ final class TripSyncService {
         let remote = try await SupabaseTripSyncRepository()
             .fetchTripForOccurrenceStart(tripId: tripId, vineyardId: vineyardId)
         guard let remote, remote.id == tripId, remote.vineyardId == vineyardId,
-              remote.deletedAt == nil, remote.endTime == nil, remote.isActive,
+              remote.deletedAt == nil, remote.endTime == nil, remote.isActive == true,
               store.selectedVineyardId == vineyardId, store.currentUserIdProvider?() == owner,
               SupabaseClientProvider.shared.client.auth.currentUser?.id == owner,
               (try? store.tripDeletionJournal.isCancelled(tripId)) == false
