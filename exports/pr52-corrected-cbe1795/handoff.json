@@ -1,0 +1,245 @@
+{
+  "base_pr": 52,
+  "repository": "stockmansridge/rork-vinetrack-june26",
+  "base_sha": "cbe1795ad5d678a25d594e61eb607ef2656be4a0",
+  "managed_export_head": "1ac25d8b1810df0546239cc32a85d05a6e0380d6",
+  "purpose": "Transfer exact corrected implementation into existing PR52; not a full-main replacement",
+  "files": [
+    {
+      "path": ".github/workflows/ios-guided-sync-repair-native.yml",
+      "status": "modified",
+      "base_sha256": "2457d8f49d6411f3a6fc65738e7ae8958a28d81882d57e450ab16f00a1b9d573",
+      "corrected_sha256": "748a413194a01177cb10631ae47eb0c2444c9f3482f183aae6651b9751be2e83",
+      "bytes": 3821
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/amendment-reentrancy-pre-fix-failure.log",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "170dc8b8f53741a9e0a9a33c882054454ec1f194bc6dc69ca6220557f8f02085",
+      "bytes": 17154
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/corrected-ios-source-manifest.json",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "fae27f24f8d118e3a423edc439d6ddceb842ebcc0934e0053cf37138e56c4273",
+      "bytes": 213974
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/followup-source-manifest.json",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "6f17033be923b4adf98a18dccf0bcd7fe32f48055591e26775c4c947aed52ada",
+      "bytes": 214871
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/followup-validation-receipt.json",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "c805efb158c6d00c5b3141bb47b39c13ff2c63907425231b503ae80aba24d05c",
+      "bytes": 6711
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/github-original-native-failure.log",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "e1dea2fe904efe22fc33a10146a9ac87f3bce35d90bd7465e8225a33b6aeecc9",
+      "bytes": 2732161
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/historical-managed-checkpoint-catalog.json",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "3890451d5832e6a7a6c7c34b57c990dfbd06f0ba8b893011ddc86b0c4d53e9ff",
+      "bytes": 35274
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/legacy-audit-pre-fix-failure.log",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "1f0f8a092569f6eb7911e0288a99cbd8094ef3b8e500731e472f19bf66b4677c",
+      "bytes": 17243
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/live-backend-after-sql284.json",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "9b5ee2bd3f5c957996ff0507fe1b1a68876e99e91237ca536363b2d5dbf96044",
+      "bytes": 73105
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/live-backend-catalog.json",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "6c3f0df5c539820466f6680b000cb481a805b61690c916831f67a15393edf679",
+      "bytes": 35274
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/live-backend-expanded-catalog.json",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "faca815c276fabfd2d0cc9b20a8ecd3d66bbfbd062d02e17f542a794254a7890",
+      "bytes": 70622
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/local-postgres-contract-first-pass.log",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "efa586721964e89db561ce8d4834ab9653e95bbbad38f148220dbb00097f89b2",
+      "bytes": 3289
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/local-postgres-expanded-contract-pass.log",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "7df802253989306e3a2577b9a700069f3191c237a6733eeab44c3a8088f57274",
+      "bytes": 4154
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/local-postgres-expanded-fixture-syntax-failure.log",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "d5b9e3dc9d3ee3bdadada076ba161a7f3cf3dc1e8387052dedbf20d9c3128aa7",
+      "bytes": 1495
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/pre-fix-engine-failure.log",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "109747c91fd587bdf61b335f3f36fcdf09f940b4411c6625a8c0b3e0756ddbad",
+      "bytes": 7187
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/source-application.json",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "e6862ef1bb7af8f2074596a3951a624644e5959a18be768bfba05c89a2651a42",
+      "bytes": 2253
+    },
+    {
+      "path": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/validation-receipt.json",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "33226ce1a0ce57ec9e8ffe90c6e848cb2a06e09b24302d7872e41fa6ad08b697",
+      "bytes": 8680
+    },
+    {
+      "path": "ios/VineTrack/App/GuidedSyncIssueRepairView.swift",
+      "status": "modified",
+      "base_sha256": "ec95e3b72816ca20b532cb028b53e36e72b19e3dbec59d3cdbb3dda6a3ee18a2",
+      "corrected_sha256": "a664783a87788eb19bd04577b6e9a37d9b536b4ba290694a3932cd07a67177ee",
+      "bytes": 58363
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/GuidedLegacyDeletedTripRepair.swift",
+      "status": "modified",
+      "base_sha256": "ef1cd07107153bae479d722d1d1e3b4844f905c10e5f065e28da43c224f224e0",
+      "corrected_sha256": "48453b9da038cfef5668e40e0ab98ed45a8ba6378be6e3bc44f94fc5080f1dfd",
+      "bytes": 22659
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/GuidedSyncRepairEngine.swift",
+      "status": "modified",
+      "base_sha256": "665ede80a07bad974f0f35c4c9e04425cf9df7a4d362e99813b5b965451a68ba",
+      "corrected_sha256": "b46129035c82d13358a3d0263f5e11c574f240dd29b95c73f690a33c5dfbb341",
+      "bytes": 31852
+    },
+    {
+      "path": "ios/VineTrackTests/GuidedSyncRepairEngineTests.swift",
+      "status": "modified",
+      "base_sha256": "d477da601426f48fb5c9209f67e9fbf77ccddb5d51c2f7243902ae297f32d322",
+      "corrected_sha256": "80edf7a71b7cf44af7464691307b1f16340a079319bb5d1476d01223e8092a58",
+      "bytes": 30131
+    },
+    {
+      "path": "ios/VineTrackTests/TrackedSprayCompletionSyncTests.swift",
+      "status": "modified",
+      "base_sha256": "c9001b8ae734e276da60be257368989ba0cdaff4beb54c9dfa554b71ee26cf5d",
+      "corrected_sha256": "89dcb8be98cbd193b77c0bba5557ff3c54accb024b5619b03a33052848dc248d",
+      "bytes": 18128
+    },
+    {
+      "path": "scripts/export-ios-pr52-corrections.py",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "cdd4fbd8b7ecbccf1c40a2e226ac3bc367a872533c206bb4f8e6b335f487148d",
+      "bytes": 10520
+    },
+    {
+      "path": "scripts/inspect-pr52-backend.py",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "3907b72f4280e90c7ffa2010c19c4599b13e5308fa67906051dc257668244b0d",
+      "bytes": 3914
+    },
+    {
+      "path": "scripts/prepare-ios-pr52-source.py",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "65ede6d3963111693342b6ff0b15365567803bc1c5dfb38dc563ee6f90df9ff3",
+      "bytes": 2278
+    },
+    {
+      "path": "scripts/record-ios-pr52-followup.py",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "309fca607c3c4a795d1160306e632ad03881722090ca736cdab708dcabec1c47",
+      "bytes": 9979
+    },
+    {
+      "path": "scripts/record-ios-pr52-validation.py",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "d3d9e6c24ee3ec46baa76321c73f34b4211b2fb405c44837b7e45f17486c8fba",
+      "bytes": 8371
+    },
+    {
+      "path": "scripts/test-pr52-postgres-contract.py",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "a794785dee932c9d149d6d11fa254f3f764065d7a2b2f0bcc77086ed9a221b1e",
+      "bytes": 5208
+    },
+    {
+      "path": "sql/284_guided_repair_archived_actual_tombstone_contract.sql",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "e9bdd57616315f0ccfda9969bae93c4e6aaa655dee8e9e146effa4a397c90c9f",
+      "bytes": 4693
+    },
+    {
+      "path": "sql/tests/284_guided_repair_contract_tests.sql",
+      "status": "added",
+      "base_sha256": null,
+      "corrected_sha256": "57ccea919213f4641aa011060d2b7158a6defef53f5281fa20e2357b340a05c0",
+      "bytes": 9604
+    }
+  ],
+  "file_count": 30,
+  "patch_sha256": "b1cd6759a16ae48c4dbeb092a14c17c6af887cfc3a083cc3304015dfdd112a7b",
+  "verified": [
+    "All 1312 recorded validation-manifest file hashes still match",
+    "Original 12 PR import hashes match downloaded exact-head archive",
+    "All five iOS deltas included; no extra/new Swift delta omitted",
+    "git apply --check succeeds against exact baseline files",
+    "Isolated zero-fuzz patch application reproduces every exported byte"
+  ],
+  "validation": {
+    "native": "Previously observed seven-suite 82 passes /78 seconds",
+    "build": "Previously observed runChecks iOS simulator PASS",
+    "rerun_for_export": false,
+    "xcode_26_3_final_sha": "Still required",
+    "original_iphone_acceptance": "Still required"
+  },
+  "sql284": "Already deployed successfully through managed migration; exact post-deploy hashes and SELECT-only verification are in followup-validation-receipt.json. Do not blindly redeploy.",
+  "excluded": [
+    "Android",
+    "unrelated main changes",
+    ".rork history/state",
+    "ignored Config.swift, environment values, credentials and signing assets",
+    "backend/types.ts automatic regeneration unrelated to iOS implementation"
+  ],
+  "preservation": "Patch application must stop on conflicts. Never copy source/ over newer files wholesale.",
+  "evidence_note": "All evidence files are retained with original historical/pass/failure limitations. No final passing named XML/xcresult was exposed; stale failure log is not a passing log."
+}
