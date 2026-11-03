@@ -159,6 +159,7 @@ fun SettingsScreen(
     var showVineyardSwitcher by remember { mutableStateOf(false) }
     var showNameEditor by remember { mutableStateOf(false) }
     var showSubscription by remember { mutableStateOf(false) }
+    var searchText by rememberSaveable { mutableStateOf("") }
     var adminLanding by remember { mutableStateOf<AdminLanding?>(null) }
     var detailVineyard by remember { mutableStateOf<Vineyard?>(null) }
     val supportEmail = "jonathan@stockmansridge.com.au"
@@ -226,6 +227,92 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
+            OutlinedTextField(
+                value = searchText,
+                onValueChange = { searchText = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Search settings") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                singleLine = true,
+                shape = RoundedCornerShape(22.dp),
+            )
+
+            if (searchText.isNotBlank()) {
+                val matches = buildList {
+                    add(SettingsSearchEntry("Name", "Edit your display name", Icons.Filled.Person, VineColors.Stone, "account profile") { showNameEditor = true })
+                    add(SettingsSearchEntry("Email", vm.userEmail ?: "Signed-in email unavailable", Icons.Filled.Email, VineColors.Info, "account"))
+                    add(SettingsSearchEntry("Subscription", "Manage your plan", Icons.Filled.CreditCard, VineColors.Pink, "billing membership plan") { showSubscription = true })
+                    add(SettingsSearchEntry("Irrigation defaults", irrigationSummary(irrigationDefaults), Icons.Filled.WaterDrop, VineColors.Cyan, "preferences") { showIrrigationEditor = true })
+                    add(SettingsSearchEntry("Map defaults", mapSummary(mapDefaults), Icons.Filled.Map, VineColors.LeafGreen, "preferences") { showMapEditor = true })
+                    add(SettingsSearchEntry("VineTrack Web Portal", "Manage setup, reports and team access", Icons.Filled.Devices, VineColors.LeafGreen, "desktop web") { openUrl("https://portal.vinetrack.com.au") })
+                    add(SettingsSearchEntry("Privacy Policy", "How we handle your data", Icons.Filled.PrivacyTip, VineColors.Info, "account legal") { openUrl("https://vinetrack.com.au/privacy") })
+                    add(SettingsSearchEntry("Terms of Use (EULA)", "Apple standard end-user license", Icons.AutoMirrored.Filled.Article, VineColors.Stone, "legal") { openUrl("https://www.apple.com/legal/internet-services/itunes/dev/stdeula/") })
+                    add(SettingsSearchEntry("Disclaimer", "Important usage notes", Icons.Filled.WarningAmber, VineColors.Warning, "legal") { showDisclaimer = true })
+                    add(SettingsSearchEntry("Version", versionLabel, Icons.Filled.Info, VineColors.Stone, "about"))
+                    add(SettingsSearchEntry("Backend", "Connected", Icons.Filled.CloudDone, VineColors.LeafGreen, "about sync"))
+                    if (state.vineyards.size > 1) {
+                        add(SettingsSearchEntry("Change Vineyard", "Switch the active vineyard", Icons.Filled.SwapVert, VineColors.Info, "vineyard") {
+                            showVineyardSwitcher = true
+                            searchText = ""
+                        })
+                    }
+                    val navigate = onOpenTool
+                    if (navigate != null) {
+                        fun addRoute(title: String, subtitle: String, icon: ImageVector, tint: Color, route: ToolRoute, keywords: String = "") {
+                            add(SettingsSearchEntry(title, subtitle, icon, tint, keywords) { navigate(route) })
+                        }
+                        addRoute("Biometric Sign-in", "Face or fingerprint sign-in", Icons.Filled.Fingerprint, VineColors.LeafGreen, ToolRoute.BiometricSettings, "account face touch fingerprint")
+                        addRoute("Vineyard Setup", "Blocks, Region & Growth Stages", Icons.Filled.GridView, VineColors.LeafGreen, ToolRoute.Blocks, "operations")
+                        addRoute("Spray & Equipment", "Chemicals, tractors and spray units", Icons.Filled.WaterDrop, VineColors.Cyan, ToolRoute.SprayEquipment, "operations")
+                        addRoute("Team Operations", "Worker Types", Icons.Filled.Group, VineColors.Info, ToolRoute.OperatorCategories, "operations")
+                        addRoute("Trip Functions", "Built-in and custom operations", Icons.Filled.Handyman, VineColors.EarthBrown, ToolRoute.TripFunctions, "operations")
+                        addRoute("Operation Preferences", "Season E-L, spray/tank, yield", Icons.Filled.Tune, VineColors.Orange, ToolRoute.OperationPreferences, "operations")
+                        addRoute("Team & Access", "Members and invitations", Icons.Filled.Group, VineColors.Cyan, ToolRoute.TeamAccess, "team")
+                        addRoute("Roles & Permissions", "How access works for your team", Icons.Filled.GppGood, VineColors.Purple, ToolRoute.RolesPermissions, "team")
+                        addRoute("Preferences", "Appearance, tracking, photos & AI", Icons.Filled.Tune, VineColors.Indigo, ToolRoute.AppPreferences, "preferences data")
+                        addRoute("Alerts & Notifications", "Irrigation, pins, weather and spray reminders", Icons.Filled.NotificationsActive, VineColors.Destructive, ToolRoute.Alerts, "preferences data")
+                        addRoute("Weather Data & Forecasting", "Forecast source, station and sensors", Icons.Filled.CloudQueue, VineColors.Orange, ToolRoute.WeatherData, "preferences data")
+                        addRoute("Region & Units", "Country, currency and units", Icons.Filled.Straighten, VineColors.Indigo, ToolRoute.RegionUnits, "preferences data")
+                        addRoute("Sync", "Cloud sync for pins, paddocks and trips", Icons.Filled.CloudUpload, VineColors.Info, ToolRoute.SyncStatus, "preferences data")
+                        addRoute("Offline Readiness", "Check this device for no-service areas", Icons.Filled.WifiOff, VineColors.Success, ToolRoute.OfflineReadiness, "preferences data")
+                        addRoute("Sync Diagnostics", "Pending uploads, last sync and status", Icons.Filled.MedicalServices, VineColors.Cyan, ToolRoute.SyncStatus, "troubleshoot diagnostic")
+                        addRoute("Contact Support", "Send feedback or report an issue", Icons.Filled.Email, VineColors.Success, ToolRoute.ContactSupport, "help")
+                        addRoute("Request Account Deletion", "Permanently remove your account", Icons.Filled.DeleteForever, VineColors.Destructive, ToolRoute.DeleteAccount, "privacy")
+                        val canManageData = state.currentRole == "owner" || state.currentRole == "manager"
+                        if (canManageData) {
+                            addRoute("Trip Audit", "Find trips on the wrong vineyard", Icons.Filled.FactCheck, VineColors.Orange, ToolRoute.TripAudit, "data tools")
+                        }
+                        if (state.isSystemAdmin) {
+                            addRoute("Android Map Alignment", "System Admin Preview", Icons.Filled.Explore, VineColors.Purple, ToolRoute.MapAlignment, "system admin platform")
+                            addRoute("Material Library", "Materials and default costs", Icons.Filled.Inventory2, VineColors.EarthBrown, ToolRoute.MaterialLibrary, "operations")
+                        }
+                    }
+                    if (state.isSystemAdmin) {
+                        fun addAdmin(title: String, subtitle: String, landing: AdminLanding) {
+                            add(SettingsSearchEntry(title, subtitle, Icons.Filled.AdminPanelSettings, VineColors.Purple, "system admin") { adminLanding = landing })
+                        }
+                        addAdmin("Performance Diagnostics", "Startup and navigation timings", AdminLanding.Dashboard)
+                        addAdmin("Admin Dashboard", "Engagement and user support", AdminLanding.Dashboard)
+                        addAdmin("Feature Flags", "Platform-wide controls", AdminLanding.FeatureFlags)
+                        addAdmin("System Admin Users", "Platform administrators", AdminLanding.SystemAdmins)
+                        addAdmin("Billing Grants / Internal Access", "Manual unlimited licences", AdminLanding.BillingGrants)
+                        addAdmin("User Activity / Logins", "Recent login activity", AdminLanding.LoginActivity)
+                    }
+                }.filter { it.matches(searchText) }
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SettingsSectionHeader("Search Results", Icons.Filled.Search, VineColors.Info)
+                    VineyardCard {
+                        if (matches.isEmpty()) {
+                            Text("No matching settings", color = vine.textSecondary, modifier = Modifier.padding(vertical = 16.dp))
+                        } else {
+                            matches.forEachIndexed { index, item ->
+                                if (index > 0) RowDivider(vine.cardBorder)
+                                PreferenceRow(item.icon, item.tint, item.title, item.subtitle, onClick = item.onClick)
+                            }
+                        }
+                    }
+                }
+            } else {
             // The first three destinations mirror the iOS Account group.
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SettingsSectionHeader("Account", Icons.Filled.Person, VineColors.Stone)
@@ -685,6 +772,7 @@ fun SettingsScreen(
                     Text("Sign Out", color = VineColors.Destructive, fontWeight = FontWeight.SemiBold)
                 }
             }
+            }
         }
     }
 
@@ -994,6 +1082,22 @@ private fun DisplayNameEditor(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
+}
+
+private data class SettingsSearchEntry(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val tint: Color,
+    val keywords: String = "",
+    val onClick: (() -> Unit)? = null,
+) {
+    fun matches(query: String): Boolean {
+        val text = query.trim()
+        return title.contains(text, ignoreCase = true) ||
+            subtitle.contains(text, ignoreCase = true) ||
+            keywords.contains(text, ignoreCase = true)
+    }
 }
 
 @Composable
