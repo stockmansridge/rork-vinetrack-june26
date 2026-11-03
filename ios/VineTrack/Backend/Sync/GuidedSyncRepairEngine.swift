@@ -371,10 +371,10 @@ enum GuidedActualUseCorrection {
         } else {
             throw Rejected(message: "Enter non-negative tank water in litres, or leave blank for Not recorded.")
         }
-        let reviewedChemicals = try reviewedChemicals(
+        let chemicalRows = try reviewedChemicals(
             original: original.chemicals, amounts: chemicalDisplayAmounts)
         guard water != original.waterVolumeL ||
-              reviewedChemicals != original.chemicals else {
+              chemicalRows != original.chemicals else {
             throw Rejected(message: "The original pending quantities are unchanged; no correction is required.")
         }
         let revisionAt = max(Date(), original.clientUpdatedAt.addingTimeInterval(0.001))
@@ -382,7 +382,7 @@ enum GuidedActualUseCorrection {
             id: original.id, vineyardId: original.vineyardId,
             sprayRecordId: original.sprayRecordId, tripId: original.tripId,
             tankSessionId: original.tankSessionId, tankNumber: original.tankNumber,
-            waterVolumeL: water, chemicals: reviewedChemicals,
+            waterVolumeL: water, chemicals: chemicalRows,
             confirmedAt: original.confirmedAt, confirmedBy: original.confirmedBy,
             clientUpdatedAt: revisionAt, correctionVersion: original.correctionVersion,
             lastCorrectedAt: original.lastCorrectedAt)
