@@ -218,6 +218,15 @@ enum GuidedLegacyDeletedTripRepair {
         for actual in actuals where SprayTankActualStore.shared.pendingIds.contains(actual.id) {
             try SprayTankActualStore.shared.removeLocal(id: actual.id)
         }
+        // The original first-tank handoff was archived above. A confirmed
+        // cancellation is the only other permitted retirement besides a
+        // fully recorded tank/actual confirmation.
+        if SprayTankActualStore.shared.initialMixDrafts.contains(where: {
+            $0.tripId == tripId && $0.vineyardId == vineyard && $0.ownerId == owner
+        }) {
+            try SprayTankActualStore.shared.removeInitialMixDrafts(
+                tripId: tripId, vineyardId: vineyard)
+        }
         try TrackedSprayCompletionSync.shared.retireCancelled(
             tripId: tripId, ownerId: owner, vineyardId: vineyard,
             receiptOperationId: operationId)
