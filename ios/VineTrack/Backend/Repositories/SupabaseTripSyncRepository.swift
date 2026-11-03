@@ -380,7 +380,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             let checkedSession = try await provider.client.auth.session
             guard checkedSession.user.id == account,
                   checkedSession.refreshToken == session.refreshToken,
-                  let remote, remote.deletedAt == nil, remote.isActive,
+                  let remote, remote.deletedAt == nil, remote.isActive == true,
                   remote.endTime == nil,
                   TripOccurrenceCoverage.read(remote.occurrenceCoverage)?.planId == originalDocument.planId
             else { throw TripOccurrenceCoverage.Failure.reconciliation }
