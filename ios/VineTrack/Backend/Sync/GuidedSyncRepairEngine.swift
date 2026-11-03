@@ -25,7 +25,7 @@ nonisolated enum GuidedRepairFieldValidation {
     static func nonnegativeNumber(_ value: String, allowMissing: Bool = false) -> Double? {
         let normalised = value.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: ",", with: ".")
-        if normalised.isEmpty { return allowMissing ? nil : nil }
+        if normalised.isEmpty { return nil } // Blank is not an implicit zero.
         guard let number = Double(normalised), number.isFinite, number >= 0 else { return nil }
         return number
     }
@@ -103,8 +103,8 @@ final class GuidedRepairAuditLedger {
         if let existing = snapshot.entries.last(where: {
             $0.account == account && $0.vineyard == vineyard && $0.record == record &&
             $0.correction == correction && $0.inputHash == inputHash &&
-            $0.stages.last?.code == "REQUESTED"
-        }) { return existing.id } // Same idempotent operation on lost response.
+            !$0.stages.contains(where: { $0.code == "VERIFIED" })
+        }) { return existing.id } // Preserve the same server operation after an unknown response.
         let id = UUID()
         snapshot.entries.append(Entry(
             id: id, account: account, vineyard: vineyard, record: record,
