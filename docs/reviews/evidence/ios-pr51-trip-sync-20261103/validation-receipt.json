@@ -1,0 +1,133 @@
+{
+  "date": "2026-11-03",
+  "scope": "Review and apply iOS PR 51 in the current workspace; compile and run focused recovery tests. No publication.",
+  "repository": "stockmansridge/rork-vinetrack-june26",
+  "pr": 51,
+  "reviewed_head": "d7f2c854fe6445555a326daa9acf7bd6a72bea4c",
+  "reviewed_base": "6416757c5e98dd229b74504db3217ca159039fe8",
+  "source_identity": "All five workspace files matched the pinned base before application and the pinned head immediately after application. Final workspace includes the review corrections below and is NOT represented as exact PR head or af4028. Managed HEAD at post-validation inspection: 724b4f0cd443a77f1b96ed90478cce1b948bf2f8. Use the accompanying source manifest for the validated non-generated iOS files.",
+  "validated_non_generated_ios_file_count": 1298,
+  "validated_source_manifest_sha256": "1349a3d5bb082c851097e5dda900feb887c0ab08c2ebda0515a7ca90378eda93",
+  "row_regressions_before_fix_log_sha256": "ecb87c7a57b9e1b6b2fdcb3dd1fc2c9e3eb63f99ac05bb59cb37b04c580727d0",
+  "broader_failing_run_log_sha256": "a33e160ce17144d6f20062cf6284780f47d35610a5dad35c74b90eb12eb86143",
+  "applied_files": [
+    "ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift",
+    "ios/VineTrack/Backend/Repositories/TripSyncRepositoryProtocol.swift",
+    "ios/VineTrack/Backend/Sync/TripSyncService.swift",
+    "ios/VineTrack/LegacyImported/Views/Trips/TripView.swift",
+    "ios/VineTrackTests/TripLocalEndAntiResurrectionTests.swift"
+  ],
+  "review_corrections": [
+    {
+      "issue": "PR head does not compile: SprayRecord.tripId is a nonoptional UUID, so record.tripId.map is invalid.",
+      "correction": "Build the history dictionary with map returning (record.tripId, record); retain first matching Spray behavior."
+    },
+    {
+      "issue": "Stage overwrites server startRow/endRow without checking them, allowing recorded server boundaries to be lost or replaced.",
+      "correction": "Require every nonnil server row boundary to match local before PATCH; permit nil-server to recorded-local advancement. Extract existing checks into the production canStage policy used by the repository and regression tests."
+    },
+    {
+      "issue": "Active occurrence merge starts from local tank sessions and can discard remote startRow or accept conflicting endRow.",
+      "correction": "Preserve remote startRow when local lacks it; hold differing nonnil start/end row boundaries before invoking the existing merge. Do not change shared legacy merge policy."
+    },
+    {
+      "issue": "Checked-in trips_set_updated_at calls set_updated_at, which changes updated_at but does not advance sync_version; a version-only predicate cannot detect every existing writer.",
+      "correction": "Read typed Trip and raw updated_at from the same scoped authenticated response. Predicate PATCH on raw updated_at plus sync_version, identity, vineyard, undeleted, active and unended state. Preserve PostgreSQL microseconds verbatim. Payload still contains tank_sessions only.",
+      "evidence": ["sql/006_trips_sync.sql:56-58", "sql/001_backend_foundation.sql:3-10"],
+      "limitation": "Static checked-in contract review, not deployed trigger verification or concurrent live HTTP testing."
+    }
+  ],
+  "validation": [
+    {
+      "checkpoint": "Exact PR head",
+      "tool": "swiftTest",
+      "selection": ["VineTrackTests/TripLocalEndAntiResurrectionTests"],
+      "result": "COMPILE_FAILED",
+      "passed": 0,
+      "failed": 0,
+      "diagnostics": [
+        "TripView.swift:260: generic parameter Key could not be inferred",
+        "TripView.swift:262: value of type UUID has no member map",
+        "TripView.swift:264: cannot infer closure parameter first"
+      ]
+    },
+    {
+      "checkpoint": "Compile correction and row regression tests before safety fixes",
+      "tool": "swiftTest",
+      "selection": ["VineTrackTests/TripLocalEndAntiResurrectionTests"],
+      "result": "FAILED",
+      "passed": 7,
+      "failed": 4,
+      "failures": [
+        "tankStageRejectsLostOrConflictingServerRow(field:) for startRow and endRow",
+        "activeMergePreservesServerRowsAndHoldsConflicts(field:) for startRow and endRow"
+      ],
+      "raw_log_external_path": "/tmp/vinetrack-pr51-results/row-regressions-before-fix.log"
+    },
+    {
+      "checkpoint": "Corrected focused recovery selection",
+      "tool": "swiftTest",
+      "selection": ["VineTrackTests/TripLocalEndAntiResurrectionTests"],
+      "result": "PASSED",
+      "passed": 13,
+      "duration_seconds": 73,
+      "passing_case_xml_exposed": false
+    },
+    {
+      "checkpoint": "Corrected broader recovery selection",
+      "tool": "swiftTest",
+      "selection": [
+        "VineTrackTests/TripLocalEndAntiResurrectionTests",
+        "VineTrackTests/TankSessionTimestampEncodingTests",
+        "VineTrackTests/TripQueuedUploadScopeTests",
+        "VineTrackTests/TripOccurrenceJournalTests",
+        "VineTrackTests/TripJournalAbsenceIntegrationTests",
+        "VineTrackTests/TripDeletionRecoveryTests",
+        "VineTrackTests/SprayTripPhase5FinalisationTests",
+        "VineTrackTests/TankDependencyVerificationTests",
+        "VineTrackTests/SpraySaveForLaterTests",
+        "VineTrackTests/ActiveTripRouteRecoveryTests",
+        "VineTrackTests/TripActivityCancellationTests",
+        "VineTrackTests/LegacySprayPairReceiptTests",
+        "VineTrackTests/TrackedSprayCompletionSyncTests",
+        "VineTrackTests/SprayTankActualTests",
+        "VineTrackTests/TripPullResponsivenessTests",
+        "VineTrackTests/TripClosureStatusTests",
+        "VineTrackTests/DeviceTripOwnershipTests"
+      ],
+      "result": "FAILED",
+      "passed": 228,
+      "failed": 1,
+      "failure": "TripDeletionRecoveryTests/pendingUploadInspectionIncludesQueueWithNoRecordedFailureAndPreservesIt()",
+      "failure_detail": "Expects queued_trip_uploads: 1; actual report uses queued_trip_uploads_global_legacy: 1, queue_marked_failed_global_legacy: 0 and unavailable_account_not_verified. Previously recorded independent obsolete-label failure; left unchanged and not waived.",
+      "passing_case_xml_exposed": false,
+      "counts_overlap_focused_run": true
+    },
+    {
+      "checkpoint": "Normal iOS build on corrected source",
+      "tool": "runChecks",
+      "appPath": "ios",
+      "result": "PASSED",
+      "artifact_type": "Simulator build; not a signed Release archive or TestFlight delivery",
+      "nonblocking_asset_notices": "Two existing direct storage URL notices in unrelated TripTypeChoiceSheet and UCRInfoSheet; not changed in this scoped pass."
+    }
+  ],
+  "not_performed": [
+    "No GitHub merge, manual staging, commit, push, branch switch or reset",
+    "No signing, build-number allocation, upload or App Store review",
+    "No Android, SQL, Supabase or production-record mutation",
+    "No original-device queue replay, queue reset, evidence deletion or fabricated tank session",
+    "No authenticated live transport or complete tank-to-Actual-to-finalise-to-linked-Spray acceptance",
+    "No physical iPhone process-death, original-handset recovery or Portal acceptance",
+    "No physical scrolling benchmark or Instruments profiling",
+    "No full unfiltered native suite or new GitHub CI dispatch"
+  ],
+  "remaining_limitations": [
+    "Stage transport concurrency and exact server readback require disposable authenticated integration acceptance. Simulator tests do not establish production network behavior.",
+    "Disk reopen tests reconstruct repositories and services; they are not physical process-death tests.",
+    "Missing original tank evidence remains held; Actual Use alone must not fabricate a session. An owner-assisted recovery journey is not implemented by this PR.",
+    "Historical af4028 GitHub malloc failures remain failures and are not explained or overridden by these managed results.",
+    "Build 209 is the prior af4028 candidate, not this corrected PR51 workspace. Apple processing was not rechecked in this scope.",
+    "Ignored managed Config.swift is preserved and excluded from the non-generated source fingerprint manifest; credentials are not included."
+  ]
+}

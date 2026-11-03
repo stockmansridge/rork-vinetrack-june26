@@ -60,6 +60,176 @@ import Testing
                 "A stale awaiting-finalise hold must not survive the verified original receipt")
     }
 
+    @Test func endedOccurrenceStagesOriginalTankBeforeActualAndRetainsOriginalFinalise() async throws {
+        let fixture = try EndFixture()
+        defer { fixture.cleanUp() }
+        let finalise = try fixture.prepareJournalWithPendingFinalise()
+        let (store, metadata, service, auth) = fixture.service()
+        _ = auth
+        let remote = try fixture.serverTrip(active: true, coverage: #require(try fixture.journal.load()).acknowledged)
+        fixture.remote = [remote]
+        var local = remote.toTrip()
+        let session = TankSession(tankNumber: 1,
+            startTime: fixture.endedAt.addingTimeInterval(-600),
+            endTime: fixture.endedAt, pathsCovered: [])
+        local.tankSessions = [session]
+        local.totalTanks = 1
+        local.isActive = false
+        local.endTime = fixture.endedAt
+        store.trips = [local]
+        store.tripRepo.saveSlice(store.trips, for: fixture.vineyard)
+        metadata.markDirty(local.id, at: Date())
+        service.configurePhase5EndGate { id in id == fixture.trip }
+        service.configureTankDependencies { id in
+            id == fixture.trip ? [session.id.uuidString.lowercased()] : []
+        }
+
+        try await service.pushLocalTrips(vineyardId: fixture.vineyard)
+        #expect(fixture.stagedSessions == [session.id.uuidString.lowercased()])
+        #expect(metadata.pendingUpserts[fixture.trip] != nil,
+                "Tank-session stage is not an accepted finalise or queue-clear receipt")
+        #expect(try fixture.journal.load()?.pending.first?.id == finalise.id,
+                "The exact original finalise must remain intact until Actual Use is verified")
+    }
+
+    @Test func missingOriginalTankSessionHoldsWithoutMintingReplacement() async throws {
+        let fixture = try EndFixture()
+        defer { fixture.cleanUp() }
+        let finalise = try fixture.prepareJournalWithPendingFinalise()
+        let (store, metadata, service, auth) = fixture.service()
+        _ = auth
+        let remote = try fixture.serverTrip(active: true, coverage: #require(try fixture.journal.load()).acknowledged)
+        fixture.remote = [remote]
+        var local = remote.toTrip()
+        local.tankSessions = []
+        local.isActive = false
+        local.endTime = fixture.endedAt
+        store.trips = [local]
+        store.tripRepo.saveSlice(store.trips, for: fixture.vineyard)
+        metadata.markDirty(local.id, at: Date())
+        service.configurePhase5EndGate { id in id == fixture.trip }
+        service.configureTankDependencies { id in
+            id == fixture.trip ? [UUID().uuidString.lowercased()] : []
+        }
+        try await service.pushLocalTrips(vineyardId: fixture.vineyard)
+        #expect(fixture.stagedSessions.isEmpty)
+        #expect(metadata.pendingUpserts[fixture.trip] != nil)
+        #expect(metadata.isUpsertFailed(fixture.trip))
+        #expect(try fixture.journal.load()?.pending.first?.id == finalise.id)
+    }
+
+    @Test func activeOriginalTankSurvivesOlderServerSnapshot() throws {
+        let fixture = try EndFixture()
+        defer { fixture.cleanUp() }
+        _ = try fixture.prepareJournalWithPendingFinalise()
+        var local = try fixture.serverTrip(active: true,
+            coverage: #require(try fixture.journal.load()).acknowledged).toTrip()
+        let original = TankSession(tankNumber: 1,
+            startTime: fixture.endedAt.addingTimeInterval(-600),
+            endTime: nil, pathsCovered: [])
+        local.tankSessions = [original]
+        local.activeTankNumber = 1
+        local.totalTanks = 1
+        var stale = local
+        stale.tankSessions = []
+        stale.activeTankNumber = nil
+        stale.totalTanks = 0
+        let merged = try #require(OccurrenceActiveTripEvidence.merge(local: local, remote: stale))
+        #expect(merged.tankSessions == [original])
+        #expect(merged.activeTankNumber == 1)
+        #expect(merged.totalTanks == 1)
+        var conflict = stale
+        conflict.tankSessions = [TankSession(id: original.id, tankNumber: 1,
+            startTime: original.startTime.addingTimeInterval(40), pathsCovered: [])]
+        #expect(OccurrenceActiveTripEvidence.merge(local: local, remote: conflict) == nil)
+    }
+
+    @Test func activeTankSurvivesStalePullAndDiskReopenWithoutInMemoryDeviceClaim() async throws {
+        let fixture = try EndFixture()
+        defer { fixture.cleanUp() }
+        try fixture.prepareActiveJournal()
+        let (store, _, service, auth) = fixture.service()
+        _ = auth
+        let stale = try fixture.serverTrip(active: true, coverage: #require(try fixture.journal.load()).acknowledged)
+        var local = stale.toTrip()
+        let session = TankSession(tankNumber: 1, startTime: fixture.endedAt.addingTimeInterval(-600), startRow: 4)
+        local.tankSessions = [session]; local.activeTankNumber = 1; local.totalTanks = 1
+        store.trips = [local]
+        store.tripRepo.saveSlice(store.trips, for: fixture.vineyard)
+        fixture.remote = [stale]
+        fixture.recovery = try fixture.recoveryResponse(active: true, receipts: [])
+        #expect(store.deviceActiveTripId == nil)
+        try await service.pullRemoteTrips(vineyardId: fixture.vineyard)
+        #expect(store.trips.first?.tankSessions == [session])
+        let (reopened, _, reopenedService, reopenedAuth) = fixture.service()
+        _ = reopenedAuth
+        reopened.trips = reopened.tripRepo.load(for: fixture.vineyard)
+        #expect(reopened.trips.first?.tankSessions == [session])
+        #expect(reopened.deviceActiveTripId == nil)
+        try await reopenedService.pullRemoteTrips(vineyardId: fixture.vineyard)
+        #expect(reopened.trips.first?.tankSessions == [session])
+        #expect(reopened.trips.first?.activeTankNumber == 1)
+        #expect(try fixture.journal.load()?.pending.isEmpty == true)
+    }
+
+    @Test func failedTankStageKeepsOriginalFinaliseAndDirtyRevision() async throws {
+        let fixture = try EndFixture()
+        defer { fixture.cleanUp() }
+        let finalise = try fixture.prepareJournalWithPendingFinalise()
+        let (store, metadata, service, auth) = fixture.service()
+        _ = auth
+        let remote = try fixture.serverTrip(active: true, coverage: #require(try fixture.journal.load()).acknowledged)
+        fixture.remote = [remote]; fixture.failStage = true
+        var local = remote.toTrip()
+        let session = TankSession(tankNumber: 1, startTime: fixture.endedAt.addingTimeInterval(-600), endTime: fixture.endedAt)
+        local.tankSessions = [session]; local.isActive = false; local.endTime = fixture.endedAt
+        store.trips = [local]
+        let queuedAt = Date()
+        metadata.markDirty(local.id, at: queuedAt)
+        service.configurePhase5EndGate { $0 == fixture.trip }
+        service.configureTankDependencies { $0 == fixture.trip ? [session.id.uuidString.lowercased()] : [] }
+        try await service.pushLocalTrips(vineyardId: fixture.vineyard)
+        #expect(fixture.stagedSessions.isEmpty)
+        #expect(metadata.pendingUpserts[fixture.trip] == queuedAt)
+        #expect(metadata.isUpsertFailed(fixture.trip))
+        #expect(service.tankDependencyHolds[fixture.trip] == TankDependencyVerification.patchReadbackMismatch)
+        #expect(try fixture.journal.load()?.pending == [finalise])
+    }
+
+    @Test(arguments: ["startRow", "endRow"])
+    func tankStageRejectsLostOrConflictingServerRow(field: String) {
+        var server = TankSession(tankNumber: 1, startTime: Date(timeIntervalSince1970: 1_793_664_000))
+        if field == "startRow" { server.startRow = 4 } else { server.endRow = 9 }
+        var local = server
+        if field == "startRow" { local.startRow = nil } else { local.endRow = nil }
+        #expect(!TankSessionReceiptMatch.canStage(local: local, remote: server))
+        if field == "startRow" { local.startRow = 5 } else { local.endRow = 10 }
+        #expect(!TankSessionReceiptMatch.canStage(local: local, remote: server))
+        #expect(TankSessionReceiptMatch.canStage(local: server, remote: server))
+        var unrecorded = server
+        unrecorded.startRow = nil; unrecorded.endRow = nil
+        #expect(TankSessionReceiptMatch.canStage(local: server, remote: unrecorded))
+    }
+
+    @Test(arguments: ["startRow", "endRow"])
+    func activeMergePreservesServerRowsAndHoldsConflicts(field: String) throws {
+        let fixture = try EndFixture()
+        defer { fixture.cleanUp() }
+        _ = try fixture.prepareJournalWithPendingFinalise()
+        var local = try fixture.serverTrip(active: true,
+            coverage: #require(try fixture.journal.load()).acknowledged).toTrip()
+        let original = TankSession(tankNumber: 1, startTime: fixture.endedAt)
+        local.tankSessions = [original]
+        var remote = local
+        if field == "startRow" { remote.tankSessions[0].startRow = 4 }
+        else { remote.tankSessions[0].endRow = 9 }
+        let merged = try #require(OccurrenceActiveTripEvidence.merge(local: local, remote: remote))
+        #expect(merged.tankSessions == remote.tankSessions)
+        if field == "startRow" { local.tankSessions[0].startRow = 5 }
+        else { local.tankSessions[0].endRow = 10 }
+        #expect(OccurrenceActiveTripEvidence.merge(local: local, remote: remote) == nil)
+    }
+
     @Test(arguments: ["missingClaim", "foreignOwnerClaim", "foreignVineyardClaim"])
     func repairRequiresIndependentMatchingEndClaim(mode: String) async throws {
         let fixture = try EndFixture()
@@ -91,6 +261,8 @@ import Testing
     let directory: URL
     let authority: VineyardWriteAuthority
     var remote: [BackendTrip] = []
+    var stagedSessions: [String] = []
+    var failStage = false
     var recovery: TripOccurrenceCoverage.JSON = .null
     private var retained: [AnyObject] = []
     lazy var journal: TripOccurrenceJournal = try! TripOccurrenceJournal(scope: scope, authority: authority)
@@ -117,7 +289,7 @@ import Testing
         try? FileManager.default.removeItem(at: directory)
     }
 
-    func prepareJournalWithPendingFinalise() throws -> TripOccurrenceJournal.Operation {
+    func prepareActiveJournal() throws {
         let candidates = [TripOccurrencePlanner.Candidate(vineyardId: vineyard, blockId: UUID(), blockName: "A", label: 38.5, rows: []),
                           TripOccurrencePlanner.Candidate(vineyardId: vineyard, blockId: UUID(), blockName: "B", label: 38.5, rows: [])]
         let coverage = try TripOccurrencePlanner.commit(TripOccurrencePlanner.plan(candidates, pattern: .upAndBack,
@@ -127,6 +299,10 @@ import Testing
         try journal.acknowledge(ack(create))
         let activate = try journal.activate(.object(["startTime": .string("2026-11-03T00:00:00Z")]))
         try journal.acknowledge(ack(activate))
+    }
+
+    func prepareJournalWithPendingFinalise() throws -> TripOccurrenceJournal.Operation {
+        try prepareActiveJournal()
         return try journal.finalize(.object(["endTime": .string(ISO8601DateFormatter().string(from: endedAt))]))
     }
 
@@ -193,5 +369,13 @@ import Testing
     func softDeleteTrip(id: UUID) async throws { Issue.record("Pull must not delete") }
     func fetchOccurrenceRecovery(tripId: UUID, operationIds: [String]) async throws -> TripOccurrenceCoverage.JSON {
         fixture.recovery
+    }
+    func establishOccurrenceTankSessions(_ trip: BackendTripUpsert, required: Set<String>) async throws {
+        if fixture.failStage { throw TripOccurrenceCoverage.Failure.reconciliation }
+        #expect(trip.id == fixture.trip)
+        #expect(!trip.isActive)
+        #expect(trip.endTime == fixture.endedAt)
+        #expect(required.isSubset(of: TankDependencyVerification.ids(trip.tankSessions)))
+        fixture.stagedSessions = required.sorted()
     }
 }

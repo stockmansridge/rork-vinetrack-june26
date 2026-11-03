@@ -108,6 +108,103 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         return TankDependencyVerification.ids(row.tankSessions ?? [])
     }
 
+    /// P0 stage 1: establish ONLY originally recorded tank sessions before
+    /// Actual Use upload. The occurrence finalise RPC remains in its immutable
+    /// journal until Actual Use is independently accepted. No fabricated tank,
+    /// changed quantity, Trip End, Spray completion or new identity is written.
+    func establishOccurrenceTankSessions(_ trip: BackendTripUpsert, required: Set<String>) async throws {
+        guard !trip.isActive, trip.endTime != nil, !required.isEmpty,
+              let localCoverage = trip.occurrenceCoverage,
+              let localDocument = TripOccurrenceCoverage.read(localCoverage),
+              Set(trip.tankSessions.map(\.id)).count == trip.tankSessions.count,
+              Set(trip.tankSessions.map(\.tankNumber)).count == trip.tankSessions.count,
+              required.isSubset(of: TankDependencyVerification.ids(trip.tankSessions)),
+              let account = provider.client.auth.currentUser?.id
+        else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString)
+        // Keep the raw server timestamp from the SAME read as the tank array.
+        // sync_version alone is not advanced by every existing Trip writer.
+        // Re-encoding a Date would truncate PostgreSQL microseconds and make
+        // a valid compare-and-swap fail, so retain the original text verbatim.
+        let snapshot: PostgrestResponse<[BackendTrip]> = try await provider.client.from("trips").select()
+            .eq("vineyard_id", value: trip.vineyardId.uuidString)
+            .eq("id", value: trip.id.uuidString).limit(2).execute()
+        let rawRows = try JSONDecoder().decode([TripOccurrenceCoverage.JSON].self, from: snapshot.data)
+        guard provider.client.auth.currentUser?.id == account,
+              snapshot.value.count == 1, rawRows.count == 1,
+              let existing = snapshot.value.first, existing.deletedAt == nil, existing.endTime == nil,
+              existing.isActive == true,
+              let remoteDocument = TripOccurrenceCoverage.read(existing.occurrenceCoverage),
+              localDocument.planId == remoteDocument.planId
+        else { throw TripOccurrenceCoverage.Failure.reconciliation }
+
+        let serverSessions = existing.tankSessions ?? []
+        let originalById = Dictionary(trip.tankSessions.map { ($0.id, $0) },
+                                      uniquingKeysWith: { _, value in value })
+        // An independently changed server session is never overwritten.
+        // The original may advance the same session from open to ended,
+        // but may not replace its start, tank identity or recorded paths.
+        for server in serverSessions {
+            guard let local = originalById[server.id],
+                  TankSessionReceiptMatch.canStage(local: local, remote: server)
+            else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        }
+        let serverIds = TankDependencyVerification.ids(serverSessions)
+        if required.isSubset(of: serverIds),
+           trip.tankSessions.allSatisfy({ local in
+               serverSessions.contains(where: { server in
+                   TankSessionReceiptMatch.equivalent(local: local, remote: server)
+               })
+           }) { return }
+        // Optimistic concurrency is necessary: a new server revision between
+        // the read and PATCH must leave the original local journal untouched.
+        guard let revision = existing.syncVersion,
+              let updatedAt = rawRows[0][occurrence: "updated_at"]?.occurrenceString,
+              !updatedAt.isEmpty else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        var components = URLComponents(url: provider.supabaseURL.appendingPathComponent("rest/v1/trips"),
+                                       resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "id", value: "eq.\(trip.id.uuidString.lowercased())"),
+            URLQueryItem(name: "vineyard_id", value: "eq.\(trip.vineyardId.uuidString.lowercased())"),
+            URLQueryItem(name: "sync_version", value: "eq.\(revision)"),
+            URLQueryItem(name: "updated_at", value: "eq.\(updatedAt)"),
+            URLQueryItem(name: "deleted_at", value: "is.null"),
+            URLQueryItem(name: "is_active", value: "eq.true"),
+            URLQueryItem(name: "end_time", value: "is.null"),
+            URLQueryItem(name: "select", value: "id")
+        ]
+        guard let url = components?.url else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"; request.timeoutInterval = 30
+        let token = try await provider.client.auth.session
+        guard token.user.id == account else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+        request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("return=representation", forHTTPHeaderField: "Prefer")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        request.httpBody = try encoder.encode(["tank_sessions": trip.tankSessions])
+        let (bytes, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              provider.client.auth.currentUser?.id == account
+        else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        let accepted = try JSONDecoder().decode([TripOccurrenceCoverage.JSON].self, from: bytes)
+        guard accepted.count == 1,
+              accepted[0][occurrence: "id"]?.occurrenceString?.lowercased() == trip.id.uuidString.lowercased()
+        else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        let verified = try await fetchTripForOccurrenceStart(tripId: trip.id, vineyardId: trip.vineyardId)
+        guard provider.client.auth.currentUser?.id == account,
+              let verified, verified.deletedAt == nil,
+              required.isSubset(of: TankDependencyVerification.ids(verified.tankSessions ?? [])),
+              trip.tankSessions.allSatisfy({ local in
+                  verified.tankSessions?.contains(where: { server in
+                      TankSessionReceiptMatch.equivalent(local: local, remote: server)
+                  }) == true
+              })
+        else { throw TripOccurrenceCoverage.Failure.reconciliation }
+    }
+
     private func requireTripWrite(_ id: UUID) async throws -> UUID {
         guard let owner = provider.client.auth.currentUser?.id else { throw CancellationError() }
         struct Row: Decodable { let vineyard_id: UUID }
