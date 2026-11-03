@@ -151,11 +151,22 @@ final class TripSyncService {
         }
     }
 
+    /// Explicit human-verified replacement for a missing tank start. The
+    /// original tank ID and Actual Use still come from independently retained
+    /// evidence; only the timestamp is operator supplied and audit-labelled.
+    nonisolated struct GuidedTankStartOverride: Sendable {
+        let sessionId: UUID
+        let startAt: Date
+        let evidenceNote: String
+    }
+
     /// Selected, operator-confirmed repair option: recover ONLY the original
     /// tank start recorded in the same durable confirmed Actual Use. No guessed
     /// chemical amounts, GPS, rows or tank-end events. It never acknowledges a
     /// network operation; the normal ordered sync must prove receipt later.
-    func guidedRestoreConfirmedTankStart(tripId: UUID, vineyardId: UUID) async throws -> String {
+    func guidedRestoreConfirmedTankStart(
+        tripId: UUID, vineyardId: UUID, manual: GuidedTankStartOverride? = nil
+    ) async throws -> String {
         struct NotAdmitted: LocalizedError {
             let explanation: String
             var errorDescription: String? { explanation }
@@ -206,11 +217,35 @@ final class TripSyncService {
         let actuals = confirmedTankActuals(tripId).filter {
             $0.tripId == tripId && $0.vineyardId == vineyardId
         }
-        guard let corrected = ConfirmedTankStartRecovery.restore(
+        guard var corrected = ConfirmedTankStartRecovery.restore(
             trip: local, missingSessionIds: missing,
             confirmedActuals: actuals, linkedSprayIds: linked, ownerId: owner)
         else {
             throw NotAdmitted(explanation: "The retained Actual Use does not uniquely prove the original tank identity and time. Owner review is required; no fields were invented.")
+        }
+        if let manual {
+            let sessionKey = TankDependencyVerification.normalized(manual.sessionId.uuidString)
+            let confirmed = actuals.filter {
+                TankDependencyVerification.normalized($0.tankSessionId) == sessionKey &&
+                $0.confirmedBy == owner && linked.contains($0.sprayRecordId)
+            }
+            guard missing.contains(sessionKey), confirmed.count == 1,
+                  let original = confirmed.first,
+                  remote.tankSessions?.contains(where: { $0.id == manual.sessionId }) != true,
+                  let index = corrected.tankSessions.firstIndex(where: { $0.id == manual.sessionId }),
+                  let localEnd = local.endTime,
+                  GuidedRepairFieldValidation.manualTankTime(
+                    manual.startAt, tripStart: local.startTime, tripEnd: localEnd,
+                    originalConfirmedAt: original.confirmedAt,
+                    reason: manual.evidenceNote) == nil else {
+                throw NotAdmitted(explanation: "The operator-entered start time conflicts with the original confirmed tank ID, Trip interval or existing server evidence. Nothing was corrected.")
+            }
+            corrected.tankSessions[index].startTime = manual.startAt
+            let evidence = manual.evidenceNote.trimmingCharacters(in: .whitespacesAndNewlines)
+            corrected.manualCorrectionEvents.append(
+                "\(Date().ISO8601Format()) guided_verified_tank_start operator=\(owner.uuidString.lowercased()) " +
+                "session=\(sessionKey) actual=\(original.id.uuidString.lowercased()) " +
+                "entered_utc=\(manual.startAt.ISO8601Format()) source=\(evidence)")
         }
         // A same-account deletion or selection change after the remote read
         // invalidates this repair before the first persistent write.
@@ -222,7 +257,49 @@ final class TripSyncService {
             throw NotAdmitted(explanation: "The original Trip scope changed. No changes were written.")
         }
         try store.updateTripOrThrow(corrected)
-        return "The original tank start has been saved locally with an audit entry. Its End, Actual Use and Spray still require independent server acknowledgement. Run the normal sync next."
+        return manual == nil
+            ? "The original confirmed tank start was saved with an audit entry. Its linked work still needs independent server receipts."
+            : "The operator-verified tank time was saved with its original session ID and evidence note. Run the full sync and verify dependent receipts."
+    }
+
+    /// Only called by the reviewed legacy deletion coordinator after a server
+    /// cancellation receipt, linked tombstones and a locally persisted original
+    /// evidence archive are independently verified. No generic "clear errors".
+    func guidedRetireReviewedDeletedQueue(
+        tripId: UUID, vineyardId: UUID, ownerId: UUID,
+        operationId: UUID
+    ) throws {
+        struct Refused: LocalizedError {
+            var errorDescription: String? { "Original deletion review did not meet the receipt, archive and account gates." }
+        }
+        guard !isSyncing, let store, let auth, auth.isSignedIn,
+              auth.userId == ownerId,
+              store.currentUserIdProvider?() == ownerId,
+              store.selectedVineyardId == vineyardId,
+              SupabaseClientProvider.shared.client.auth.currentUser?.id == ownerId,
+              store.tripRepo.loadAll().filter({ $0.id == tripId })
+                .allSatisfy({ $0.vineyardId == vineyardId }),
+              GuidedLegacyDeletedTripRepair.archiveConfirmed(
+                operationId: operationId, tripId: tripId,
+                vineyard: vineyardId, owner: ownerId),
+              try GuidedRepairAuditLedger.shared.history(
+                account: ownerId, vineyard: vineyardId, record: tripId)
+                .contains(where: { $0.id == operationId &&
+                    $0.stages.contains(where: { $0.code == "SERVER_CANCEL_RECEIPT_AND_ARCHIVE_VERIFIED" })
+                })
+        else { throw Refused() }
+
+        // Preserve the old deletion intent/review history but note explicitly
+        // that this was an owner-reviewed LEGACY tombstone, not an original
+        // on-device cancellation operation receipt.
+        if let originalIntent = try store.tripDeletionJournal.load().intents[tripId] {
+            try store.tripDeletionJournal.acknowledgeReviewedLegacy(
+                originalIntent, owner: ownerId, vineyard: vineyardId,
+                operationId: operationId)
+        }
+        try metadata.acknowledgeVerifiedCancellation(tripId)
+        SyncIssueCenter.shared.clearIssues([tripId])
+        SyncIssueCenter.shared.notePending(entity: "Trips", count: metadata.pendingUpserts.count)
     }
 
     /// True while a full sweep is actively pushing/pulling trips.
@@ -1983,6 +2060,20 @@ final class TripSyncMetadata {
         guard !ids.isEmpty else { return }
         for id in ids { state.pendingDeletes.removeValue(forKey: id); state.failedDeletes.remove(id) }
         save()
+    }
+
+    /// Exact-ID, all-related queue stages in one durable metadata write.
+    /// Cannot be used without an independently verified cancellation receipt
+    /// by the outer service. Disk errors leave the original queue intact.
+    func acknowledgeVerifiedCancellation(_ id: UUID) throws {
+        var next = state
+        next.pendingUpserts.removeValue(forKey: id)
+        next.failedUpserts.remove(id)
+        next.pendingDeletes.removeValue(forKey: id)
+        next.failedDeletes.remove(id)
+        next.pendingWorkTaskClears.removeValue(forKey: id)
+        try persistence.saveOrThrow(next, key: key)
+        state = next
     }
 
     /// Queue an explicit `work_task_id = null` clear for a trip (offline/failed

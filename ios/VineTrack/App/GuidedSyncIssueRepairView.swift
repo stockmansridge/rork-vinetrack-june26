@@ -6,7 +6,7 @@ import UIKit
 /// All mutations are delegated to existing, authenticated, receipt-gated paths.
 nonisolated struct GuidedSyncRepairIssue: Identifiable, Hashable, Sendable {
     nonisolated enum Kind: String, Sendable, Hashable {
-        case tripUpload, tripDeletion, tankActual, sprayRecord, protectedQueue, other
+        case tripUpload, tripDeletion, tankActual, sprayRecord, trackedSprayCompletion, initialMixDraft, protectedQueue, other
     }
     let id: String
     let recordId: UUID
@@ -23,13 +23,17 @@ nonisolated enum GuidedSyncRecordState: String, Sendable {
 }
 
 nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Sendable {
-    case recoverRecordedTank, verifyCompleted, verifyCancellation, retryExisting, privateReview
+    case recoverRecordedTank, manualVerifiedTank, amendActualUse, correctPendingActualUse, verifyCompleted, verifyCancellation, reviewLegacyDeleted, retryExisting, privateReview
     var id: Self { self }
     var label: String {
         switch self {
         case .recoverRecordedTank: "Recover tank start from confirmed Actual Use"
+        case .manualVerifiedTank: "Enter verified original tank start"
+        case .amendActualUse: "Amend verified server Actual Use"
+        case .correctPendingActualUse: "Correct pending original Actual Use"
         case .verifyCompleted: "Verify original Trip completion"
         case .verifyCancellation: "Verify original deletion"
+        case .reviewLegacyDeleted: "Reconcile deleted Trip and linked records"
         case .retryExisting: "Retry existing operations for this vineyard"
         case .privateReview: "Copy issue for owner review"
         }
@@ -38,10 +42,18 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
         switch self {
         case .recoverRecordedTank:
             "Uses only the original confirmed tank ID, number and timestamp. Chemical amounts, paths and unknown end times are not changed. A successful local repair is NOT a server sync acknowledgement."
+        case .manualVerifiedTank:
+            "Select the retained original tank ID, enter the genuinely verified start time and record where that evidence came from. Never invent an ID or alter confirmed chemical amounts."
+        case .amendActualUse:
+            "Correct recorded water or chemical quantities through the existing audited backend RPC. A confirmed original server Actual and tank-session receipt are mandatory."
+        case .correctPendingActualUse:
+            "For an Actual Use that has never reached the server: archive the original operator confirmation locally, correct water or chemical amounts while preserving every original ID and tank session, then upload through the normal dependency-ordered sync."
         case .verifyCompleted:
             "Reads back the exact original ended Trip and checks its linked evidence before acknowledging the existing upload."
         case .verifyCancellation:
             "Only replays an already-recorded, original-account cancellation journal and independently verifies its server tombstone. Does not delete a different Trip."
+        case .reviewLegacyDeleted:
+            "The original server Trip is already deleted. After you confirm Applied or Not applied and supply an evidence note, the backend archives original compliance evidence, soft-deletes its remaining linked rows, and issues an exact cancellation receipt before any local queue is retired. It never restores the deleted Trip."
         case .retryExisting:
             "Runs the existing sync for this vineyard. Other eligible records in the same vineyard can also be retried. Original IDs and pending evidence are retained until the server accepts them."
         case .privateReview:
@@ -53,13 +65,21 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
 /// Pure action-admission policy: server state and original scope must be known
 /// before the UI can offer a write. Actual handlers reverify scope/server state.
 nonisolated enum GuidedSyncCorrectionPolicy {
-    static func available(for issue: GuidedSyncRepairIssue, server: GuidedSyncRecordState) -> [GuidedSyncCorrection] {
-        guard issue.verifiedCurrentScope else { return [.privateReview] }
+    static func available(for issue: GuidedSyncRepairIssue, server: GuidedSyncRecordState,
+                          actualAccepted: Bool = false,
+                          actualPending: Bool = false) -> [GuidedSyncCorrection] {
+        guard issue.verifiedCurrentScope else {
+            return issue.kind == .protectedQueue && server == .deleted
+                ? [.reviewLegacyDeleted, .privateReview] : [.privateReview]
+        }
         switch server {
         case .notChecked, .notVisible:
             return [.privateReview]
         case .deleted:
-            return issue.kind == .tripDeletion ? [.verifyCancellation, .privateReview] : [.privateReview]
+            return issue.kind == .tripDeletion
+                ? [.verifyCancellation, .reviewLegacyDeleted, .privateReview]
+                : (issue.kind == .tripUpload
+                    ? [.reviewLegacyDeleted, .privateReview] : [.privateReview])
         case .active, .ended, .standalone:
             switch issue.kind {
             case .tripDeletion:
@@ -69,15 +89,24 @@ nonisolated enum GuidedSyncCorrectionPolicy {
                 return server == .active ? [.verifyCancellation, .privateReview] : [.privateReview]
             case .tripUpload:
                 var choices: [GuidedSyncCorrection] = []
-                if server == .active && issue.originalActualAvailable { choices.append(.recoverRecordedTank) }
+                if server == .active && issue.originalActualAvailable {
+                    choices.append(.recoverRecordedTank)
+                    choices.append(.manualVerifiedTank)
+                }
                 if server == .ended { choices.append(.verifyCompleted) }
                 choices.append(.retryExisting)
                 choices.append(.privateReview)
                 return choices
-            case .tankActual, .sprayRecord:
+            case .tankActual:
+                if actualAccepted { return [.amendActualUse, .retryExisting, .privateReview] }
+                if actualPending { return [.correctPendingActualUse, .retryExisting, .privateReview] }
                 return [.retryExisting, .privateReview]
-            case .protectedQueue, .other:
+            case .sprayRecord, .trackedSprayCompletion, .initialMixDraft:
+                return [.retryExisting, .privateReview]
+            case .protectedQueue:
                 return [.privateReview]
+            case .other:
+                return [.retryExisting, .privateReview]
             }
         }
     }
@@ -176,7 +205,9 @@ struct GuidedSyncIssueRepairView: View {
         }
         let issueCenter = SyncIssueCenter.shared.issues
 
-        for entry in tripSync.guidedQueueItems(vineyardId: vineyard) {
+        let tripEntries = tripSync.guidedQueueItems(vineyardId: vineyard)
+        let queuedTripIds = Set(tripEntries.filter { $0.belongsToCurrentVineyard }.map(\.id))
+        for entry in tripEntries {
             let deletion = entry.pendingDeletion
             let kind: GuidedSyncRepairIssue.Kind = !entry.belongsToCurrentVineyard
                 ? .protectedQueue : (deletion ? .tripDeletion : .tripUpload)
@@ -202,7 +233,18 @@ struct GuidedSyncIssueRepairView: View {
                 originalActualAvailable: recordedActual && entry.originalTripPresent))
         }
 
-        for actual in pendingActuals {
+        // Include already accepted Actual Use linked to a failed Trip, as
+        // well as records flagged by their own correction/receipt diagnostics.
+        // A blank water volume can mean "not recorded", so it is offered for
+        // review, not automatically called invalid.
+        let actualsToReview = actualStore.records.filter {
+            $0.vineyardId == vineyard &&
+                (actualStore.pendingIds.contains($0.id) ||
+                 queuedTripIds.contains($0.tripId) ||
+                 actualStore.dependencyHolds[$0.id] != nil ||
+                 issueCenter[$0.id] != nil)
+        }
+        for actual in actualsToReview {
             let parent = store.trips.contains { $0.id == actual.tripId && $0.vineyardId == vineyard }
             list.append(GuidedSyncRepairIssue(
                 id: "actual:" + actual.id.uuidString,
@@ -212,7 +254,9 @@ struct GuidedSyncIssueRepairView: View {
                 title: "Tank Actual Use — tank \(actual.tankNumber)",
                 detail: actualStore.dependencyHolds[actual.id]
                     ?? issueCenter[actual.id]?.friendlyMessage
-                    ?? "Confirmed amounts retained; waiting for exact original tank-session/server receipt.",
+                    ?? (actualStore.pendingIds.contains(actual.id)
+                        ? "Original Actual Use is pending its exact tank-session/server receipt."
+                        : "Recorded Actual Use is available for evidence review or an audited amendment."),
                 verifiedCurrentScope: parent,
                 originalActualAvailable: true))
         }
@@ -230,18 +274,53 @@ struct GuidedSyncIssueRepairView: View {
                 verifiedCurrentScope: true, originalActualAvailable: false))
         }
 
+        // The original first-tank handoff is an independent, durable record
+        // and cannot be inferred from a planned spray. Surface it explicitly.
+        for draft in actualStore.initialMixDrafts where
+            draft.ownerId == auth.userId && draft.vineyardId == vineyard {
+            let parent = store.trips.contains {
+                $0.id == draft.tripId && $0.vineyardId == vineyard
+            }
+            list.append(GuidedSyncRepairIssue(
+                id: "initialMix:" + draft.tripId.uuidString,
+                recordId: draft.sprayRecordId,
+                relatedTripId: parent ? draft.tripId : nil,
+                kind: .initialMixDraft, title: "Retained first tank confirmation",
+                detail: "Original operator-entered tank contents are retained. Verify the real Trip tank session and confirmed Actual Use before clearing the handoff.",
+                verifiedCurrentScope: parent, originalActualAvailable: false))
+        }
+
+        // Trip End and linked Spray End use a separate immutable receipt path.
+        // A generic Spray Record "synced" badge cannot prove this completed.
+        if let intents = try? TrackedSprayCompletionSync.shared.intents() {
+            for intent in intents where intent.ownerId == auth.userId &&
+                intent.vineyardId == vineyard {
+                let parent = store.trips.contains {
+                    $0.id == intent.tripId && $0.vineyardId == vineyard
+                }
+                list.append(GuidedSyncRepairIssue(
+                    id: "sprayCompletion:" + intent.tripId.uuidString,
+                    recordId: intent.sprayRecordId,
+                    relatedTripId: parent ? intent.tripId : nil,
+                    kind: .trackedSprayCompletion,
+                    title: "Linked Spray completion",
+                    detail: "The original Trip End must be independently verified before its linked Spray completion can be acknowledged.",
+                    verifiedCurrentScope: parent, originalActualAvailable: false))
+            }
+        }
+
         let already = Set(list.map(\.recordId))
         let visible = Set(store.trips.filter { $0.vineyardId == vineyard }.map(\.id))
             .union(store.sprayRecords.filter { $0.vineyardId == vineyard }.map(\.id))
             .union(actualStore.records.filter { $0.vineyardId == vineyard }.map(\.id))
         for issue in issueCenter.values where issue.vineyardId == vineyard &&
-            visible.contains(issue.id) && !already.contains(issue.id) {
+            !already.contains(issue.id) {
             list.append(GuidedSyncRepairIssue(
                 id: "issue:" + issue.id.uuidString,
                 recordId: issue.id, relatedTripId: nil,
                 kind: .other, title: issue.entity,
                 detail: issue.friendlyMessage,
-                verifiedCurrentScope: true, originalActualAvailable: false))
+                verifiedCurrentScope: visible.contains(issue.id), originalActualAvailable: false))
         }
         items = list.sorted {
             if $0.kind == .protectedQueue && $1.kind != .protectedQueue { return false }
@@ -265,13 +344,51 @@ private struct GuidedSyncIssueDetailView: View {
     @State private var server: GuidedSyncRecordState = .notChecked
     @State private var serverExplanation = "Not checked"
     @State private var selected: GuidedSyncCorrection = .privateReview
+    @State private var actualAccepted = false
     @State private var isWorking = false
     @State private var confirming = false
     @State private var outcome: String?
+    @State private var independentReceipt: GuidedSyncRepairVerification.Result?
+    @State private var auditHistory: [GuidedRepairAuditLedger.Entry] = []
+    @State private var activeAuditOperation: UUID?
+    @State private var awaitingFullSync = false
+    @State private var syncWasObserved = false
 
+    @State private var waterText = ""
+    @State private var chemicalTexts: [UUID: String] = [:]
+    @State private var evidenceNote = ""
+    @State private var manualTime = Date()
+    @State private var selectedOriginalSession: UUID?
+    @State private var legacyApplied = false
+    @State private var legacyDeletionConfirmed = false
+    @State private var recordedActualsNotAppliedConfirmed = false
+
+    private var contextKey: String {
+        (auth.userId?.uuidString ?? "none") + "|" + (store.selectedVineyardId?.uuidString ?? "none")
+    }
+    private var originalActual: SprayTankActual? {
+        SprayTankActualStore.shared.records.first { $0.id == issue.recordId }
+    }
+    private var originalTrip: Trip? {
+        guard let tripId = issue.relatedTripId else { return nil }
+        return store.trips.first { $0.id == tripId && $0.vineyardId == store.selectedVineyardId }
+    }
+    private var missingOriginalSessions: [SprayTankActual] {
+        guard let trip = originalTrip, issue.kind == .tripUpload else { return [] }
+        let recorded = TankDependencyVerification.ids(trip.tankSessions)
+        return SprayTankActualStore.shared.records.filter {
+            $0.tripId == trip.id && $0.vineyardId == trip.vineyardId &&
+            !recorded.contains(TankDependencyVerification.normalized($0.tankSessionId)) &&
+            UUID(uuidString: $0.tankSessionId) != nil
+        }.sorted { $0.tankNumber < $1.tankNumber }
+    }
     private var eligible: Bool {
-        guard issue.verifiedCurrentScope, !isWorking, !syncStatus.isSyncing,
+        guard (issue.verifiedCurrentScope ||
+               (issue.kind == .protectedQueue && selected == .reviewLegacyDeleted &&
+                server == .deleted)),
+              !isWorking, !syncStatus.isSyncing,
               !tripSync.isSyncing, !spraySync.isSyncing,
+              !TripActivityCancellationService.shared.isWorking,
               auth.isSignedIn, auth.userId == store.currentUserIdProvider?(),
               store.selectedVineyardId != nil else { return false }
         switch access.currentRole {
@@ -280,184 +397,537 @@ private struct GuidedSyncIssueDetailView: View {
         }
     }
     private var options: [GuidedSyncCorrection] {
-        GuidedSyncCorrectionPolicy.available(for: issue, server: server)
+        GuidedSyncCorrectionPolicy.available(
+            for: issue, server: server, actualAccepted: actualAccepted,
+            actualPending: SprayTankActualStore.shared.pendingIds.contains(issue.recordId))
+    }
+    private var reasonRequired: Bool {
+        selected == .manualVerifiedTank || selected == .amendActualUse ||
+            selected == .correctPendingActualUse || selected == .reviewLegacyDeleted
     }
 
     var body: some View {
         Form {
-            Section("Record") {
-                LabeledContent("Type", value: issue.title)
+            Section("1. Original record and issue") {
+                LabeledContent("Record", value: issue.title)
                 Text(issue.recordId.uuidString.lowercased()).font(.footnote.monospaced())
+                if let trip = issue.relatedTripId {
+                    LabeledContent("Original Trip", value: trip.uuidString.lowercased())
+                        .font(.caption2.monospaced())
+                }
                 Text(issue.detail).font(.subheadline)
                 if !issue.verifiedCurrentScope {
-                    Text("Ownership is not verified for the selected vineyard. This record is read-only; original account evidence must be reviewed.")
+                    Label("Original ownership is not established. No mutation is permitted.", systemImage: "lock.shield")
                         .font(.footnote).foregroundStyle(.orange)
                 }
+                if let trip = originalTrip {
+                    LabeledContent("Saved Trip", value: trip.endTime == nil ? "Not ended locally" : "Ended locally")
+                    LabeledContent("Recorded tanks", value: String(trip.tankSessions.count))
+                    LabeledContent("Pending Actual Use", value: String(SprayTankActualStore.shared.pendingCount(tripId: trip.id)))
+                }
             }
-            Section("1. Inspect original server record") {
+            Section("2. Check original evidence (read-only)") {
                 Button {
                     Task { await inspect() }
                 } label: {
                     HStack {
-                        Label("Check server status (read-only)", systemImage: "checkmark.shield")
+                        Label("Inspect exact server record", systemImage: "checkmark.shield")
                         if isWorking { Spacer(); ProgressView() }
                     }
                 }
-                .disabled(isWorking || !auth.isSignedIn || !issue.verifiedCurrentScope)
-                LabeledContent("Server", value: serverExplanation)
-                Text("A missing or inaccessible server row is not proof that it can be recreated.")
+                .disabled(isWorking || !auth.isSignedIn)
+                LabeledContent("Server state", value: serverExplanation)
+                if issue.kind == .tankActual, let actual = originalActual {
+                    LabeledContent("Original tank", value: String(actual.tankNumber))
+                    LabeledContent("Water recorded", value: actual.waterVolumeL.map { String($0) + " L" } ?? "Not recorded")
+                    LabeledContent("Server actual receipt", value: actualAccepted ? "Verified" : "Not verified")
+                }
+                if !missingOriginalSessions.isEmpty {
+                    ForEach(missingOriginalSessions) { actual in
+                        Text("Missing recorded tank ID: \(actual.tankSessionId.lowercased())")
+                            .font(.caption.monospaced()).foregroundStyle(.orange)
+                    }
+                }
+                Text("A missing server row, deleted Trip or ambiguous original identity cannot be treated as a successful upload.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("2. Select the correction") {
+
+            Section("3. Select a supported correction") {
                 Picker("Correction", selection: $selected) {
                     ForEach(options) { action in
                         Text(action.label).tag(action)
                     }
                 }
                 .pickerStyle(.menu)
-                Text(selected.explanation)
-                    .font(.footnote).foregroundStyle(.secondary)
-                if selected == .recoverRecordedTank {
-                    Text("The original, confirmed tank start is the only permitted source. No manual estimate or replacement chemical quantity is allowed.")
-                        .font(.caption).foregroundStyle(.orange)
+                Text(selected.explanation).font(.footnote).foregroundStyle(.secondary)
+
+                if selected == .manualVerifiedTank {
+                    if missingOriginalSessions.isEmpty {
+                        Text("No missing original tank ID is available for a verified manual correction.")
+                            .font(.footnote).foregroundStyle(.orange)
+                    } else {
+                        Picker("Original tank session", selection: $selectedOriginalSession) {
+                            Text("Select the original ID").tag(UUID?.none)
+                            ForEach(missingOriginalSessions) { actual in
+                                if let id = UUID(uuidString: actual.tankSessionId) {
+                                    Text("Tank \(actual.tankNumber) • \(String(id.uuidString.prefix(8)))")
+                                        .tag(Optional(id))
+                                }
+                            }
+                        }
+                        DatePicker("Verified tank-start time", selection: $manualTime,
+                                   displayedComponents: [.date, .hourAndMinute])
+                        Text("Use a time confirmed from an actual log or operator record. The original tank ID is retained; no row, GPS or chemical amount is inferred.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+
+                if (selected == .amendActualUse || selected == .correctPendingActualUse),
+                   let actual = originalActual {
+                    LabeledContent("Recorded Actual Use ID", value: actual.id.uuidString.lowercased())
+                        .font(.caption.monospaced())
+                    TextField("Actual tank water (litres), blank = not recorded", text: $waterText)
+                        .keyboardType(.decimalPad)
+                    ForEach(actual.chemicals) { chemical in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(chemical.name).font(.subheadline.weight(.medium))
+                            HStack {
+                                TextField("Actual amount", text: Binding(
+                                    get: { chemicalTexts[chemical.id] ?? "" },
+                                    set: { chemicalTexts[chemical.id] = $0 }
+                                ))
+                                .keyboardType(.decimalPad)
+                                Text(chemical.unit.rawValue).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Text("Each amount is the actual amount used in the labelled unit, never the planned calculation. An explicit zero is valid. Saving produces server amendments with the same original Actual Use ID.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                if selected == .reviewLegacyDeleted {
+                    Picker("Was the spray actually applied?", selection: $legacyApplied) {
+                        Text("Not applied").tag(false)
+                        Text("Applied").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    Toggle("I confirm this original Trip was deliberately deleted", isOn: $legacyDeletionConfirmed)
+                    if !legacyApplied {
+                        Toggle("Recorded tank contents were NOT sprayed or applied", isOn: $recordedActualsNotAppliedConfirmed)
+                        Text("Only confirm this when the original tank mix was recorded but genuinely never applied. All original quantities stay in the compliance archive.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text("The original Trip will remain deleted. Its linked Spray, Actual Use and cost records will be retained in the compliance archive before their live rows are retired. Choose Applied if any physical spray occurred.")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
+                if reasonRequired {
+                    TextField("Explain the original evidence and why this correction is needed",
+                              text: $evidenceNote, axis: .vertical)
+                        .lineLimit(2...5)
+                    Text("Required: 12–500 characters. This is retained with the correction audit.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Section("3. Apply and verify") {
-                Button(selected == .privateReview ? "Copy private review summary" : "Apply selected correction") {
+
+            Section("4. Apply, sync and verify") {
+                Button(selected == .privateReview
+                    ? "Copy private issue report" : "Apply selected correction") {
                     if selected == .privateReview { copyReview() }
                     else { confirming = true }
                 }
-                .disabled(selected != .privateReview && (!eligible || server == .notChecked))
+                .disabled(selected != .privateReview &&
+                    (!eligible || server == .notChecked ||
+                     (selected == .reviewLegacyDeleted && !legacyDeletionConfirmed)))
+                if awaitingFullSync {
+                    Label(syncStatus.isSyncing
+                        ? "Full dependency-chain sync is running"
+                        : "Full sync requested; original receipts are pending",
+                          systemImage: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(.orange)
+                }
+                Button {
+                    Task { await verify() }
+                } label: {
+                    Label("Verify all linked server receipts", systemImage: "checkmark.shield")
+                }
+                .disabled(isWorking || !issue.verifiedCurrentScope || syncStatus.isSyncing)
                 if let outcome {
                     Text(outcome).font(.subheadline)
                 }
-                Text("An attempted retry is not success. The issue remains open until the original record and its dependents have verified server receipts.")
+                if let receipt = independentReceipt {
+                    Label(receipt.verified ? "Verified on server" : "Still requires correction",
+                          systemImage: receipt.verified ? "checkmark.seal" : "exclamationmark.triangle")
+                        .foregroundStyle(receipt.verified ? Color.green : Color.orange)
+                    Text(receipt.explanation).font(.subheadline)
+                    ForEach(receipt.evidence, id: \.self) { reason in
+                        Text(reason).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    }
+                }
+                Text("A correction or retry is not success. Only independently read server receipts and durable queue acknowledgements permit a Verified result.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+
+            if !auditHistory.isEmpty {
+                Section("Repair history (this account and vineyard)") {
+                    ForEach(auditHistory) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(entry.correction).font(.footnote.weight(.semibold))
+                            Text(entry.startedAt, style: .date).font(.caption).foregroundStyle(.secondary)
+                            ForEach(entry.stages, id: \.date) { stage in
+                                HStack {
+                                    Text(stage.code).font(.caption.monospaced())
+                                    Spacer()
+                                    Text(stage.date, style: .time).font(.caption2)
+                                }
+                                Text(stage.explanation).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
             }
         }
         .navigationTitle("Correct Sync Issue")
         .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: server) { _, _ in
-            selected = options.first ?? .privateReview
+        .task(id: issue.id + contextKey) {
+            initialiseInputs()
+            refreshHistory()
+            if issue.verifiedCurrentScope { await inspect() }
         }
-        .confirmationDialog("Apply this correction?", isPresented: $confirming, titleVisibility: .visible) {
-            Button("Apply original-evidence correction") {
-                Task { await apply() }
+        .onChange(of: server) { _, _ in
+            if !options.contains(selected) {
+                selected = options.first ?? .privateReview
             }
+        }
+        .onChange(of: syncStatus.isSyncing) { _, now in
+            if awaitingFullSync && now { syncWasObserved = true }
+            if awaitingFullSync && !now && syncWasObserved {
+                awaitingFullSync = false
+                syncWasObserved = false
+                Task { await verify() }
+            }
+        }
+        .confirmationDialog("Apply correction to original saved record?", isPresented: $confirming,
+                            titleVisibility: .visible) {
+            Button("Apply selected correction") { Task { await apply() } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(selected.explanation)
+            Text(selected.explanation + " Original IDs and other pending records must be preserved until server acknowledgement.")
         }
     }
 
+    private func initialiseInputs() {
+        if let actual = originalActual {
+            waterText = actual.waterVolumeL.map { String($0) } ?? ""
+            chemicalTexts = Dictionary(
+                actual.chemicals.map { ($0.id, String($0.unit.fromBase($0.actualAmountBase))) },
+                uniquingKeysWith: { first, _ in first })
+        }
+        if let original = missingOriginalSessions.first {
+            selectedOriginalSession = UUID(uuidString: original.tankSessionId)
+            manualTime = original.confirmedAt
+        }
+    }
+
+    private func refreshHistory() {
+        guard let owner = auth.userId, let vineyard = store.selectedVineyardId else {
+            auditHistory = []; return
+        }
+        auditHistory = (try? GuidedRepairAuditLedger.shared.history(
+            account: owner, vineyard: vineyard, record: issue.recordId)) ?? []
+    }
+
     private func inspect() async {
-        guard issue.verifiedCurrentScope, auth.isSignedIn,
-              auth.userId == store.currentUserIdProvider?(),
+        guard !isWorking && auth.isSignedIn,
+              let owner = auth.userId, owner == store.currentUserIdProvider?(),
               let vineyard = store.selectedVineyardId else { return }
         isWorking = true
         defer { isWorking = false }
-        outcome = nil
-        guard let tripId = issue.relatedTripId else {
-            server = .notVisible
-            serverExplanation = "No verified original Trip association; private review required"
-            return
-        }
+        independentReceipt = nil
+        actualAccepted = false
         do {
+            // For protected IDs the exact query can classify a tombstone but
+            // never establishes ownership or authorises mutation by itself.
+            if issue.kind == .other && issue.verifiedCurrentScope {
+                server = .standalone
+                serverExplanation = "Current vineyard issue; original server receipt needs entity-specific validation"
+                return
+            }
+            if issue.kind == .sprayRecord && issue.relatedTripId == nil {
+                let row = try await SprayCompletionRepository().fetchRecord(id: issue.recordId)
+                guard row.vineyardId == vineyard, row.id == issue.recordId else {
+                    server = .notVisible
+                    serverExplanation = "Original Spray identity was not verified"
+                    return
+                }
+                server = row.deletedAt == nil ? .standalone : .deleted
+                serverExplanation = row.deletedAt == nil
+                    ? "Original Spray Record exists on the server"
+                    : "Spray Record is deleted"
+                return
+            }
+            let tripId = issue.relatedTripId ?? (
+                issue.kind == .protectedQueue ? issue.recordId : nil)
+            guard let tripId else {
+                server = .notVisible
+                serverExplanation = "The original Trip scope cannot be proven"
+                return
+            }
             let row = try await SupabaseTripSyncRepository()
                 .fetchTripForOccurrenceStart(tripId: tripId, vineyardId: vineyard)
             guard store.selectedVineyardId == vineyard,
                   auth.userId == store.currentUserIdProvider?() else {
                 server = .notChecked
-                serverExplanation = "Account or vineyard changed; inspection discarded"
+                serverExplanation = "Account/vineyard changed; inspection discarded"
                 return
             }
             guard let row else {
                 server = .notVisible
-                serverExplanation = "Not visible in authenticated scoped read"
+                serverExplanation = "No original row visible in the authenticated vineyard-scoped read"
                 return
             }
             if row.deletedAt != nil {
                 server = .deleted
-                serverExplanation = "Trip is deleted on the server. No upload/recreation allowed"
+                serverExplanation = "Original Trip is soft-deleted on the server"
             } else if row.endTime != nil && row.isActive == false {
                 server = .ended
                 serverExplanation = "Original Trip is ended on the server"
             } else {
                 server = .active
-                serverExplanation = "Original Trip exists and has not been completed on the server"
+                serverExplanation = "Original Trip exists and has not been fully ended on the server"
+            }
+            if issue.kind == .tankActual, let actual = originalActual,
+               !SprayTankActualStore.shared.pendingIds.contains(actual.id),
+               row.deletedAt == nil {
+                if let verified = try await SprayTankActualStore.shared.actualReader(actual),
+                   GuidedRepairFieldValidation.immutableIdentityMatches(actual, verified),
+                   TankDependencyVerification.actualMatches(local: actual, server: verified),
+                   TankDependencyVerification.ids(row.tankSessions ?? []).contains(
+                      TankDependencyVerification.normalized(actual.tankSessionId)) {
+                    actualAccepted = true
+                }
+            }
+            if issue.kind == .protectedQueue {
+                serverExplanation += ". Original queue scope is still unverified; no queue mutation allowed."
             }
         } catch {
             server = .notChecked
-            serverExplanation = "Server check failed; no correction allowed"
-            outcome = "Unable to establish an authoritative server state. Original evidence remains unchanged."
+            serverExplanation = "Server inspection failed; correction disabled"
+            outcome = "The exact original server state was not established. No record was changed."
         }
     }
 
+    private func requestFullSync(auditId: UUID, owner: UUID, vineyard: UUID) {
+        awaitingFullSync = true
+        syncWasObserved = false
+        try? GuidedRepairAuditLedger.shared.stage(
+            id: auditId, account: owner, vineyard: vineyard,
+            code: "FULL_SYNC_REQUESTED",
+            explanation: "Original Trip → Spray → Actual Use → original finalisation → linked Spray completion requested.")
+        syncStatus.requestManualSync()
+        outcome = "Full ordered sync requested. The repair will remain open until exact server receipts are verified."
+    }
+
     private func apply() async {
-        guard eligible, options.contains(selected),
+        guard eligible, options.contains(selected), selected != .privateReview,
               let vineyard = store.selectedVineyardId,
-              auth.userId == store.currentUserIdProvider?() else { return }
+              let owner = auth.userId, owner == store.currentUserIdProvider?() else { return }
         isWorking = true
-        defer { isWorking = false }
+        defer { isWorking = false; refreshHistory() }
+        independentReceipt = nil
         outcome = nil
+        let chosen = selected
+        if reasonRequired && GuidedRepairFieldValidation.note(evidenceNote) == nil {
+            outcome = "Enter a genuine evidence source/reason (12–500 characters). Nothing was changed."
+            return
+        }
+        // A stable input fingerprint allows a failed/lost correction response
+        // to replay the original UUID rather than creating a competing amendment.
+        let orderedAmounts = chemicalTexts.sorted { $0.key.uuidString < $1.key.uuidString }
+            .map { $0.key.uuidString + "=" + $0.value }.joined(separator: "|")
+        let hash = GuidedRepairAuditLedger.fingerprint(
+            "\(issue.id)|\(chosen.rawValue)|\(evidenceNote)|\(manualTime.timeIntervalSince1970)|" +
+            "\(selectedOriginalSession?.uuidString ?? "")|\(waterText)|\(orderedAmounts)|reviewApplied=\(legacyApplied)|mixNotApplied=\(recordedActualsNotAppliedConfirmed)")
+        let operation: UUID
         do {
-            switch selected {
+            var preferredOriginalCancellationID: UUID?
+            if chosen == .reviewLegacyDeleted,
+               let original = try TripCancellationIntentStore.shared.find(
+                   tripId: issue.recordId.uuidString.lowercased()), original.isOpen {
+                guard original.ownerId == owner.uuidString.lowercased(),
+                      original.vineyardId == vineyard.uuidString.lowercased(),
+                      original.classification == (legacyApplied ? "applied" : "not_applied"),
+                      let recordedID = UUID(uuidString: original.operationId) else {
+                    outcome = "A retained original cancellation requires its exact account, classification and operation ID. No new operation was generated."
+                    return
+                }
+                preferredOriginalCancellationID = recordedID
+            }
+            operation = try GuidedRepairAuditLedger.shared.begin(
+                account: owner, vineyard: vineyard, record: issue.recordId,
+                correction: chosen.rawValue, inputHash: hash,
+                reason: reasonRequired ? evidenceNote : "Verified original queue review",
+                preferredOperationId: preferredOriginalCancellationID)
+            activeAuditOperation = operation
+        } catch {
+            outcome = "The durable correction audit could not be saved. No write or retry was attempted."
+            return
+        }
+        func stage(_ code: String, _ explanation: String) {
+            try? GuidedRepairAuditLedger.shared.stage(
+                id: operation, account: owner, vineyard: vineyard,
+                code: code, explanation: explanation)
+        }
+        do {
+            switch chosen {
             case .recoverRecordedTank:
                 guard server == .active, let id = issue.relatedTripId else { return }
                 outcome = try await tripSync.guidedRestoreConfirmedTankStart(
                     tripId: id, vineyardId: vineyard)
-            case .verifyCompleted:
-                guard server == .ended, let id = issue.relatedTripId else { return }
-                let settled = await tripSync.reconcileServerEndedTrip(id)
-                outcome = settled
-                    ? "Original Trip completion acknowledged. Check linked Actual Use and Spray separately."
-                    : "Original completion is not fully verified. Queue and evidence remain retained."
-            case .verifyCancellation:
-                guard (server == .deleted || server == .active), let id = issue.relatedTripId,
-                      (try? store.tripDeletionJournal.load().intents[id])?.scope?.vineyard == vineyard,
-                      (try? store.tripDeletionJournal.load().intents[id])?.scope?.account == auth.userId else {
-                    outcome = "A verified original cancellation journal is required. No queue was cleared."
+                stage("LOCAL_EVIDENCE_SAVED", "Original confirmed tank ID/time restored; dependent server receipts still pending.")
+                requestFullSync(auditId: operation, owner: owner, vineyard: vineyard)
+            case .manualVerifiedTank:
+                guard server == .active, let id = issue.relatedTripId,
+                      let session = selectedOriginalSession else {
+                    outcome = "Select the retained original tank session first."; return
+                }
+                let manual = TripSyncService.GuidedTankStartOverride(
+                    sessionId: session, startAt: manualTime, evidenceNote: evidenceNote)
+                outcome = try await tripSync.guidedRestoreConfirmedTankStart(
+                    tripId: id, vineyardId: vineyard, manual: manual)
+                stage("OPERATOR_TANK_TIME_SAVED",
+                      "Owner-reviewed original session and entered time saved with provenance; original quantities unchanged.")
+                requestFullSync(auditId: operation, owner: owner, vineyard: vineyard)
+            case .correctPendingActualUse:
+                guard issue.kind == .tankActual,
+                      SprayTankActualStore.shared.pendingIds.contains(issue.recordId),
+                      server == .active || server == .ended else {
+                    outcome = "Only the original, pending and independently unaccepted Actual Use can be corrected locally."
                     return
                 }
-                await tripSync.sync(vineyardId: vineyard)
-                outcome = tripSync.isPendingDelete(id)
-                    ? "The original cancellation is still pending verification."
-                    : "Deletion queue processed. Retained originals remain archived; other issues require separate verification."
-            case .retryExisting:
-                guard server != .deleted && server != .notVisible && server != .notChecked else { return }
-                switch issue.kind {
-                case .tripUpload:
-                    await tripSync.sync(vineyardId: vineyard)
-                    outcome = tripSync.isPendingUpsert(issue.recordId)
-                        ? "Original Trip is still pending. Review its new diagnostic code; nothing was discarded."
-                        : "Trip queue changed. Verify linked Actual Use and Spray receipts before considering it fully synced."
-                case .tankActual:
-                    await SprayTankActualStore.shared.syncPending(
-                        tripSync: tripSync, spraySync: spraySync, vineyardId: vineyard)
-                    outcome = SprayTankActualStore.shared.pendingIds.contains(issue.recordId)
-                        ? "Original Actual Use remains pending; its tank dependency was not acknowledged."
-                        : "Actual Use queue changed. Verify the server and linked Trip completion separately."
-                case .sprayRecord:
-                    await spraySync.sync(vineyardId: vineyard)
-                    outcome = spraySync.isPendingUpsert(issue.recordId) || spraySync.isPendingDelete(issue.recordId)
-                        ? "Original Spray Record is still pending."
-                        : "Spray upload queue changed. Linked Spray completion may require another verified stage."
-                default:
-                    outcome = "This type needs owner review; no generic retry is allowed."
+                let corrected = try await GuidedActualUseCorrection.correctPendingOriginal(
+                    actualId: issue.recordId, owner: owner, vineyard: vineyard,
+                    reason: evidenceNote, waterText: waterText,
+                    chemicalDisplayAmounts: chemicalTexts, operationId: operation,
+                    store: store)
+                stage("ORIGINAL_PENDING_ACTUAL_ARCHIVED_AND_CORRECTED",
+                    "Original confirmed quantities were durably archived; corrected water and chemicals remain queued under original Actual ID (corrected.id.uuidString.lowercased()).")
+                outcome = "Original pending Actual Use was corrected and retained under its exact ID. Independent server acceptance is still required."
+                requestFullSync(auditId: operation, owner: owner, vineyard: vineyard)
+            case .amendActualUse:
+                guard actualAccepted, issue.kind == .tankActual else {
+                    outcome = "The server has not independently accepted this original Actual Use. Restore/sync its original dependency first."
+                    return
                 }
+                let corrected = try await GuidedActualUseCorrection.amend(
+                    actualId: issue.recordId, owner: owner, vineyard: vineyard,
+                    reason: evidenceNote, waterText: waterText,
+                    chemicalDisplayAmounts: chemicalTexts, operationId: operation)
+                stage("SERVER_AMENDMENT_VERIFIED",
+                    "Original Actual Use \(corrected.id.uuidString.lowercased()) returned identical amounts and authoritative amendment receipt.")
+                outcome = "Actual Use correction saved with its original ID and verified on the server. Linked Trip/Spray still need closure verification."
+                requestFullSync(auditId: operation, owner: owner, vineyard: vineyard)
+            case .verifyCompleted:
+                guard server == .ended, let id = issue.relatedTripId else { return }
+                let accepted = await tripSync.reconcileServerEndedTrip(id)
+                stage(accepted ? "TRIP_RECEIPT_ACCEPTED" : "TRIP_RECEIPT_HELD",
+                      accepted ? "Original Trip readback accepted by existing sync service."
+                               : "Original Trip or dependents remain unverified; no queue was cleared by repair UI.")
+                requestFullSync(auditId: operation, owner: owner, vineyard: vineyard)
+            case .verifyCancellation:
+                guard (server == .deleted || server == .active),
+                      let id = issue.relatedTripId else { return }
+                let originalJournal = try store.tripDeletionJournal.load().intents[id]
+                let originalIntent = try TripCancellationIntentStore.shared.find(
+                    tripId: id.uuidString.lowercased())
+                guard (originalJournal?.scope?.account == owner &&
+                       originalJournal?.scope?.vineyard == vineyard) ||
+                      (originalIntent?.ownerId == owner.uuidString.lowercased() &&
+                       originalIntent?.vineyardId == vineyard.uuidString.lowercased()) else {
+                    outcome = "No original account-scoped cancellation intent. Deletion is protected pending operator review."
+                    stage("CANCELLATION_SCOPE_HELD", "Original cancellation journal absent or scope mismatched.")
+                    return
+                }
+                // Original replay logic verifies the receipt/tombstone and
+                // cleans only entries explicitly included in that receipt.
+                requestFullSync(auditId: operation, owner: owner, vineyard: vineyard)
+            case .reviewLegacyDeleted:
+                guard server == .deleted, legacyDeletionConfirmed,
+                      [.protectedQueue, .tripDeletion, .tripUpload].contains(issue.kind) else {
+                    outcome = "Confirm the deliberate deletion and its original server tombstone first."
+                    return
+                }
+                let accepted = try await GuidedLegacyDeletedTripRepair.reconcile(
+                    tripId: issue.relatedTripId ?? issue.recordId,
+                    vineyard: vineyard, owner: owner, applied: legacyApplied,
+                    reason: evidenceNote, operationId: operation,
+                    confirmedRecordedActualsNotApplied: recordedActualsNotAppliedConfirmed,
+                    store: store, tripSync: tripSync, spraySync: spraySync)
+                stage("REVIEWED_LEGACY_CANCELLATION_COMPLETE",
+                      "Original server tombstone, compliance archive and linked cancellation receipts verified.")
+                outcome = accepted
+                await verifyAfterCorrection(owner: owner, vineyard: vineyard)
+            case .retryExisting:
+                guard server != .notChecked && server != .notVisible && server != .deleted else {
+                    outcome = "The original server state has not been verified as writable."; return
+                }
+                requestFullSync(auditId: operation, owner: owner, vineyard: vineyard)
             case .privateReview:
                 copyReview()
             }
         } catch {
-            outcome = "The correction was not admitted or could not be saved. Original records remain protected. \(error.localizedDescription)"
+            stage("HELD", "Correction refused or failed: \(error.localizedDescription)")
+            outcome = "Original record remains protected: \(error.localizedDescription)"
         }
-        // Mutations are not receipts. Require a fresh, explicit inspection.
+        if !awaitingFullSync {
+            server = .notChecked
+            serverExplanation = "Inspect the original record again to verify its state"
+        }
+    }
+
+    private func verifyAfterCorrection(owner: UUID, vineyard: UUID) async {
+        let result = await GuidedSyncRepairVerification.inspect(
+            issue: issue, vineyard: vineyard, owner: owner,
+            store: store, tripSync: tripSync, spraySync: spraySync)
+        independentReceipt = result
+        if let operation = activeAuditOperation {
+            try? GuidedRepairAuditLedger.shared.stage(
+                id: operation, account: owner, vineyard: vineyard,
+                code: result.verified ? "VERIFIED" : "RETAINS_ISSUE_" + result.code,
+                explanation: result.explanation)
+        }
+    }
+
+    private func verify() async {
+        guard !isWorking, !syncStatus.isSyncing,
+              let owner = auth.userId, owner == store.currentUserIdProvider?(),
+              let vineyard = store.selectedVineyardId else { return }
+        isWorking = true
+        defer { isWorking = false; refreshHistory() }
+        let result = await GuidedSyncRepairVerification.inspect(
+            issue: issue, vineyard: vineyard, owner: owner,
+            store: store, tripSync: tripSync, spraySync: spraySync)
+        independentReceipt = result
+        outcome = result.explanation
+        if let id = activeAuditOperation {
+            try? GuidedRepairAuditLedger.shared.stage(
+                id: id, account: owner, vineyard: vineyard,
+                code: result.verified ? "VERIFIED" : "RETAINS_ISSUE_" + result.code,
+                explanation: result.explanation)
+        }
+        // Verify does not mutate queues or create any new operation receipts.
+        resetInspectionAfterVerification()
+    }
+
+    private func resetInspectionAfterVerification() {
+        // A new read on request is available above. Avoid calling inspect()
+        // recursively while the verifier still holds its working state.
+        actualAccepted = false
         server = .notChecked
-        serverExplanation = "Check server again to verify the result"
+        serverExplanation = "Run Inspect to review the latest server state"
     }
 
     private func copyReview() {
-        let summary = [
+        var lines = [
             "VineTrack guided sync issue review",
             "Record: " + issue.recordId.uuidString.lowercased(),
             "Kind: " + issue.kind.rawValue,
@@ -465,8 +935,12 @@ private struct GuidedSyncIssueDetailView: View {
             "Server-state: " + server.rawValue,
             "Reason: " + issue.detail,
             "No queue mutation, receipt acknowledgement, deletion, or new data generated by review."
-        ].joined(separator: "\n")
-        UIPasteboard.general.string = summary
+        ]
+        if let receipt = independentReceipt {
+            lines.append("Independent receipt: " + receipt.code)
+            lines.append(contentsOf: receipt.evidence)
+        }
+        UIPasteboard.general.string = lines.joined(separator: "\n")
         outcome = "Scoped issue summary copied. The original record was not changed."
     }
 }
