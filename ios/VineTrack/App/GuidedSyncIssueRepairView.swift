@@ -183,6 +183,9 @@ struct GuidedSyncIssueRepairView: View {
                 Text("Queue entries and failures overlap; they are not separate totals. Historical or other-vineyard work is protected until its original ownership is established.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text("The list stays still during background sync. Use Refresh to check updated results.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if isCheckingLegacyScope {
                     Label("Checking old Trip IDs in this vineyard's server records…",
                           systemImage: "arrow.clockwise")
@@ -258,9 +261,10 @@ struct GuidedSyncIssueRepairView: View {
             legacyScopeReadFailed = false
             await refreshAndClassify()
         }
-        .onChange(of: syncStatus.isSyncing) { _, active in
-            if !active { Task { await refreshAndClassify() } }
-        }
+        // Keep a stable issue-list snapshot while background sync retries.
+        // The former status observer rebuilt all historical entries on each
+        // sync transition, freezing scrolling during repeated server errors.
+        // The explicit Refresh button performs the next read-only inspection.
     }
 
     /// Single authenticated, vineyard-filtered READ; foreign or missing server

@@ -151,6 +151,60 @@ final class TankDependencyVerificationTests: XCTestCase {
         XCTAssertNotNil(recovered.pendingUpserts[originalTrip])
     }
 
+    /// Exact production failure: 22 build-214 tank PATCH requests encoded
+    /// updated_at=...110582+00:00, which PostgREST decoded as a space.
+    func testTankCASURLPercentEscapesTimestampPlusWithoutLosingMicroseconds() {
+        let tripId = UUID(uuidString: "492EBAFC-B996-4EC4-8EA9-4261A3056810")!
+        let vineyard = UUID(uuidString: "59973CED-1FB9-42EC-A66D-9EAAD3172824")!
+        let baseURL = URL(string: "https://example.supabase.co")!
+        let original = "2026-11-03T13:40:42.110582+00:00"
+        let url = TripTankCASRequestURL.make(
+            baseURL: baseURL, tripId: tripId,
+            vineyardId: vineyard, syncVersion: 2, rawUpdatedAt: original)
+        XCTAssertNotNil(url)
+        let query = URLComponents(url: url!, resolvingAgainstBaseURL: false)
+        XCTAssertEqual(query?.queryItems?.first(where: {
+            $0.name == "updated_at"
+        })?.value, "eq." + original)
+        XCTAssertTrue(query?.percentEncodedQuery?.contains(
+            "110582%2B00") == true)
+        XCTAssertFalse(query?.percentEncodedQuery?.contains(
+            "110582+00") == true)
+        XCTAssertEqual(query?.queryItems?.first(where: {
+            $0.name == "sync_version"
+        })?.value, "eq.2")
+        XCTAssertEqual(query?.queryItems?.first(where: {
+            $0.name == "is_active"
+        })?.value, "eq.true")
+    }
+
+    func testTankCASURLPreservesOtherTimezonesAndOriginalCASFilters() {
+        let baseURL = URL(string: "https://example.supabase.co")!
+        for original in [
+            "2026-11-03T13:40:42.110582+10:30",
+            "2026-11-03T13:40:42.110582-04:00",
+            "2026-11-03T13:40:42.110582Z"
+        ] {
+            let url = TripTankCASRequestURL.make(
+                baseURL: baseURL, tripId: UUID(), vineyardId: UUID(),
+                syncVersion: 7, rawUpdatedAt: original)
+            XCTAssertNotNil(url)
+            let query = URLComponents(url: url!, resolvingAgainstBaseURL: false)
+            XCTAssertEqual(query?.queryItems?.first(where: {
+                $0.name == "updated_at"
+            })?.value, "eq." + original)
+            XCTAssertEqual(query?.queryItems?.first(where: {
+                $0.name == "deleted_at"
+            })?.value, "is.null")
+            XCTAssertEqual(query?.queryItems?.first(where: {
+                $0.name == "end_time"
+            })?.value, "is.null")
+            if original.contains("+") {
+                XCTAssertTrue(query?.percentEncodedQuery?.contains("%2B") == true)
+            }
+        }
+    }
+
     // MARK: Trip upload acknowledgement
 
     func testTripWithoutRequiredSessionIsNotUploadedOrAcknowledged() async throws {

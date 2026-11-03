@@ -39,6 +39,38 @@ nonisolated enum OccurrenceParentBootstrapPolicy {
     }
 }
 
+/// Exact PostgREST tank-session CAS URL. URLComponents leaves '+' in query
+/// values unescaped; PostgREST form-decodes it as a space, turning a valid
+/// timestamptz (+00:00) into an invalid filter and causing HTTP 400 retries.
+/// Preserve the entire original microsecond timestamp and encode ONLY the
+/// query delimiter-sensitive '+' as %2B. Never replace CAS with an unsafe
+/// unconditional PATCH.
+nonisolated enum TripTankCASRequestURL {
+    static func make(baseURL: URL, tripId: UUID, vineyardId: UUID,
+                     syncVersion: Int, rawUpdatedAt: String) -> URL? {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent("rest/v1/trips"),
+            resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "id", value: "eq.\(tripId.uuidString.lowercased())"),
+            URLQueryItem(name: "vineyard_id", value: "eq.\(vineyardId.uuidString.lowercased())"),
+            URLQueryItem(name: "sync_version", value: "eq.\(syncVersion)"),
+            URLQueryItem(name: "updated_at", value: "eq.\(rawUpdatedAt)"),
+            URLQueryItem(name: "deleted_at", value: "is.null"),
+            URLQueryItem(name: "is_active", value: "eq.true"),
+            URLQueryItem(name: "end_time", value: "is.null"),
+            URLQueryItem(name: "select", value: "id")
+        ]
+        // URLComponents.queryItems percent-encodes ':' but NOT '+'. An
+        // unescaped '+' is silently decoded to a space by PostgREST.
+        if let rawQuery = components?.percentEncodedQuery {
+            components?.percentEncodedQuery = rawQuery.replacingOccurrences(
+                of: "+", with: "%2B")
+        }
+        return components?.url
+    }
+}
+
 final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     private let provider: SupabaseClientProvider
     private let deletionAuthority: VineyardWriteAuthority
@@ -181,19 +213,11 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         guard let revision = existing.syncVersion,
               let updatedAt = rawRows[0][occurrence: "updated_at"]?.occurrenceString,
               !updatedAt.isEmpty else { throw TripOccurrenceCoverage.Failure.reconciliation }
-        var components = URLComponents(url: provider.supabaseURL.appendingPathComponent("rest/v1/trips"),
-                                       resolvingAgainstBaseURL: false)
-        components?.queryItems = [
-            URLQueryItem(name: "id", value: "eq.\(trip.id.uuidString.lowercased())"),
-            URLQueryItem(name: "vineyard_id", value: "eq.\(trip.vineyardId.uuidString.lowercased())"),
-            URLQueryItem(name: "sync_version", value: "eq.\(revision)"),
-            URLQueryItem(name: "updated_at", value: "eq.\(updatedAt)"),
-            URLQueryItem(name: "deleted_at", value: "is.null"),
-            URLQueryItem(name: "is_active", value: "eq.true"),
-            URLQueryItem(name: "end_time", value: "is.null"),
-            URLQueryItem(name: "select", value: "id")
-        ]
-        guard let url = components?.url else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        guard let url = TripTankCASRequestURL.make(
+            baseURL: provider.supabaseURL, tripId: trip.id,
+            vineyardId: trip.vineyardId, syncVersion: revision,
+            rawUpdatedAt: updatedAt)
+        else { throw TripOccurrenceCoverage.Failure.reconciliation }
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"; request.timeoutInterval = 30
         let token = try await provider.client.auth.session
