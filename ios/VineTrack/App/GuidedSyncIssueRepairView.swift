@@ -74,7 +74,8 @@ nonisolated enum GuidedSyncCorrectionPolicy {
         case .deleted:
             return issue.kind == .tripDeletion
                 ? [.verifyCancellation, .reviewLegacyDeleted, .privateReview]
-                : [.privateReview]
+                : (issue.kind == .tripUpload
+                    ? [.reviewLegacyDeleted, .privateReview] : [.privateReview])
         case .active, .ended, .standalone:
             switch issue.kind {
             case .tripDeletion:
@@ -809,7 +810,7 @@ private struct GuidedSyncIssueDetailView: View {
                 requestFullSync(auditId: operation, owner: owner, vineyard: vineyard)
             case .reviewLegacyDeleted:
                 guard server == .deleted, legacyDeletionConfirmed,
-                      issue.kind == .protectedQueue || issue.kind == .tripDeletion else {
+                      [.protectedQueue, .tripDeletion, .tripUpload].contains(issue.kind) else {
                     outcome = "Confirm the deliberate deletion and its original server tombstone first."
                     return
                 }
