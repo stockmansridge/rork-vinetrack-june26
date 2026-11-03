@@ -66,23 +66,28 @@ val InterFontFamily = FontFamily(
     Font(R.font.inter_bold, FontWeight.Bold),
 )
 
+/**
+ * SF-style type ramp using the existing licensed Inter assets on Android.
+ * Keep font scaling accessible (sp) and use semantic Material roles instead
+ * of platform-restricted Apple font files or absolute pixel sizing.
+ */
 private val VineTypography = Typography().run {
     copy(
-        displayLarge = displayLarge.copy(fontFamily = InterFontFamily),
-        displayMedium = displayMedium.copy(fontFamily = InterFontFamily),
-        displaySmall = displaySmall.copy(fontFamily = InterFontFamily),
-        headlineLarge = headlineLarge.copy(fontFamily = InterFontFamily),
-        headlineMedium = headlineMedium.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Bold),
-        headlineSmall = headlineSmall.copy(fontFamily = InterFontFamily),
-        titleLarge = titleLarge.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.Bold),
-        titleMedium = titleMedium.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold),
-        titleSmall = titleSmall.copy(fontFamily = InterFontFamily),
-        bodyLarge = bodyLarge.copy(fontFamily = InterFontFamily),
-        bodyMedium = bodyMedium.copy(fontFamily = InterFontFamily),
-        bodySmall = bodySmall.copy(fontFamily = InterFontFamily),
-        labelLarge = labelLarge.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
-        labelMedium = labelMedium.copy(fontFamily = InterFontFamily),
-        labelSmall = labelSmall.copy(fontFamily = InterFontFamily),
+        displayLarge = displayLarge.copy(fontFamily = InterFontFamily, fontSize = 34.sp, lineHeight = 41.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+        displayMedium = displayMedium.copy(fontFamily = InterFontFamily, fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+        displaySmall = displaySmall.copy(fontFamily = InterFontFamily, fontSize = 24.sp, lineHeight = 30.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
+        headlineLarge = headlineLarge.copy(fontFamily = InterFontFamily, fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+        headlineMedium = headlineMedium.copy(fontFamily = InterFontFamily, fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+        headlineSmall = headlineSmall.copy(fontFamily = InterFontFamily, fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
+        titleLarge = titleLarge.copy(fontFamily = InterFontFamily, fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+        titleMedium = titleMedium.copy(fontFamily = InterFontFamily, fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
+        titleSmall = titleSmall.copy(fontFamily = InterFontFamily, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
+        bodyLarge = bodyLarge.copy(fontFamily = InterFontFamily, fontSize = 17.sp, lineHeight = 23.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.sp),
+        bodyMedium = bodyMedium.copy(fontFamily = InterFontFamily, fontSize = 15.sp, lineHeight = 21.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.sp),
+        bodySmall = bodySmall.copy(fontFamily = InterFontFamily, fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.sp),
+        labelLarge = labelLarge.copy(fontFamily = InterFontFamily, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
+        labelMedium = labelMedium.copy(fontFamily = InterFontFamily, fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.sp),
+        labelSmall = labelSmall.copy(fontFamily = InterFontFamily, fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.sp),
     )
 }
 

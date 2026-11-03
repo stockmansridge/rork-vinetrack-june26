@@ -1,6 +1,12 @@
 package com.rork.vinetrack.ui.main
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Paid
+import androidx.compose.material.icons.filled.ManageAccounts
+import androidx.compose.material.icons.filled.Hive
+import androidx.compose.material.icons.filled.Handyman
+import androidx.compose.material.icons.filled.Eco
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Coronavirus
@@ -47,6 +53,10 @@ data class OperationalToolDefinition(
  * and the customisation screen both render from this list — there is
  * deliberately no second hard-coded list.
  *
+ * Material icon choices mirror the meaning of each iOS SF Symbol: person/gear,
+ * crossed tools, pump, drop, leaf, bar chart, hexagons, scissors and shield.
+ * Glyph artwork is platform-native; the stable tool IDs and routes are untouched.
+ *
  * Order matches the iOS `OperationalToolCatalog.all` and the SQL 159
  * `display_order` exactly, so the VineTrack default layout is identical on
  * every platform.
@@ -58,7 +68,7 @@ object OperationalToolCatalog {
             id = "work_tasks",
             title = "Work Tasks",
             subtitle = "Log & calculate",
-            icon = Icons.Filled.Group,
+            icon = Icons.Filled.ManageAccounts,
             tint = VineColors.Indigo,
             route = ToolRoute.WorkTasks,
         ),
@@ -66,7 +76,7 @@ object OperationalToolCatalog {
             id = "equipment_maintenance",
             title = "Maintenance Log",
             subtitle = "Repairs & jobs",
-            icon = Icons.Filled.Build,
+            icon = Icons.Filled.Handyman,
             tint = VineColors.EarthBrown,
             route = ToolRoute.Maintenance,
         ),
@@ -82,7 +92,7 @@ object OperationalToolCatalog {
             id = "irrigation_advisor",
             title = "Irrigation Advisor",
             subtitle = "Water planning",
-            icon = Icons.Filled.Opacity,
+            icon = Icons.Filled.WaterDrop,
             tint = VineColors.Cyan,
             route = ToolRoute.Irrigation,
         ),
@@ -90,7 +100,7 @@ object OperationalToolCatalog {
             id = "disease_risk",
             title = "Disease Risk",
             subtitle = "Downy/Powdery/Botrytis",
-            icon = Icons.Filled.Coronavirus,
+            icon = Icons.Filled.Eco,
             tint = VineColors.LeafGreen,
             route = ToolRoute.DiseaseRisk,
         ),
@@ -98,7 +108,7 @@ object OperationalToolCatalog {
             id = "yield_records",
             title = "Yields",
             subtitle = "Forecasting, Sampling & Recording",
-            icon = Icons.Filled.Scale,
+            icon = Icons.Filled.BarChart,
             tint = VineColors.Orange,
             route = ToolRoute.Yield,
         ),
@@ -106,7 +116,7 @@ object OperationalToolCatalog {
             id = "growth_stages",
             title = "Growth Stage Records",
             subtitle = "Phenology records",
-            icon = Icons.Filled.Spa,
+            icon = Icons.Filled.Eco,
             tint = VineColors.LeafGreen,
             route = ToolRoute.Growth,
         ),
@@ -122,7 +132,7 @@ object OperationalToolCatalog {
             id = "cost_reports",
             title = "Cost Reports",
             subtitle = "Season, block & variety",
-            icon = Icons.Filled.Payments,
+            icon = Icons.Filled.Paid,
             tint = VineColors.Indigo,
             route = ToolRoute.CostReports,
             requiresCosting = true,
@@ -131,7 +141,7 @@ object OperationalToolCatalog {
             id = "fertiliser_calculator",
             title = "Fertiliser Calculator",
             subtitle = "Rates, packs & costs",
-            icon = Icons.Filled.Grain,
+            icon = Icons.Filled.Hive,
             tint = VineColors.LeafGreen,
             route = ToolRoute.FertiliserCalculator,
         ),
