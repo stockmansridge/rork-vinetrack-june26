@@ -1104,7 +1104,55 @@ final class TripSyncService {
                     // The hold now only keeps the trip queued locally until its
                     // actuals clear; it never falsifies server state.
                     deferredEndIds.insert(tripId)
-                    if trip.coverageBasis != .legacy { continue }
+                    if trip.coverageBasis != .legacy {
+                        // Phase 5 dependency order for occurrence Trips:
+                        // 1. Verify original tank sessions in the local Trip;
+                        // 2. Upload/read back ONLY those sessions on the existing parent;
+                        // 3. Let Tank Actual Use upload in the sweep coordinator;
+                        // 4. Replay the original immutable finalise operation
+                        //    on the next Trip pass, then complete linked Spray.
+                        // Previously step 2 was skipped, causing the Trip/Actual
+                        // and Spray completion to wait on one another forever.
+                        let required = requiredTankSessions(tripId)
+                        let missing = TankDependencyVerification.missing(
+                            required: required, in: TankDependencyVerification.ids(trip.tankSessions))
+                        if !missing.isEmpty {
+                            tankDependencyHolds[tripId] = TankDependencyVerification.requiredSessionMissing
+                            metadata.markUpsertsFailed([tripId])
+                            SyncIssueCenter.shared.recordFailure(
+                                id: tripId, entity: "Trips",
+                                detail: SyncFailureDetail(
+                                    kind: .permanent,
+                                    reasonCode: TankDependencyVerification.requiredSessionMissing,
+                                    friendlyMessage: "This Trip is missing the original tank session recorded with its actual mix. The exact actual amounts are retained; no session was invented.",
+                                    technicalDetail: "code: original occurrence tank session absent from local Trip; individual evidence recovery required"),
+                                queuedAt: ts, payloadKeys: [], vineyardId: vineyardId)
+                            continue
+                        }
+                        if !required.isEmpty {
+                            do {
+                                try await repository.establishOccurrenceTankSessions(
+                                    BackendTrip.upsert(from: trip, createdBy: createdBy, clientUpdatedAt: ts),
+                                    required: required)
+                                tankDependencyHolds.removeValue(forKey: tripId)
+                                // Clearing an obsolete error is NOT a Trip completion
+                                // receipt: the original finalise journal stays queued.
+                                SyncIssueCenter.shared.clearIssues([tripId])
+                            } catch {
+                                tankDependencyHolds[tripId] = TankDependencyVerification.patchReadbackMismatch
+                                metadata.markUpsertsFailed([tripId])
+                                SyncIssueCenter.shared.recordFailure(
+                                    id: tripId, entity: "Trips",
+                                    detail: SyncFailureDetail(
+                                        kind: .retryable,
+                                        reasonCode: TankDependencyVerification.patchReadbackMismatch,
+                                        friendlyMessage: "Original tank-session upload has not been verified; its actual mix and Trip end are retained for retry.",
+                                        technicalDetail: "code: occurrence parent tank stage not independently acknowledged"),
+                                    queuedAt: ts, payloadKeys: [], vineyardId: vineyardId)
+                            }
+                        }
+                        continue
+                    }
                 }
                 if let remote = serverTrips.first(where: { $0.id == tripId })?.toTrip(), trip.isActive {
                     guard let preserved = TankPathAttribution.mergingRecordedPaths(local: trip, remote: remote) else {
