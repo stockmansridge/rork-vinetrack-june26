@@ -984,6 +984,7 @@ struct BackendSettingsView: View {
 struct SyncReadOnlyPresentationSnapshot {
     let ownerId: UUID?
     let vineyardId: UUID?
+    let selectionGeneration: UInt64
     let tripPendingUpserts: Int
     let sprayPendingUpserts: Int
     let retained: TripRetainedState
@@ -1004,6 +1005,7 @@ struct SyncReadOnlyPresentationSnapshot {
         return Self(
             ownerId: ownerId,
             vineyardId: store.selectedVineyardId,
+            selectionGeneration: store.vineyardSelectionGeneration,
             tripPendingUpserts: tripPending,
             sprayPendingUpserts: sprayPending,
             retained: retained,
@@ -1055,13 +1057,14 @@ struct SyncSettingsView: View {
     @State private var displayRefreshSerial: Int = 0
 
     private var displayRefreshID: String {
-        "\(auth.userId?.uuidString ?? "no-account")|\(store.selectedVineyardId?.uuidString ?? "no-vineyard")|\(displayRefreshSerial)"
+        "\(auth.userId?.uuidString ?? "no-account")|\(store.selectedVineyardId?.uuidString ?? "no-vineyard")|\(store.vineyardSelectionGeneration)|\(displayRefreshSerial)"
     }
 
     private var currentDisplaySnapshot: SyncReadOnlyPresentationSnapshot? {
         guard let snapshot = displaySnapshot,
               snapshot.ownerId == auth.userId,
-              snapshot.vineyardId == store.selectedVineyardId else { return nil }
+              snapshot.vineyardId == store.selectedVineyardId,
+              snapshot.selectionGeneration == store.vineyardSelectionGeneration else { return nil }
         return snapshot
     }
 
