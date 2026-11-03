@@ -204,9 +204,6 @@ enum GuidedLegacyDeletedTripRepair {
         // Exactly this Trip's old queues. A second pass is safe/idempotent; a
         // crash after server success but before local ACK can replay the same
         // operation UUID, preserving the pre-repair archive.
-        try tripSync.guidedRetireReviewedDeletedQueue(
-            tripId: tripId, vineyardId: vineyard, ownerId: owner,
-            operationId: operationId)
         for spray in sprouts {
             if spraySync.isPendingUpsert(spray.id) {
                 spraySync.clearCancelledTripRecordQueue(spray.id, delete: false)
@@ -241,6 +238,12 @@ enum GuidedLegacyDeletedTripRepair {
                 throw Refused(explanation: "Server cancellation is verified, but original journal retirement failed. The evidence archive and retry record are retained.")
             }
         }
+        // Keep the Trip queue entry until every dependent local retirement
+        // and durable evidence operation has finished. An interrupted cleanup
+        // remains discoverable through this same original Trip ID.
+        try tripSync.guidedRetireReviewedDeletedQueue(
+            tripId: tripId, vineyardId: vineyard, ownerId: owner,
+            operationId: operationId)
         try GuidedRepairAuditLedger.shared.stage(
             id: operationId, account: owner, vineyard: vineyard,
             code: "LOCAL_ORIGINAL_QUEUES_RETIRED",
