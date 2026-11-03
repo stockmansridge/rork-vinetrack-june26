@@ -192,7 +192,9 @@ struct GuidedSyncIssueRepairView: View {
         }
         let issueCenter = SyncIssueCenter.shared.issues
 
-        for entry in tripSync.guidedQueueItems(vineyardId: vineyard) {
+        let tripEntries = tripSync.guidedQueueItems(vineyardId: vineyard)
+        let queuedTripIds = Set(tripEntries.filter { $0.belongsToCurrentVineyard }.map(\.id))
+        for entry in tripEntries {
             let deletion = entry.pendingDeletion
             let kind: GuidedSyncRepairIssue.Kind = !entry.belongsToCurrentVineyard
                 ? .protectedQueue : (deletion ? .tripDeletion : .tripUpload)
@@ -218,7 +220,18 @@ struct GuidedSyncIssueRepairView: View {
                 originalActualAvailable: recordedActual && entry.originalTripPresent))
         }
 
-        for actual in pendingActuals {
+        // Include already accepted Actual Use linked to a failed Trip, as
+        // well as records flagged by their own correction/receipt diagnostics.
+        // A blank water volume can mean "not recorded", so it is offered for
+        // review, not automatically called invalid.
+        let actualsToReview = actualStore.records.filter {
+            $0.vineyardId == vineyard &&
+                (actualStore.pendingIds.contains($0.id) ||
+                 queuedTripIds.contains($0.tripId) ||
+                 actualStore.dependencyHolds[$0.id] != nil ||
+                 issueCenter[$0.id] != nil)
+        }
+        for actual in actualsToReview {
             let parent = store.trips.contains { $0.id == actual.tripId && $0.vineyardId == vineyard }
             list.append(GuidedSyncRepairIssue(
                 id: "actual:" + actual.id.uuidString,
@@ -228,7 +241,9 @@ struct GuidedSyncIssueRepairView: View {
                 title: "Tank Actual Use — tank \(actual.tankNumber)",
                 detail: actualStore.dependencyHolds[actual.id]
                     ?? issueCenter[actual.id]?.friendlyMessage
-                    ?? "Confirmed amounts retained; waiting for exact original tank-session/server receipt.",
+                    ?? (actualStore.pendingIds.contains(actual.id)
+                        ? "Original Actual Use is pending its exact tank-session/server receipt."
+                        : "Recorded Actual Use is available for evidence review or an audited amendment."),
                 verifiedCurrentScope: parent,
                 originalActualAvailable: true))
         }
@@ -246,18 +261,53 @@ struct GuidedSyncIssueRepairView: View {
                 verifiedCurrentScope: true, originalActualAvailable: false))
         }
 
+        // The original first-tank handoff is an independent, durable record
+        // and cannot be inferred from a planned spray. Surface it explicitly.
+        for draft in actualStore.initialMixDrafts where
+            draft.ownerId == auth.userId && draft.vineyardId == vineyard {
+            let parent = store.trips.contains {
+                $0.id == draft.tripId && $0.vineyardId == vineyard
+            }
+            list.append(GuidedSyncRepairIssue(
+                id: "initialMix:" + draft.tripId.uuidString,
+                recordId: draft.sprayRecordId,
+                relatedTripId: parent ? draft.tripId : nil,
+                kind: .initialMixDraft, title: "Retained first tank confirmation",
+                detail: "Original operator-entered tank contents are retained. Verify the real Trip tank session and confirmed Actual Use before clearing the handoff.",
+                verifiedCurrentScope: parent, originalActualAvailable: false))
+        }
+
+        // Trip End and linked Spray End use a separate immutable receipt path.
+        // A generic Spray Record "synced" badge cannot prove this completed.
+        if let intents = try? TrackedSprayCompletionSync.shared.intents() {
+            for intent in intents where intent.ownerId == auth.userId &&
+                intent.vineyardId == vineyard {
+                let parent = store.trips.contains {
+                    $0.id == intent.tripId && $0.vineyardId == vineyard
+                }
+                list.append(GuidedSyncRepairIssue(
+                    id: "sprayCompletion:" + intent.tripId.uuidString,
+                    recordId: intent.sprayRecordId,
+                    relatedTripId: parent ? intent.tripId : nil,
+                    kind: .trackedSprayCompletion,
+                    title: "Linked Spray completion",
+                    detail: "The original Trip End must be independently verified before its linked Spray completion can be acknowledged.",
+                    verifiedCurrentScope: parent, originalActualAvailable: false))
+            }
+        }
+
         let already = Set(list.map(\.recordId))
         let visible = Set(store.trips.filter { $0.vineyardId == vineyard }.map(\.id))
             .union(store.sprayRecords.filter { $0.vineyardId == vineyard }.map(\.id))
             .union(actualStore.records.filter { $0.vineyardId == vineyard }.map(\.id))
         for issue in issueCenter.values where issue.vineyardId == vineyard &&
-            visible.contains(issue.id) && !already.contains(issue.id) {
+            !already.contains(issue.id) {
             list.append(GuidedSyncRepairIssue(
                 id: "issue:" + issue.id.uuidString,
                 recordId: issue.id, relatedTripId: nil,
                 kind: .other, title: issue.entity,
                 detail: issue.friendlyMessage,
-                verifiedCurrentScope: true, originalActualAvailable: false))
+                verifiedCurrentScope: visible.contains(issue.id), originalActualAvailable: false))
         }
         items = list.sorted {
             if $0.kind == .protectedQueue && $1.kind != .protectedQueue { return false }
