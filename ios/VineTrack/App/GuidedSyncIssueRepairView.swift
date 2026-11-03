@@ -376,7 +376,7 @@ private struct GuidedSyncIssueDetailView: View {
             if row.deletedAt != nil {
                 server = .deleted
                 serverExplanation = "Trip is deleted on the server. No upload/recreation allowed"
-            } else if row.endTime != nil && !row.isActive {
+            } else if row.endTime != nil && row.isActive == false {
                 server = .ended
                 serverExplanation = "Original Trip is ended on the server"
             } else {
