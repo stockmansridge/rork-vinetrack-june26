@@ -1,0 +1,51 @@
+{
+  "approved_source_sha": "3a03dc2a9c40f86c8edb17ce987baaa18cf1a09c",
+  "workspace_head": "6457c3472788c1fc5a79b590ba05c58e6968c314",
+  "public_main": "1c8b85f2f26b1c636d70af38ee9a494c76a457b3",
+  "public_main_compare_file_delta": [],
+  "github_archive_sha256": "b7d1cb5abdc3fd08f49851adad004c01b498fbd0af981f2bd4cceb0250b8e102",
+  "source_parity": {"non_generated_ios_files":1306,"pre_upload_differences":[],"extra_nonignored_files":[],"post_upload_differences":[],"excluded":"Managed virtual Config.swift"},
+  "ci": {"independently_verified_completed_success_exact_sha":[41650009376,41650009657,41650009569],"tests_rerun":false},
+  "configuration": {
+    "both_required_variables_configured":true,
+    "managed_values_changed":false,
+    "source_privileged_key_literal_findings":[],
+    "clientEnvsHash":"77512c8744941d43de74978b0c1291c3bb06d8da",
+    "matches_214":true,
+    "injected_key_type":"not independently attested",
+    "injected_url_and_signed_auth":"not independently verified",
+    "authorization":"Issue56 revised internal-only sequencing conditions; existing trusted internal group only, no privileged-key evidence detected; no key values retained"
+  },
+  "preflight":{"inventory_count":414,"maximum":214,"certificate_id":"P6K283KAMH","capability_sync":"ok unchanged"},
+  "upload": {
+    "version":"3.1.9",
+    "build":215,
+    "submission_id":"c2a910be-686b-4fc9-9fba-29c347c73acc",
+    "status":"ok",
+    "created_at":"2026-11-03T14:29:57.728Z",
+    "compile_sign_upload_complete_at":"2026-11-03T14:37:36.806Z",
+    "builder":"limrun",
+    "xcode":"27.1",
+    "archive_source":"supplied-snapshot",
+    "signed_revision_proof":"Embedded signed SHA not exposed; application parity verified, not an exact Git checkout or binary attestation",
+    "certificate":"P6K283KAMH; Rork private key custody confirmed before submission"
+  },
+  "apple": {
+    "build_id":"3a6f7f7d-38ea-4db9-b3d8-7be69bfee41a",
+    "processingState":"VALID",
+    "publisher_cached_processing_state":null,
+    "note":"Direct fresh ASC VALID is processing evidence despite publisher cached null",
+    "uploaded_at":"2026-11-03T06:39:32-08:00",
+    "internalBuildState":"READY_FOR_BETA_TESTING",
+    "autoNotifyEnabled":true,
+    "complete_membership_lookup":true,
+    "groups":[{"id":"1a8d95a6-44ec-47ac-8754-47a0a283582e","name":"Internal Testing","type":"internal","membership":"all-builds"}],
+    "external_group_membership":false,
+    "external_review_or_public_submission_requested":false,
+    "actual_build215_install_observed":false
+  },
+  "original_trip":"492ebafc-b996-4ec4-8ea9-4261a3056810",
+  "vineyard":"59973ced-1fb9-42ec-a66d-9eaad3172824",
+  "incident":"OPEN: original iPhone in-place recovery and authoritative server readback still required. No customer-record read/write or original-operation replay performed in this delivery.",
+  "safety":"No application edits needed: workspace already matches approved correction. Android, unrelated features, production records, original IDs/quantities, retained queues/journals and archives untouched. No uninstall/reset. Compile/sign/upload and read-only Apple availability checks succeeded; no device/runtime acceptance claimed."
+}
