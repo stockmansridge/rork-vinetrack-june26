@@ -103,6 +103,18 @@ struct YieldEstimationView: View {
                 .padding(14)
                 .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
 
+                Button {
+                    if systemAdmin.isSystemAdmin { showCountMethod = true } else { startTrip() }
+                } label: {
+                    Label("Start Bunch Count Trip", systemImage: "plus.circle.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(VineyardTheme.leafGreen)
+                .disabled(paddocks.isEmpty)
+
                 if let draft = activeDraft {
                     Button {
                         resumeTrip(draft)
@@ -135,17 +147,6 @@ struct YieldEstimationView: View {
                     CurrentYieldEstimateSummary(estimate: currentEstimate(draft), detailed: false)
                 }
 
-                Button {
-                    if systemAdmin.isSystemAdmin { showCountMethod = true } else { startTrip() }
-                } label: {
-                    Label("Start Bunch Count Trip", systemImage: "plus.circle.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(VineyardTheme.leafGreen)
-                .disabled(paddocks.isEmpty)
 
                 if paddocks.isEmpty {
                     Text("Map at least one block boundary in Blocks before starting a bunch count trip.")

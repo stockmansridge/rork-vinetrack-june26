@@ -366,6 +366,18 @@ private fun BunchCountTripHome(
                 }
             }
 
+            // Keep the primary action directly below the introduction, even with a draft.
+                Button(
+                    onClick = onStart,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    enabled = blocks.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Start Bunch Count Trip", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                }
+
             if (blocks.isEmpty()) {
                 VineyardCard {
                     Text(
@@ -395,15 +407,6 @@ private fun BunchCountTripHome(
                 if (draft != null) {
                     Text("Draft", color = vine.textSecondary)
                     CurrentTripEstimateSummary(state, draft, detailed = false)
-                }
-                Button(
-                    onClick = onStart,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Start Bunch Count Trip", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 
