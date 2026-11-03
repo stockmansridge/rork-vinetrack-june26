@@ -51,7 +51,7 @@ begin
         raise exception 'TRIP_REVIEW_INVALID_CLIENT_EVIDENCE' using errcode='22023';
     end if;
     v_role := public.vineyard_role(p_vineyard_id);
-    if v_role not in ('owner','manager') then
+    if v_role is null or v_role not in ('owner','manager') then
         raise exception 'TRIP_REVIEW_FORBIDDEN' using errcode='42501';
     end if;
 
