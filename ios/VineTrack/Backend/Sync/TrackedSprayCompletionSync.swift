@@ -19,9 +19,17 @@ final class TrackedSprayCompletionSync {
         let independentlyReadAt: Date
         let spraySyncVersion: Int?
     }
+    struct CancelledReceipt: Codable, Sendable {
+        let originalIntent: Intent
+        let reviewedAt: Date
+        let cancellationOperationId: UUID
+    }
+
     private struct Snapshot: Codable {
         var pending: [Intent] = []
         var acknowledged: [Receipt] = []
+        /// Optional to decode archives written by every earlier iOS build.
+        var cancelled: [CancelledReceipt]? = nil
     }
     enum Failure: Error, LocalizedError {
         case held
@@ -45,6 +53,41 @@ final class TrackedSprayCompletionSync {
     }
 
     func intents() throws -> [Intent] { try load().pending }
+
+    /// A deliberately cancelled Trip can never receive a Spray "completed"
+    /// acknowledgement. Move its original End intent into a separate durable
+    /// cancellation history ONLY after an exact reviewed server cancellation
+    /// receipt and evidence archive have been independently verified.
+    func retireCancelled(tripId: UUID, ownerId: UUID, vineyardId: UUID,
+                         receiptOperationId: UUID) throws {
+        let ledger = try GuidedRepairAuditLedger.shared.history(
+            account: ownerId, vineyard: vineyardId, record: tripId)
+        guard ledger.contains(where: { $0.id == receiptOperationId &&
+            $0.stages.contains(where: {
+                $0.code == "SERVER_CANCEL_RECEIPT_AND_ARCHIVE_VERIFIED"
+            })
+        }), GuidedLegacyDeletedTripRepair.archiveConfirmed(
+            operationId: receiptOperationId, tripId: tripId,
+            vineyard: vineyardId, owner: ownerId) else {
+            throw Failure.held
+        }
+        var state = try load()
+        let matching = state.pending.filter { $0.tripId == tripId }
+        guard matching.allSatisfy({
+            $0.ownerId == ownerId && $0.vineyardId == vineyardId
+        }) else { throw Failure.held }
+        guard !matching.isEmpty else { return }
+        var history = state.cancelled ?? []
+        for intent in matching {
+            history.append(CancelledReceipt(
+                originalIntent: intent, reviewedAt: Date(),
+                cancellationOperationId: receiptOperationId))
+        }
+        state.cancelled = history
+        state.pending.removeAll { $0.tripId == tripId }
+        try persistence.saveOrThrow(state, key: Self.persistenceKey)
+        revision += 1
+    }
 
     /// Save before Trip End. A partial write on the Trip side retries with the first time.
     func prepare(ownerId: UUID, trip: Trip, sprays: [SprayRecord], proposed: Date) throws -> Date {
