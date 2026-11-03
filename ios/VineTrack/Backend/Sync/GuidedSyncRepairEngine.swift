@@ -238,6 +238,9 @@ enum GuidedActualUseCorrection {
         }
         let chemicals = try reviewedChemicals(
             original: original.chemicals, amounts: chemicalDisplayAmounts)
+        guard waterValue != original.waterVolumeL || chemicals != original.chemicals else {
+            throw Rejected(message: "The entered water and chemical amounts already match the original confirmed record. No amendment is needed.")
+        }
         guard provider.client.auth.currentUser?.id == owner else {
             throw Rejected(message: "The signed-in account changed; no correction was sent.")
         }
@@ -264,6 +267,25 @@ enum GuidedActualUseCorrection {
               (verified.correctionVersion ?? 0) >= (onServer.correctionVersion ?? 0)
         else {
             throw Rejected(message: "The correction response was not independently verified. Retain the same operation ID for reconciliation.")
+        }
+        // An amount readback is necessary but not sufficient to prove who
+        // amended a compliance record. Confirm the exact operation UUID in
+        // the immutable server amendment ledger before reporting success.
+        struct AmendmentRow: Decodable {
+            let operationId: UUID
+            enum CodingKeys: String, CodingKey { case operationId = "operation_id" }
+        }
+        let amendmentRows: [AmendmentRow] = try await provider.client
+            .from("spray_tank_actual_amendments")
+            .select("operation_id")
+            .eq("operation_id", value: operationId.uuidString)
+            .eq("spray_tank_actual_id", value: original.id.uuidString)
+            .eq("vineyard_id", value: vineyard.uuidString)
+            .limit(1).execute().value
+        guard amendmentRows.count == 1,
+              amendmentRows[0].operationId == operationId,
+              provider.client.auth.currentUser?.id == owner else {
+            throw Rejected(message: "Exact original Actual Use amounts were read back, but the audited amendment operation receipt is not visible. It remains unverified.")
         }
         await localStore.pull(vineyardId: vineyard)
         return verified
