@@ -89,7 +89,6 @@ struct GuidedSyncIssueRepairView: View {
     @Environment(SyncStatusCenter.self) private var syncStatus
 
     @State private var items: [GuidedSyncRepairIssue] = []
-    @State private var scopeKey = ""
 
     private var contextKey: String {
         (auth.userId?.uuidString ?? "none") + "|" + (store.selectedVineyardId?.uuidString ?? "none")
@@ -131,7 +130,7 @@ struct GuidedSyncIssueRepairView: View {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 7) {
                                 Image(systemName: item.kind == .protectedQueue ? "lock.shield" : "exclamationmark.circle")
-                                    .foregroundStyle(item.verifiedCurrentScope ? .orange : .secondary)
+                                    .foregroundStyle(item.verifiedCurrentScope ? Color.orange : Color.secondary)
                                 Text(item.title).font(.headline)
                             }
                             Text(item.recordId.uuidString.lowercased())
@@ -167,7 +166,6 @@ struct GuidedSyncIssueRepairView: View {
             items = []
             return
         }
-        scopeKey = contextKey
         var list: [GuidedSyncRepairIssue] = []
         let actualStore = SprayTankActualStore.shared
         let pendingActuals = actualStore.records.filter {
