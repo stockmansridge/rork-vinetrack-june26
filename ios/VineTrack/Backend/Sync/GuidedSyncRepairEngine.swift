@@ -300,4 +300,121 @@ enum GuidedActualUseCorrection {
         await localStore.pull(vineyardId: vineyard)
         return verified
     }
+
+    private struct LocalOriginalCorrectionArchive: Codable {
+        let operationId: UUID
+        let owner: UUID
+        let vineyard: UUID
+        let original: SprayTankActual
+        let reviewed: SprayTankActual
+        let evidenceNote: String
+        let savedAt: Date
+    }
+
+    /// Correct a never-uploaded Actual Use through its SAME original record
+    /// ID and session. An independent server read must prove that it has NOT
+    /// already been accepted; accepted records use the audited RPC instead.
+    /// The frozen original and operator note are durably archived BEFORE
+    /// updating the queued local record.
+    static func correctPendingOriginal(
+        actualId: UUID, owner: UUID, vineyard: UUID, reason: String,
+        waterText: String, chemicalDisplayAmounts: [UUID: String],
+        operationId: UUID, store: MigratedDataStore
+    ) async throws -> SprayTankActual {
+        guard GuidedRepairFieldValidation.note(reason) != nil,
+              store.currentUserIdProvider?() == owner,
+              store.selectedVineyardId == vineyard,
+              SupabaseClientProvider.shared.client.auth.currentUser?.id == owner
+        else {
+            throw Rejected(message: "Original account/vineyard and an evidence note are required.")
+        }
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyard.uuidString)
+        let actualStore = SprayTankActualStore.shared
+        guard let original = actualStore.records.first(where: {
+            $0.id == actualId && $0.vineyardId == vineyard
+        }), actualStore.pendingIds.contains(actualId),
+              let localTrip = store.trips.first(where: {
+                  $0.id == original.tripId && $0.vineyardId == vineyard
+              }),
+              TankDependencyVerification.ids(localTrip.tankSessions)
+                  .contains(TankDependencyVerification.normalized(original.tankSessionId)),
+              (try? store.tripDeletionJournal.isCancelled(original.tripId)) == false,
+              !TripCancellationIntentStore.shared.blocksReplay(tripId: original.tripId),
+              store.sprayRecords.contains(where: {
+                  $0.id == original.sprayRecordId && $0.vineyardId == vineyard &&
+                  $0.canonicalTripId == original.tripId
+              })
+        else {
+            throw Rejected(message: "The pending original Actual Use lacks a verified local tank session, Spray Record or writable parent. Repair the original dependency first.")
+        }
+        // Unlike amend(), a newly saved original does not need an already
+        // present server tank session. It must, however, belong to an existing
+        // non-deleted original Trip; the normal dependency sweep stages the
+        // original session before this Actual is uploaded.
+        let remoteTrip = try await SupabaseTripSyncRepository()
+            .fetchTripForOccurrenceStart(tripId: original.tripId, vineyardId: vineyard)
+        guard let remoteTrip, remoteTrip.id == original.tripId,
+              remoteTrip.vineyardId == vineyard, remoteTrip.deletedAt == nil else {
+            throw Rejected(message: "The original server Trip is deleted, absent or not in this vineyard. Nothing was edited.")
+        }
+        // A lost ACK can leave a locally pending record even when the server
+        // already accepted it. Never overwrite that compliance row through
+        // this local-only recovery path.
+        guard try await actualStore.actualReader(original) == nil else {
+            throw Rejected(message: "The original Actual Use is already present on the server. Verify its receipt, then use the audited server amendment option.")
+        }
+        let water: Double?
+        if waterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            water = nil
+        } else if let parsed = GuidedRepairFieldValidation.nonnegativeNumber(waterText) {
+            water = parsed
+        } else {
+            throw Rejected(message: "Enter non-negative tank water in litres, or leave blank for Not recorded.")
+        }
+        let reviewedChemicals = try reviewedChemicals(
+            original: original.chemicals, amounts: chemicalDisplayAmounts)
+        guard water != original.waterVolumeL ||
+              reviewedChemicals != original.chemicals else {
+            throw Rejected(message: "The original pending quantities are unchanged; no correction is required.")
+        }
+        let revisionAt = max(Date(), original.clientUpdatedAt.addingTimeInterval(0.001))
+        let corrected = try SprayTankActual(
+            id: original.id, vineyardId: original.vineyardId,
+            sprayRecordId: original.sprayRecordId, tripId: original.tripId,
+            tankSessionId: original.tankSessionId, tankNumber: original.tankNumber,
+            waterVolumeL: water, chemicals: reviewedChemicals,
+            confirmedAt: original.confirmedAt, confirmedBy: original.confirmedBy,
+            clientUpdatedAt: revisionAt, correctionVersion: original.correctionVersion,
+            lastCorrectedAt: original.lastCorrectedAt)
+        let key = "vinetrack_guided_original_actual_archive_v1_" +
+            operationId.uuidString.lowercased()
+        let archive = LocalOriginalCorrectionArchive(
+            operationId: operationId, owner: owner, vineyard: vineyard,
+            original: original, reviewed: corrected,
+            evidenceNote: reason.trimmingCharacters(in: .whitespacesAndNewlines),
+            savedAt: Date())
+        let existing: PersistenceStore.LoadOutcome<LocalOriginalCorrectionArchive> =
+            PersistenceStore.shared.loadOutcome(key: key)
+        switch existing {
+        case .failed:
+            throw Rejected(message: "The original Actual Use evidence archive is unreadable. No correction was applied.")
+        case .decoded(let previous):
+            guard previous.owner == owner, previous.vineyard == vineyard,
+                  previous.original.id == original.id,
+                  previous.operationId == operationId else {
+                throw Rejected(message: "The original correction operation conflicts with retained evidence.")
+            }
+        case .missing:
+            try PersistenceStore.shared.saveOrThrow(archive, key: key)
+        }
+        guard store.currentUserIdProvider?() == owner,
+              store.selectedVineyardId == vineyard,
+              actualStore.pendingIds.contains(original.id),
+              (try? store.tripDeletionJournal.isCancelled(original.tripId)) == false
+        else {
+            throw Rejected(message: "The original scope or deletion state changed. The archive is retained; no queued amount was changed.")
+        }
+        try actualStore.saveLocally(corrected)
+        return corrected
+    }
 }
