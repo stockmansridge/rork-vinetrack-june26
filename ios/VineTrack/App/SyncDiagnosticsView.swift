@@ -1194,6 +1194,7 @@ struct SyncDiagnosticsView: View {
         let lastSync: Date?
         let status: GenericSyncStatus
         let errorMessage: String?
+        var lastDownload: Date? = nil
     }
 
     fileprivate enum GenericSyncStatus: String {
@@ -1220,7 +1221,8 @@ struct SyncDiagnosticsView: View {
                 pendingDeletes: tripSync.pendingDeleteCount,
                 lastSync: tripSync.lastSyncDate,
                 status: status(tripSync.syncStatus),
-                errorMessage: tripSync.errorMessage
+                errorMessage: tripSync.errorMessage,
+                lastDownload: tripSync.lastSelectedVineyardDownloadAt
             ),
             DiagnosticRow(
                 id: "spray_records",
@@ -1231,7 +1233,8 @@ struct SyncDiagnosticsView: View {
                 pendingDeletes: sprayRecordSync.pendingDeleteCount,
                 lastSync: sprayRecordSync.lastSyncDate,
                 status: statusM(sprayRecordSync.syncStatus),
-                errorMessage: sprayRecordSync.errorMessage
+                errorMessage: sprayRecordSync.errorMessage,
+                lastDownload: sprayRecordSync.lastSelectedVineyardDownloadAt
             ),
             DiagnosticRow(
                 id: "spray_presets",
@@ -1447,6 +1450,9 @@ struct SyncDiagnosticsView: View {
             lines.append("  pending_upserts: \(r.pendingUpserts.map(String.init) ?? "unknown")")
             lines.append("  pending_deletes: \(r.pendingDeletes)")
             lines.append("  last_sync: \(r.lastSync.map { df.string(from: $0) } ?? "never")")
+            if let downloaded = r.lastDownload {
+                lines.append("  last_download_not_upload_ack: \(df.string(from: downloaded))")
+            }
             lines.append("  status: \(r.status.rawValue)")
             if let err = r.errorMessage, !err.isEmpty {
                 lines.append("  last_error: \(err)")
@@ -1696,6 +1702,16 @@ private struct EntityDiagnosticRow: View, Equatable {
                 Text(lastSyncText)
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
+            }
+            if let download = row.lastDownload {
+                HStack {
+                    Text("Last download (not upload receipt)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(download.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
             if let err = row.errorMessage, !err.isEmpty, row.status == .failure {
                 Text(err)

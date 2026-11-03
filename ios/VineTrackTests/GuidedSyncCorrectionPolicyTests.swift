@@ -115,6 +115,51 @@ final class GuidedSyncCorrectionPolicyTests: XCTestCase {
         }
     }
 
+    func testLegacyScopeRequiresExactSelectedVineyardAndOriginalId() {
+        let original = UUID(), selected = UUID(), foreign = UUID()
+        XCTAssertEqual(GuidedLegacyServerScope.classify(
+            queuedID: original, selectedVineyard: selected, serverID: original,
+            serverVineyard: selected, deletedAt: Date()), .selectedDeleted)
+        XCTAssertEqual(GuidedLegacyServerScope.classify(
+            queuedID: original, selectedVineyard: selected, serverID: original,
+            serverVineyard: selected, deletedAt: nil), .selectedNotDeleted)
+        XCTAssertEqual(GuidedLegacyServerScope.classify(
+            queuedID: original, selectedVineyard: selected, serverID: original,
+            serverVineyard: foreign, deletedAt: Date()), .unattributed)
+        XCTAssertEqual(GuidedLegacyServerScope.classify(
+            queuedID: original, selectedVineyard: selected, serverID: UUID(),
+            serverVineyard: selected, deletedAt: Date()), .unattributed)
+        XCTAssertEqual(GuidedLegacyServerScope.classify(
+            queuedID: original, selectedVineyard: selected, serverID: nil,
+            serverVineyard: nil, deletedAt: nil), .unattributed)
+    }
+
+    func testDeletedOriginalRecommendsReconciliationWithoutForcingIt() {
+        let original = item(kind: .tripDeletion)
+        let options = GuidedSyncCorrectionPolicy.available(for: original, server: .deleted)
+        XCTAssertEqual(GuidedSyncRepairSuggestion.choose(
+            available: options, server: .deleted, current: .privateReview), .reviewLegacyDeleted)
+        XCTAssertEqual(GuidedSyncRepairSuggestion.choose(
+            available: options, server: .deleted, current: .verifyCancellation), .verifyCancellation)
+        XCTAssertEqual(GuidedSyncRepairSuggestion.choose(
+            available: [.privateReview], server: .notVisible, current: .privateReview), .privateReview)
+        let protected = item(kind: .protectedQueue, scoped: false)
+        XCTAssertEqual(GuidedSyncRepairSuggestion.choose(
+            available: GuidedSyncCorrectionPolicy.available(for: protected, server: .deleted),
+            server: .deleted, current: .privateReview), .reviewLegacyDeleted)
+    }
+
+    func testDeletedDependentNeverOffersOrdinaryRetryOrQuantityMutation() {
+        let kinds: [GuidedSyncRepairIssue.Kind] =
+            [.tankActual, .sprayRecord, .trackedSprayCompletion]
+        for kind in kinds {
+            let options = GuidedSyncCorrectionPolicy.available(for: item(kind: kind), server: .deleted)
+            XCTAssertFalse(options.contains(.retryExisting))
+            XCTAssertFalse(options.contains(.correctPendingActualUse))
+            XCTAssertFalse(options.contains(.amendActualUse))
+        }
+    }
+
     func testActualAndSprayRetryOnlyAfterExactParentScopeReadback() {
         let kinds: [GuidedSyncRepairIssue.Kind] = [.tankActual, .sprayRecord]
         for kind in kinds {

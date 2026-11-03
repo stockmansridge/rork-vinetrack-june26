@@ -20,6 +20,8 @@ final class TripSyncService {
 
     var syncStatus: Status = .idle
     var lastSyncDate: Date?
+    /// Read-back freshness, never a queue upload acknowledgement.
+    private(set) var lastSelectedVineyardDownloadAt: Date?
     var errorMessage: String?
     /// Per-Trip original-evidence hold after an exact server read. This is a
     /// transient explanation, not a receipt or authority to replay anything.
@@ -513,6 +515,7 @@ final class TripSyncService {
             "issue43_feature_marker: separate_spray_confirmation_scoped_trip_history_auto_end_readback_v1",
             "issue43_receipt_reconciliation: server_terminal_exact_route_spray_actuals_durable_v2",
             "last_trip_sync_local: \(lastSyncDate?.ISO8601Format() ?? "unknown")",
+            "last_selected_vineyard_download: \(lastSelectedVineyardDownloadAt?.ISO8601Format() ?? "unknown")",
             "last_full_sync: unknown_no_durable_full_sweep_receipt",
             "upload_cleared_acknowledgement: unknown_not_persisted",
             "inspection: local_read_only_no_network_no_retry"]
@@ -782,6 +785,7 @@ final class TripSyncService {
             await TripLabourSnapshotJournal.shared.replay(trips: store?.trips ?? [])
             try await pullRemoteTrips(vineyardId: vineyardId)
             guard current() else { throw CancellationError() }
+            lastSelectedVineyardDownloadAt = Date()
             let retained = retainedState
             if let issue = retained.inspectionError { throw TripDeletionJournal.Held(reason: issue) }
             // Legacy upload metadata is GLOBAL. A failed Trip from a different

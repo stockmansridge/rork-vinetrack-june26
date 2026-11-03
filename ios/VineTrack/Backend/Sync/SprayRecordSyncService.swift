@@ -35,6 +35,8 @@ final class SprayRecordSyncService {
 
     var syncStatus: Status = .idle
     var lastSyncDate: Date?
+    /// Authenticated download freshness only; outstanding Spray receipts remain held.
+    private(set) var lastSelectedVineyardDownloadAt: Date?
     var errorMessage: String?
 
     private func isHeld(_ id: UUID) -> Bool {
@@ -132,6 +134,9 @@ final class SprayRecordSyncService {
         do {
             try await pushLocalSprayRecords(vineyardId: vineyardId)
             try await pullRemoteSprayRecords(vineyardId: vineyardId)
+            if store?.selectedVineyardId == vineyardId {
+                lastSelectedVineyardDownloadAt = Date()
+            }
             let held = try store?.legacySprayHeldCount(vineyard: vineyardId) ?? 0
             metadata.setLastSync(Date(), for: vineyardId)
             if held > 0 {

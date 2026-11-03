@@ -22,6 +22,21 @@ nonisolated enum GuidedSyncRecordState: String, Sendable {
     case notChecked, active, ended, deleted, notVisible, standalone
 }
 
+/// Server identification of a historical queue ID is never evidence that its
+/// original upload was accepted or that an old account's bytes may be erased.
+nonisolated enum GuidedLegacyServerScope: String, Sendable {
+    case unattributed, selectedNotDeleted, selectedDeleted
+
+    static func classify(queuedID: UUID, selectedVineyard: UUID,
+                         serverID: UUID?, serverVineyard: UUID?,
+                         deletedAt: Date?) -> Self {
+        guard serverID == queuedID, serverVineyard == selectedVineyard else {
+            return .unattributed
+        }
+        return deletedAt == nil ? .selectedNotDeleted : .selectedDeleted
+    }
+}
+
 nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Sendable {
     case recoverRecordedTank, manualVerifiedTank, amendActualUse, correctPendingActualUse, verifyCompleted, verifyCancellation, reviewLegacyDeleted, retryExisting, privateReview
     var id: Self { self }
@@ -112,6 +127,20 @@ nonisolated enum GuidedSyncCorrectionPolicy {
     }
 }
 
+/// A successful tombstone read offers a meaningful action by default; a
+/// supported explicitly selected action is never overridden.
+nonisolated enum GuidedSyncRepairSuggestion {
+    static func choose(available: [GuidedSyncCorrection],
+                       server: GuidedSyncRecordState,
+                       current: GuidedSyncCorrection) -> GuidedSyncCorrection {
+        if current != .privateReview && available.contains(current) { return current }
+        if server == .deleted && available.contains(.reviewLegacyDeleted) {
+            return .reviewLegacyDeleted
+        }
+        return available.first(where: { $0 != .privateReview }) ?? .privateReview
+    }
+}
+
 @MainActor
 struct GuidedSyncIssueRepairView: View {
     @Environment(NewBackendAuthService.self) private var auth
@@ -121,6 +150,9 @@ struct GuidedSyncIssueRepairView: View {
     @Environment(SyncStatusCenter.self) private var syncStatus
 
     @State private var items: [GuidedSyncRepairIssue] = []
+    @State private var legacyServerScope: [UUID: GuidedLegacyServerScope] = [:]
+    @State private var isCheckingLegacyScope = false
+    @State private var legacyScopeReadFailed = false
 
     private var contextKey: String {
         (auth.userId?.uuidString ?? "none") + "|" + (store.selectedVineyardId?.uuidString ?? "none")
@@ -135,17 +167,30 @@ struct GuidedSyncIssueRepairView: View {
                 Text("Queue entries and failures overlap; they are not separate totals. Historical or other-vineyard work is protected until its original ownership is established.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if isCheckingLegacyScope {
+                    Label("Checking old Trip IDs in this vineyard's server records…",
+                          systemImage: "arrow.clockwise")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                if !legacyServerScope.isEmpty {
+                    Text("\(legacyServerScope.count) old Trip ID(s) matched this vineyard. No old upload or cancellation was acknowledged.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                if legacyScopeReadFailed {
+                    Text("Server scope could not be checked; original IDs remain protected. Refresh when connected.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
             } header: {
                 Text("Guided sync issue repair")
             }
 
             Section {
                 Button {
-                    reload()
+                    Task { await refreshAndClassify() }
                 } label: {
-                    Label("Refresh issue list", systemImage: "arrow.clockwise")
+                    Label("Refresh issues and check server scope", systemImage: "arrow.clockwise")
                 }
-                .disabled(busy || !auth.isSignedIn)
+                .disabled(busy || !auth.isSignedIn || isCheckingLegacyScope)
 
                 if busy {
                     Label("Sync is running. Repair actions are disabled until it finishes.", systemImage: "hourglass")
@@ -184,11 +229,65 @@ struct GuidedSyncIssueRepairView: View {
         .navigationTitle("Review Sync Issues")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: contextKey) {
-            reload()
+            legacyServerScope = [:]
+            legacyScopeReadFailed = false
+            await refreshAndClassify()
         }
         .onChange(of: syncStatus.isSyncing) { _, active in
-            if !active { reload() }
+            if !active { Task { await refreshAndClassify() } }
         }
+    }
+
+    /// Single authenticated, vineyard-filtered READ; foreign or missing server
+    /// rows never become eligible uploads, cancellations or queue ACKs.
+    private func refreshAndClassify() async {
+        reload()
+        guard !isCheckingLegacyScope, !busy, auth.isSignedIn,
+              let owner = auth.userId, owner == store.currentUserIdProvider?(),
+              SupabaseClientProvider.shared.client.auth.currentUser?.id == owner,
+              let vineyard = store.selectedVineyardId else { return }
+        let ids = tripSync.guidedQueueItems(vineyardId: vineyard)
+            .filter { !$0.belongsToCurrentVineyard }.map(\.id)
+        if ids.isEmpty {
+            legacyServerScope = [:]
+            legacyScopeReadFailed = false
+            reload()
+            return
+        }
+        isCheckingLegacyScope = true
+        defer { isCheckingLegacyScope = false }
+        let originalContext = contextKey
+        struct ScopedTripRow: Decodable, Sendable {
+            let id: UUID
+            let vineyard_id: UUID
+            let deleted_at: Date?
+        }
+        do {
+            let rows: [ScopedTripRow] = try await SupabaseClientProvider.shared.client
+                .from("trips")
+                .select("id,vineyard_id,deleted_at")
+                .eq("vineyard_id", value: vineyard.uuidString.lowercased())
+                .in("id", values: ids.map { $0.uuidString.lowercased() })
+                .execute().value
+            guard !Task.isCancelled, originalContext == contextKey,
+                  store.currentUserIdProvider?() == owner,
+                  SupabaseClientProvider.shared.client.auth.currentUser?.id == owner else { return }
+            let requested = Set(ids)
+            legacyServerScope = Dictionary(uniqueKeysWithValues: rows.compactMap { row in
+                guard requested.contains(row.id) else { return nil }
+                let result = GuidedLegacyServerScope.classify(
+                    queuedID: row.id, selectedVineyard: vineyard,
+                    serverID: row.id, serverVineyard: row.vineyard_id,
+                    deletedAt: row.deleted_at)
+                return result == .unattributed ? nil : (row.id, result)
+            })
+            legacyScopeReadFailed = false
+        } catch {
+            guard originalContext == contextKey else { return }
+            legacyServerScope = [:]
+            legacyScopeReadFailed = true
+        }
+        reload()
     }
 
     private func reload() {
@@ -214,7 +313,13 @@ struct GuidedSyncIssueRepairView: View {
             let recordedActual = pendingActuals.contains { $0.tripId == entry.id }
             let explanation: String
             if !entry.belongsToCurrentVineyard {
-                explanation = "Unattributed original queue ID. Original account/vineyard evidence is required; no automatic cleanup."
+                if legacyServerScope[entry.id] == .selectedDeleted {
+                    explanation = "The authenticated server confirms this original Trip is soft-deleted in the selected vineyard. Review the archived original Spray/Actual evidence and obtain an exact cancellation receipt. No automatic cleanup."
+                } else if legacyServerScope[entry.id] == .selectedNotDeleted {
+                    explanation = "This ID exists in the selected vineyard, but the original device snapshot and operation receipt are unverified. Do not re-upload or clear."
+                } else {
+                    explanation = "Original queue scope remains unverified or belongs elsewhere. No automatic upload, retry or cleanup."
+                }
             } else if deletion {
                 explanation = "Deletion/cancellation needs independent server acknowledgement. This Trip must not be resurrected."
             } else {
@@ -226,8 +331,10 @@ struct GuidedSyncIssueRepairView: View {
                 recordId: entry.id,
                 relatedTripId: entry.belongsToCurrentVineyard ? entry.id : nil,
                 kind: kind,
-                title: kind == .protectedQueue ? "Protected original Trip" :
-                    (deletion ? "Trip deletion" : "Trip upload / completion"),
+                title: kind == .protectedQueue
+                    ? (legacyServerScope[entry.id] == .selectedDeleted
+                        ? "Deleted original Trip — review" : "Protected original Trip")
+                    : (deletion ? "Trip deletion" : "Trip upload / completion"),
                 detail: explanation,
                 verifiedCurrentScope: entry.belongsToCurrentVineyard,
                 originalActualAvailable: recordedActual && entry.originalTripPresent))
@@ -249,7 +356,7 @@ struct GuidedSyncIssueRepairView: View {
             list.append(GuidedSyncRepairIssue(
                 id: "actual:" + actual.id.uuidString,
                 recordId: actual.id,
-                relatedTripId: parent ? actual.tripId : nil,
+                relatedTripId: actual.tripId,
                 kind: .tankActual,
                 title: "Tank Actual Use — tank \(actual.tankNumber)",
                 detail: actualStore.dependencyHolds[actual.id]
@@ -266,8 +373,7 @@ struct GuidedSyncIssueRepairView: View {
             let parentId = spray.canonicalTripId
             list.append(GuidedSyncRepairIssue(
                 id: "spray:" + spray.id.uuidString, recordId: spray.id,
-                relatedTripId: store.trips.contains(where: { $0.id == parentId && $0.vineyardId == vineyard })
-                    ? parentId : nil,
+                relatedTripId: parentId,
                 kind: .sprayRecord, title: "Spray Record",
                 detail: issueCenter[spray.id]?.friendlyMessage
                     ?? "Original Spray Record upload/deletion is still awaiting a verified receipt.",
@@ -284,7 +390,7 @@ struct GuidedSyncIssueRepairView: View {
             list.append(GuidedSyncRepairIssue(
                 id: "initialMix:" + draft.tripId.uuidString,
                 recordId: draft.sprayRecordId,
-                relatedTripId: parent ? draft.tripId : nil,
+                relatedTripId: draft.tripId,
                 kind: .initialMixDraft, title: "Retained first tank confirmation",
                 detail: "Original operator-entered tank contents are retained. Verify the real Trip tank session and confirmed Actual Use before clearing the handoff.",
                 verifiedCurrentScope: parent, originalActualAvailable: false))
@@ -301,7 +407,7 @@ struct GuidedSyncIssueRepairView: View {
                 list.append(GuidedSyncRepairIssue(
                     id: "sprayCompletion:" + intent.tripId.uuidString,
                     recordId: intent.sprayRecordId,
-                    relatedTripId: parent ? intent.tripId : nil,
+                    relatedTripId: intent.tripId,
                     kind: .trackedSprayCompletion,
                     title: "Linked Spray completion",
                     detail: "The original Trip End must be independently verified before its linked Spray completion can be acknowledged.",
@@ -360,7 +466,8 @@ private struct GuidedSyncIssueDetailView: View {
     @State private var evidenceNote = ""
     @State private var manualTime = Date()
     @State private var selectedOriginalSession: UUID?
-    @State private var legacyApplied = false
+    @State private var legacyApplicationChoice = "unselected"
+    private var legacyApplied: Bool { legacyApplicationChoice == "applied" }
     @State private var legacyDeletionConfirmed = false
     @State private var recordedActualsNotAppliedConfirmed = false
 
@@ -407,6 +514,18 @@ private struct GuidedSyncIssueDetailView: View {
         selected == .manualVerifiedTank || selected == .amendActualUse ||
             selected == .correctPendingActualUse || selected == .reviewLegacyDeleted
     }
+    private var canVerifyProtectedCancellation: Bool {
+        guard issue.kind == .protectedQueue, originatingContext == contextKey,
+              let owner = auth.userId, let vineyard = store.selectedVineyardId else { return false }
+        return auditHistory.contains { entry in
+            entry.account == owner && entry.vineyard == vineyard &&
+            entry.record == issue.recordId &&
+            entry.stages.contains(where: { $0.code == "SERVER_CANCEL_RECEIPT_AND_ARCHIVE_VERIFIED" }) &&
+            GuidedLegacyDeletedTripRepair.archiveConfirmed(
+                operationId: entry.id, tripId: issue.recordId,
+                vineyard: vineyard, owner: owner)
+        }
+    }
 
     var body: some View {
         Form {
@@ -439,6 +558,24 @@ private struct GuidedSyncIssueDetailView: View {
                 }
                 .disabled(isWorking || !auth.isSignedIn)
                 LabeledContent("Server state", value: serverExplanation)
+                if server == .deleted,
+                   [.tankActual, .sprayRecord, .trackedSprayCompletion, .initialMixDraft].contains(issue.kind),
+                   let parentId = issue.relatedTripId {
+                    NavigationLink {
+                        GuidedSyncIssueDetailView(issue: GuidedSyncRepairIssue(
+                            id: "deletedParent:" + parentId.uuidString,
+                            recordId: parentId, relatedTripId: nil,
+                            kind: .protectedQueue, title: "Original deleted parent Trip",
+                            detail: "Reconcile the server-deleted original Trip and its linked Spray, Actual Use and End intents with explicit operator attestation and a compliance archive.",
+                            verifiedCurrentScope: false,
+                            originalActualAvailable: false))
+                    } label: {
+                        Label("Review and reconcile deleted parent Trip",
+                              systemImage: "arrow.turn.up.left")
+                    }
+                    Text("Ordinary child uploads cannot finish against a deleted Trip. Resolve its original cancellation before retrying this record.")
+                        .font(.footnote).foregroundStyle(.orange)
+                }
                 if issue.kind == .tankActual, let actual = originalActual {
                     LabeledContent("Original tank", value: String(actual.tankNumber))
                     LabeledContent("Water recorded", value: actual.waterVolumeL.map { String($0) + " L" } ?? "Not recorded")
@@ -508,13 +645,14 @@ private struct GuidedSyncIssueDetailView: View {
                 }
 
                 if selected == .reviewLegacyDeleted {
-                    Picker("Was the spray actually applied?", selection: $legacyApplied) {
-                        Text("Not applied").tag(false)
-                        Text("Applied").tag(true)
+                    Picker("Was the spray actually applied?", selection: $legacyApplicationChoice) {
+                        Text("Select").tag("unselected")
+                        Text("Not applied").tag("not_applied")
+                        Text("Applied").tag("applied")
                     }
                     .pickerStyle(.segmented)
                     Toggle("I confirm this original Trip was deliberately deleted", isOn: $legacyDeletionConfirmed)
-                    if !legacyApplied {
+                    if legacyApplicationChoice == "not_applied" {
                         Toggle("Recorded tank contents were NOT sprayed or applied", isOn: $recordedActualsNotAppliedConfirmed)
                         Text("Only confirm this when the original tank mix was recorded but genuinely never applied. All original quantities stay in the compliance archive.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -539,7 +677,8 @@ private struct GuidedSyncIssueDetailView: View {
                 }
                 .disabled(selected != .privateReview &&
                     (!eligible || server == .notChecked ||
-                     (selected == .reviewLegacyDeleted && !legacyDeletionConfirmed)))
+                     (selected == .reviewLegacyDeleted &&
+                       (!legacyDeletionConfirmed || legacyApplicationChoice == "unselected"))))
                 if awaitingFullSync {
                     Label(syncStatus.isSyncing
                         ? "Full dependency-chain sync is running"
@@ -552,7 +691,9 @@ private struct GuidedSyncIssueDetailView: View {
                 } label: {
                     Label("Verify all linked server receipts", systemImage: "checkmark.shield")
                 }
-                .disabled(isWorking || !issue.verifiedCurrentScope || syncStatus.isSyncing)
+                .disabled(isWorking ||
+                    !(issue.verifiedCurrentScope || canVerifyProtectedCancellation) ||
+                    syncStatus.isSyncing)
                 if let outcome {
                     Text(outcome).font(.subheadline)
                 }
@@ -606,11 +747,13 @@ private struct GuidedSyncIssueDetailView: View {
             initialiseInputs()
             refreshHistory()
             restoreUnresolvedInputs()
-            if issue.verifiedCurrentScope { await inspect() }
+            if issue.verifiedCurrentScope || issue.kind == .protectedQueue ||
+               issue.relatedTripId != nil { await inspect() }
         }
-        .onChange(of: server) { _, _ in
-            if activeAuditOperation == nil && !options.contains(selected) {
-                selected = options.first ?? .privateReview
+        .onChange(of: server) { _, state in
+            if activeAuditOperation == nil {
+                selected = GuidedSyncRepairSuggestion.choose(
+                    available: options, server: state, current: selected)
             }
         }
         .onChange(of: syncStatus.isSyncing) { _, now in
@@ -660,7 +803,9 @@ private struct GuidedSyncIssueDetailView: View {
         if let value = input.chemicals { chemicalTexts = value }
         if let value = input.tankTime { manualTime = value }
         if let value = input.sessionId { selectedOriginalSession = value }
-        if let value = input.applied { legacyApplied = value }
+        if let value = input.applied {
+            legacyApplicationChoice = value ? "applied" : "not_applied"
+        }
         if let value = input.recordedNotApplied { recordedActualsNotAppliedConfirmed = value }
         outcome = "Resumed the original unresolved correction inputs. Its operation ID is retained; inspect again before retrying."
     }
@@ -827,8 +972,10 @@ private struct GuidedSyncIssueDetailView: View {
                     tripStart: trip.startTime, tripEnd: end, originalConfirmedAt: actual.confirmedAt,
                     reason: evidenceNote) { outcome = error; return }
             }
-            if chosen == .reviewLegacyDeleted && !legacyDeletionConfirmed {
-                outcome = "Confirm the deliberate original deletion first."; return
+            if chosen == .reviewLegacyDeleted &&
+                (!legacyDeletionConfirmed || legacyApplicationChoice == "unselected") {
+                outcome = "Select Applied or Not applied and confirm the original deletion first. Nothing was changed."
+                return
             }
         } catch { outcome = error.localizedDescription; return }
         let input = GuidedRepairReviewInput(
