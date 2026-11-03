@@ -172,11 +172,20 @@ final class TripSyncService {
 
     /// P0 3.1.9 Phase B: tank session IDs referenced by local Tank actuals for a Trip.
     private var requiredTankSessions: (UUID) -> Set<String> = { _ in [] }
+    /// Source of independently confirmed original Actual Use. Injectable only
+    /// for native tests; production always reads the durable Actual store.
+    private var confirmedTankActuals: (UUID) -> [SprayTankActual] = { tripId in
+        SprayTankActualStore.shared.records.filter { $0.tripId == tripId }
+    }
     /// Last fixed Phase B hold code per Trip; diagnostics only, never quantities.
     private(set) var tankDependencyHolds: [UUID: String] = [:]
 
     func configureTankDependencies(_ provider: @escaping (UUID) -> Set<String>) {
         requiredTankSessions = provider
+    }
+
+    func configureConfirmedTankActuals(_ provider: @escaping (UUID) -> [SprayTankActual]) {
+        confirmedTankActuals = provider
     }
 
     // MARK: - Dirty tracking
@@ -1139,7 +1148,7 @@ final class TripSyncService {
                                     $0.vineyardId == vineyardId &&
                                     !$0.isTemplate
                                 }.map(\.id))
-                                let actuals = SprayTankActualStore.shared.records.filter {
+                                let actuals = confirmedTankActuals(tripId).filter {
                                     $0.tripId == tripId && $0.vineyardId == vineyardId
                                 }
                                 if let recovered = ConfirmedTankStartRecovery.restore(
