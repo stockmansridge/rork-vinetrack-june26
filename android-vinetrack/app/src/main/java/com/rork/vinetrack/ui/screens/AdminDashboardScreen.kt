@@ -167,7 +167,7 @@ fun AdminDashboardScreen(
             onOpen = { destination = it },
         )
         else -> {
-            val returnToCaller = {
+            val returnToCaller: () -> Unit = {
                 if (initialLanding == AdminLanding.Dashboard) destination = null
                 else onBack?.invoke()
             }

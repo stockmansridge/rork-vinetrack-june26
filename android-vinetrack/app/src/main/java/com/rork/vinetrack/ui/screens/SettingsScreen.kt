@@ -191,7 +191,7 @@ fun SettingsScreen(
             onPurchase = vm::purchaseSubscription,
             onRestore = vm::restoreSubscriptionPurchases,
             onRecheckAccess = vm::recheckSubscriptionAccess,
-            onSignOut = vm::signOut,
+            onSignOut = { vm.signOut() },
             onBack = { showSubscription = false },
             modifier = modifier,
         )
@@ -284,7 +284,9 @@ fun SettingsScreen(
                         }
                         if (state.isSystemAdmin) {
                             addRoute("Android Map Alignment", "System Admin Preview", Icons.Filled.Explore, VineColors.Purple, ToolRoute.MapAlignment, "system admin platform")
-                            addRoute("Material Library", "Materials and default costs", Icons.Filled.Inventory2, VineColors.EarthBrown, ToolRoute.MaterialLibrary, "operations")
+                            if (vm.materialCostsAccess().isAllowed) {
+                                addRoute("Material Library", "Materials and default costs", Icons.Filled.Inventory2, VineColors.EarthBrown, ToolRoute.MaterialLibrary, "operations")
+                            }
                         }
                     }
                     if (state.isSystemAdmin) {
