@@ -22,9 +22,11 @@ final class GuidedSyncCorrectionPolicyTests: XCTestCase {
     }
 
     func testUnknownOwnershipAllowsOnlyPrivateReview() {
-        for kind: GuidedSyncRepairIssue.Kind in [.tripUpload, .tripDeletion, .tankActual, .sprayRecord, .protectedQueue] {
+        let kinds: [GuidedSyncRepairIssue.Kind] = [.tripUpload, .tripDeletion, .tankActual, .sprayRecord, .protectedQueue]
+        for kind in kinds {
             let record = item(kind: kind, scoped: false, actual: true)
-            for state: GuidedSyncRecordState in [.notChecked, .active, .ended, .deleted, .notVisible] {
+            let states: [GuidedSyncRecordState] = [.notChecked, .active, .ended, .deleted, .notVisible]
+            for state in states {
                 XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: record, server: state), [.privateReview])
             }
         }
@@ -65,7 +67,8 @@ final class GuidedSyncCorrectionPolicyTests: XCTestCase {
     }
 
     func testActualAndSprayRetryOnlyAfterExactParentScopeReadback() {
-        for kind: GuidedSyncRepairIssue.Kind in [.tankActual, .sprayRecord] {
+        let kinds: [GuidedSyncRepairIssue.Kind] = [.tankActual, .sprayRecord]
+        for kind in kinds {
             let record = item(kind: kind)
             XCTAssertFalse(GuidedSyncCorrectionPolicy.available(for: record, server: .deleted)
                 .contains(.retryExisting))
