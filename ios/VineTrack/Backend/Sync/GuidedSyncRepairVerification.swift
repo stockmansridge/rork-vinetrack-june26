@@ -149,6 +149,90 @@ enum GuidedSyncRepairVerification {
                 return held("SPRAY_READ_FAILED", "The original Spray Record could not be independently inspected.")
             }
 
+        case .trackedSprayCompletion:
+            guard let tripId = issue.relatedTripId,
+                  let parent = store.trips.first(where: {
+                      $0.id == tripId && $0.vineyardId == vineyard
+                  }), let end = parent.endTime, !parent.isActive else {
+                return held("ORIGINAL_END_UNAVAILABLE",
+                            "A linked Spray End requires the original locally recorded ended Trip.")
+            }
+            do {
+                guard try TrackedSprayCompletionSync.shared.hasAcknowledgedCompletion(
+                    tripId: tripId, sprayRecordId: issue.recordId,
+                    ownerId: owner, vineyardId: vineyard) else {
+                    return held("TRACKED_SPRAY_END_PENDING",
+                                "The original linked Spray completion has not received its durable acknowledgement.")
+                }
+                let remoteTrip = try await SupabaseTripSyncRepository()
+                    .fetchTripForOccurrenceStart(tripId: tripId, vineyardId: vineyard)
+                let spray = try await SprayCompletionRepository().fetchRecord(id: issue.recordId)
+                guard let remoteTrip, remoteTrip.deletedAt == nil,
+                      remoteTrip.id == tripId, remoteTrip.endTime == end,
+                      remoteTrip.isActive == false,
+                      spray.id == issue.recordId, spray.vineyardId == vineyard,
+                      spray.deletedAt == nil, spray.tripId == tripId,
+                      spray.endTime == end,
+                      store.selectedVineyardId == vineyard,
+                      store.currentUserIdProvider?() == owner else {
+                    return held("LINKED_SPRAY_END_READBACK_MISMATCH",
+                                "The original Trip End or linked Spray completion does not match the server.")
+                }
+                return Result(verified: true, code: "LINKED_SPRAY_COMPLETED",
+                    explanation: "Original Trip End, linked Spray End and durable completion receipt all match.",
+                    evidence: ["trip_id:\(tripId.uuidString.lowercased())",
+                               "spray_id:\(issue.recordId.uuidString.lowercased())"])
+            } catch {
+                return held("LINKED_SPRAY_READBACK_FAILED",
+                            "Original tracked Spray completion receipt could not be independently checked.")
+            }
+
+        case .initialMixDraft:
+            guard let tripId = issue.relatedTripId else {
+                return held("ORIGINAL_MIX_TRIP_UNKNOWN",
+                            "The first-tank mix is not associated with a verified original Trip.")
+            }
+            let actualStore = SprayTankActualStore.shared
+            guard !actualStore.initialMixDrafts.contains(where: {
+                $0.tripId == tripId && $0.vineyardId == vineyard
+            }) else {
+                return held("ORIGINAL_FIRST_TANK_HANDOFF_PENDING",
+                            "The original first-tank confirmation handoff is still retained, waiting for an exact recorded session and Actual Use.")
+            }
+            let actuals = actualStore.records.filter {
+                $0.tripId == tripId && $0.sprayRecordId == issue.recordId &&
+                $0.vineyardId == vineyard
+            }
+            guard !actuals.isEmpty else {
+                return held("ORIGINAL_FIRST_TANK_ACTUAL_MISSING",
+                            "The first-tank confirmation cannot be verified without its original recorded Actual Use.")
+            }
+            do {
+                guard let row = try await SupabaseTripSyncRepository()
+                    .fetchTripForOccurrenceStart(tripId: tripId, vineyardId: vineyard),
+                      row.deletedAt == nil else {
+                    return held("ORIGINAL_FIRST_TANK_PARENT_UNVERIFIED",
+                                "The original first-tank parent Trip is absent or deleted on the server.")
+                }
+                let serverSessions = TankDependencyVerification.ids(row.tankSessions ?? [])
+                for actual in actuals {
+                    guard !actualStore.pendingIds.contains(actual.id),
+                          serverSessions.contains(TankDependencyVerification.normalized(actual.tankSessionId)),
+                          let server = try await actualStore.actualReader(actual),
+                          TankDependencyVerification.actualMatches(local: actual, server: server)
+                    else {
+                        return held("ORIGINAL_FIRST_TANK_RECEIPT_UNVERIFIED",
+                            "The original first-tank session or actual amounts do not match server evidence.")
+                    }
+                }
+                return Result(verified: true, code: "FIRST_TANK_CONFIRMED",
+                    explanation: "The original first-tank handoff is retired and its tank/Actual Use receipts independently match.",
+                    evidence: ["trip_id:\(tripId.uuidString.lowercased())"])
+            } catch {
+                return held("FIRST_TANK_READBACK_FAILED",
+                            "First-tank records were not independently read; original evidence remains protected.")
+            }
+
         case .tripDeletion:
             guard let tripId = issue.relatedTripId else {
                 return held("DELETE_SCOPE_UNVERIFIED", "The original deletion must be attributed to a specific Trip and vineyard.")
