@@ -1,0 +1,50 @@
+{
+  "date": "2026-11-03",
+  "repository": "stockmansridge/rork-vinetrack-june26",
+  "requested_source": "1998240581679caf2cff88c26a4d6409db6f46da",
+  "observed_workspace_head_and_remote_main": "40776c43ea33a4d7047193ef3dee2b63a8f6eacc",
+  "scope": "iOS exact-source validation and preparation for internal TestFlight build 211 or higher; no public or external submission",
+  "source_parity": {
+    "method": "Download exact requested codeload archive outside project and compare SHA-256 of every non-generated iOS file to workspace; compare archive paths to git ls-files ios",
+    "archive_sha256": "a08ae3b1a41d969da4fcae5be959f5cacb43b23d47cd26d1ea51fb3a60f42452",
+    "compared_files": 1300,
+    "different_files": [],
+    "missing_files": [],
+    "extra_tracked_files": [],
+    "excluded": ["ios/VineTrack/Config.swift"],
+    "limitation": "Non-generated iOS source parity only. Generated configuration preserved, not disclosed or claimed equivalent to archive. No signed binary inspected. Local git could not resolve requested object; exact archive download succeeded."
+  },
+  "validation": {
+    "normal_ios_simulator_build": "PASSED via runChecks(appPath: ios)",
+    "device_release_build": "NOT_RUN",
+    "focused_native_recovery_tests": "BLOCKED_NOT_RUN: native testing skill mount and swiftTest tool schema unavailable in this session",
+    "prior_results_reused_as_current": false,
+    "baseline_assertion": "Current TripDeletionRecoveryTests.swift still expects queued_trip_uploads: 1 at line 14. Historical failure remains recorded; no fresh test execution or waiver.",
+    "nonblocking_notices": "Two existing direct-storage asset URLs in TripTypeChoiceSheet.swift and UCRInfoSheet.swift; unchanged"
+  },
+  "delivery": {
+    "status": "BLOCKED_NOT_UPLOADED",
+    "asc_read_attempt": "asc builds list --app 6761143377 --platform IOS --sort=-uploadedDate --limit 10 --include buildBetaDetail,preReleaseVersion --output json",
+    "asc_read_result": "Exit 3: missing authentication",
+    "publishing_capability": "App Store publishing and Connect skill files absent; managed submitBuild workflow unavailable in this session. CLI publish helpers require private workflow requests and were not invoked.",
+    "minimum_requested_build": 211,
+    "allocated_build_number": null,
+    "signed_build_or_upload_receipt": null,
+    "latest_asc_maximum": "UNKNOWN; not inferred from historical 209 receipt",
+    "internal_testflight_availability": "NOT_VERIFIED"
+  },
+  "unchanged_scope": [
+    "No application code or generated configuration changes",
+    "No Android, SQL, Supabase or production-record mutation",
+    "No retained-device-data mutation, uninstall, queue reset or customer-original replay",
+    "No manual Git staging, commit, push, checkout, reset, branch change or merge",
+    "No signing, upload, external review or public release"
+  ],
+  "remaining": [
+    "Restore native testing and managed App Store tools/authentication; run fresh focused recovery selection on reverified source",
+    "Query current ASC builds before choosing a number at least 211 and above existing builds",
+    "Prepare authorised internal candidate only after validation and source gates are resolved",
+    "Original-iPhone, Portal, production HTTP concurrency and scrolling acceptance remain unverified",
+    "Historical GitHub malloc failures remain failures"
+  ]
+}
