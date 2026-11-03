@@ -424,7 +424,11 @@ final class TripOccurrenceJournalTests: XCTestCase {
         let dir=directory(); defer { try? FileManager.default.removeItem(at: dir) }; let j=try journal(dir)
         try j.setStatus(a,status:"done"); XCTAssertEqual(try j.load()?.projected[occurrence:"extension"],try fixture()[occurrence:"extension"])
     }
-    @MainActor func testBackendUpgradeRetriesUppercaseOriginalHeldCreateWithoutChangingFrozenIDs() throws {
+    // Xcode 26.3 / Swift 6.2.4 crashes the synchronous @MainActor XCTest
+    // invocation bridge on GitHub macOS runners before this test can return.
+    // Keep the same test identity, original-evidence assertions and main-actor
+    // isolation, but use XCTest's asynchronous invocation bridge.
+    @MainActor func testBackendUpgradeRetriesUppercaseOriginalHeldCreateWithoutChangingFrozenIDs() async throws {
         let dir = directory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let journal = try TripOccurrenceJournal(scope: scope, directory: dir)
@@ -455,7 +459,7 @@ final class TripOccurrenceJournalTests: XCTestCase {
         XCTAssertEqual(retried.serverActive, false)
     }
 
-    @MainActor func testBackendUpgradeRefusesChangedLocalCoverageAndKeepsHold() throws {
+    @MainActor func testBackendUpgradeRefusesChangedLocalCoverageAndKeepsHold() async throws {
         let dir = directory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let journal = try TripOccurrenceJournal(scope: scope, directory: dir)

@@ -241,7 +241,10 @@ final class TripQueuedUploadScopeTests: XCTestCase {
         XCTAssertFalse(TripPendingEndRemotePolicy.mustPreserve(local: local, remote: remote))
     }
 
-    @MainActor func testVerifiedCompletedTripReceiptRequiresDurableQueueAcknowledgement() throws {
+    // The synchronous @MainActor XCTest bridge can trigger a malloc abort in
+    // GitHub's Xcode 26.3 runner. Async XCTest keeps these durable-persistence
+    // assertions intact while avoiding the synchronous invocation path.
+    @MainActor func testVerifiedCompletedTripReceiptRequiresDurableQueueAcknowledgement() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "TripVerifiedReceipt-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -266,7 +269,7 @@ final class TripQueuedUploadScopeTests: XCTestCase {
         XCTAssertFalse(reloaded.isUpsertFailed(original))
     }
 
-    @MainActor func testScopeClassificationDoesNotMutatePersistedQueue() throws {
+    @MainActor func testScopeClassificationDoesNotMutatePersistedQueue() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TripQueuedScope-\(UUID().uuidString)")
         // PersistenceStore intentionally does not create directories.
