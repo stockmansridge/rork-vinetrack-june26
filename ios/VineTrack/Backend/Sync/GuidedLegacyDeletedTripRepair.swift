@@ -78,7 +78,15 @@ enum GuidedLegacyDeletedTripRepair {
         let existingIntent = try TripCancellationIntentStore.shared.find(
             tripId: tripId.uuidString.lowercased())
         if let intent = existingIntent, intent.isOpen {
-            throw Refused(explanation: "An original cancellation intent already exists. Reconcile that stable operation instead.")
+            guard intent.ownerId == owner.uuidString.lowercased(),
+                  intent.vineyardId == vineyard.uuidString.lowercased(),
+                  intent.classification == (applied ? "applied" : "not_applied"),
+                  intent.operationId == operationId.uuidString.lowercased() else {
+                throw Refused(explanation: "An original cancellation is already pending with another owner, classification or operation ID. It cannot be replaced.")
+            }
+            // Replay exactly the recorded original cancellation UUID against
+            // the already-deleted Trip; the reviewed RPC will archive evidence
+            // without resurrecting the Trip or minting a replacement.
         }
         let journalIntent = try store.tripDeletionJournal.load().intents[tripId]
         if let scope = journalIntent?.scope,
@@ -238,6 +246,20 @@ enum GuidedLegacyDeletedTripRepair {
                 throw Refused(explanation: "Server cancellation is verified, but original journal retirement failed. The evidence archive and retry record are retained.")
             }
         }
+        // An earlier version may already hold an original cancellation
+        // operation. Mark THAT exact durable ID cleaned after the independently
+        // verified receipt; do not invent a second operation or turn it into
+        // a Spray completion receipt.
+        if let originalIntent = existingIntent, originalIntent.isOpen {
+            var completed = originalIntent
+            completed.receipt = receipt
+            completed.state = .CLEANED
+            completed.lastCode = "REVIEWED_LEGACY_SERVER_TOMBSTONE"
+            guard TripCancellationIntentStore.shared.commit(completed) else {
+                throw Refused(explanation: "The exact original cancellation state could not be saved locally. The old Trip queue remains for another review.")
+            }
+        }
+
         // Keep the Trip queue entry until every dependent local retirement
         // and durable evidence operation has finished. An interrupted cleanup
         // remains discoverable through this same original Trip ID.
