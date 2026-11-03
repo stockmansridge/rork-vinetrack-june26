@@ -63,7 +63,10 @@ nonisolated enum GuidedSyncCorrectionPolicy {
         case .active, .ended, .standalone:
             switch issue.kind {
             case .tripDeletion:
-                return [.privateReview]  // Never initiate an unverified cancellation.
+                // The operator already created an original deletion intent.
+                // The handler requires its exact owner/vineyard journal before
+                // replaying; it never creates a new cancellation.
+                return server == .active ? [.verifyCancellation, .privateReview] : [.privateReview]
             case .tripUpload:
                 var choices: [GuidedSyncCorrection] = []
                 if server == .active && issue.originalActualAvailable { choices.append(.recoverRecordedTank) }
@@ -410,7 +413,7 @@ private struct GuidedSyncIssueDetailView: View {
                     ? "Original Trip completion acknowledged. Check linked Actual Use and Spray separately."
                     : "Original completion is not fully verified. Queue and evidence remain retained."
             case .verifyCancellation:
-                guard server == .deleted, let id = issue.relatedTripId,
+                guard (server == .deleted || server == .active), let id = issue.relatedTripId,
                       (try? store.tripDeletionJournal.load().intents[id])?.scope?.vineyard == vineyard,
                       (try? store.tripDeletionJournal.load().intents[id])?.scope?.account == auth.userId else {
                     outcome = "A verified original cancellation journal is required. No queue was cleared."
