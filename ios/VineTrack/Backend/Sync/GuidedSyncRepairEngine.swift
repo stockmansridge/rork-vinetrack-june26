@@ -137,7 +137,7 @@ enum GuidedActualUseCorrection {
         var errorDescription: String? { message }
     }
 
-    struct Requested: Encodable {
+    struct Requested: Encodable, Sendable {
         let p_operation_id: UUID
         let p_actual_id: UUID
         let p_trip_id: UUID
