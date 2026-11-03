@@ -29,7 +29,7 @@ enum GuidedLegacyDeletedTripRepair {
         let operatorClassification: String
         let operatorReason: String
     }
-    private struct Request: Encodable {
+    private struct Request: Encodable, Sendable {
         let p_operation_id: UUID
         let p_trip_id: UUID
         let p_vineyard_id: UUID
