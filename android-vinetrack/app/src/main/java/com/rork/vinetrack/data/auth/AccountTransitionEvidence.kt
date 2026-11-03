@@ -65,6 +65,30 @@ internal class AccountTransitionEvidence(private val context: Context) {
                 !cleanExit && name == "vinetrack_pending_writes" -> vineyards.addAll(RetainedEvidenceContract.queue(values, original))
                 !cleanExit && name == "vinetrack_recovery_snapshots_v2" -> vineyards.addAll(RetainedEvidenceContract.snapshots(values, original))
                 name in CleanExitCacheContract.devicePreferences -> CleanExitCacheContract.validatePreferences(name, values)
+                name == "vinetrack_manual_spray_submission_guard_v1" -> {
+                    // Diagnostic submission-intent evidence is a genuine
+                    // account-scoped retained store, not arbitrary preferences.
+                    // A remaining unknown receipt blocks clean exit just like
+                    // an unconfirmed original draft/outbox operation; a file
+                    // that exists but contains no markers is safe.
+                    values.forEach { (key, raw) ->
+                        check(raw is String)
+                        val scope = key.split('|')
+                        // Accept exact legacy 2-part keys from early unreleased
+                        // builds, but never adopt them without owner proof.
+                        check(scope.size in 2..3 && scope.all { it.isNotBlank() })
+                        val owner = java.util.UUID.fromString(scope[0]).toString()
+                        val vineyard = java.util.UUID.fromString(scope[1]).toString()
+                        val manualId = java.util.UUID.fromString(raw).toString()
+                        check(scope[0] == owner && scope[1] == vineyard && raw == manualId)
+                        if (scope.size == 3) check(scope[2] == manualId)
+                        if (!cleanExit) {
+                            check(original == owner)
+                            vineyards.add(vineyard)
+                        }
+                    }
+                    if (cleanExit) check(values.isEmpty())
+                }
                 name == "vinetrack_write_holds" -> {
                     check(values.keys.all { it == "holds" })
                     values["holds"]?.let { raw ->
@@ -245,6 +269,7 @@ internal class AccountTransitionEvidence(private val context: Context) {
             "vinetrack_pending_writes", "vinetrack_pending_photos", "vinetrack_active_trip",
             "vinetrack_spray_tank_actuals", "vinetrack_start_tank_journal", "vinetrack_chemical_label_photos",
             "vinetrack_manual_spray_operations_v1", "vinetrack_manual_spray_drafts_v1",
+            "vinetrack_manual_spray_submission_guard_v1",
             "vinetrack_work_task_materials", "vinetrack_paired_growth_capture", "vinetrack_pin_capture_evidence",
             "vinetrack_recovery_snapshots_v2", "vinetrack_local_planning", "vinetrack_domain_cache",
             "vinetrack_irrigation", "vineyard_insights_preview", "vinetrack_pruning", "vinetrack_fertiliser",

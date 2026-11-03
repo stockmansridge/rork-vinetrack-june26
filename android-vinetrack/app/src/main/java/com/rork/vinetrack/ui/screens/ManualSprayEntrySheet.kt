@@ -41,6 +41,11 @@ import com.rork.vinetrack.data.ManualSprayFormDraft
 import com.rork.vinetrack.data.copyManualTankInputs
 import com.rork.vinetrack.data.displayManualAmount
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.spray.ManualSprayReviewStatus
+import com.rork.vinetrack.data.spray.ManualSpraySubmissionGuard
+import com.rork.vinetrack.data.spray.manualSprayReviewStatus
+import com.rork.vinetrack.data.spray.manualSprayReviewStatusLabel
+import com.rork.vinetrack.data.spray.manualSprayReportMatchesOriginal
 import com.rork.vinetrack.data.model.ManualSprayBlock
 import com.rork.vinetrack.data.model.ManualSprayChemical
 import com.rork.vinetrack.data.model.ManualSprayPayload
@@ -81,6 +86,8 @@ fun ManualSprayEntrySheet(
     val vineyardId = state.selectedVineyardId ?: return
     val session = remember { SessionStore(context) }
     val draftStore = remember { ManualSprayDraftStore(context) }
+    val submissionGuard = remember(context) { ManualSpraySubmissionGuard(context) }
+    val verifiedOwnerId = session.userId
     val existingTrip = existing?.tripId?.let { id -> state.trips.firstOrNull { it.id == id } }
     val storedDraft = remember(existing?.id, vineyardId) { if (existing == null) draftStore.load(vineyardId) else null }
     var loadedEditSeed by remember(existing?.id) { mutableStateOf<ManualSprayPayload?>(null) }
@@ -137,6 +144,10 @@ fun ManualSprayEntrySheet(
     var isReviewing by remember { mutableStateOf(false) }
     var reviewPayload by remember { mutableStateOf<ManualSprayPayload?>(null) }
     var isSaving by remember { mutableStateOf(false) }
+    var isVerifyingReadback by remember { mutableStateOf(false) }
+    // This UI state distinguishes a locally retained operation from a
+    // server-confirmed application. It does NOT acknowledge or retry anything.
+    var awaitingServerConfirmation by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var savedTripId by remember { mutableStateOf<String?>(null) }
     var expectedVersion by remember { mutableStateOf(existing?.syncVersion?.toInt() ?: 0) }
@@ -174,14 +185,33 @@ fun ManualSprayEntrySheet(
     )
 
     val currentDraft = formDraft()
-    LaunchedEffect(currentDraft, existing?.id, savedTripId) {
-        if (existing == null && savedTripId == null) draftStore.save(currentDraft)
+    // Consult the original operation coordinator on every screen opening;
+    // @remember alone cannot survive dismissal/process restoration.
+    val hasRetainedSave = vm.pendingManualSprayOperations().any {
+        it.kind == com.rork.vinetrack.data.PendingManualSprayKind.SAVE &&
+            it.payload.vineyardId == vineyardId &&
+            it.payload.manualEntryId == identities.first
+    }
+    val hasSubmissionMarker = submissionGuard.submittedId(verifiedOwnerId, vineyardId, identities.first) != null
+    val reviewStatus = manualSprayReviewStatus(
+        serverConfirmed = savedTripId != null,
+        hasRetainedSave = hasRetainedSave,
+        hasSubmissionMarker = hasSubmissionMarker || awaitingServerConfirmation,
+        inFlight = isSaving,
+    )
+    LaunchedEffect(currentDraft, existing?.id, savedTripId, reviewStatus, isSaving) {
+        // Do not replace the retained original form while a save is pending.
+        if (existing == null && savedTripId == null && !isSaving &&
+            reviewStatus == ManualSprayReviewStatus.REVIEW_ONLY) {
+            draftStore.save(currentDraft)
+        }
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = { if (!isSaving && !isVerifyingReadback) onDismiss() }) {
         Column(modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(if (isReviewing) "Review manual spray" else if (existing == null) "Add manual spray" else "Edit manual spray")
-            if (!isReviewing) {
+            Text(if (isReviewing || reviewStatus != ManualSprayReviewStatus.REVIEW_ONLY) "Manual spray status"
+                 else if (existing == null) "Add manual spray" else "Edit manual spray")
+            if (!isReviewing && reviewStatus == ManualSprayReviewStatus.REVIEW_ONLY) {
                 OutlinedTextField(reference, { reference = it }, label = { Text("Name or reference") }, modifier = Modifier.fillMaxWidth())
                 DateTimeField("Start", startInstant, zone) { startInstant = it }
                 DateTimeField("End", endInstant, zone) { endInstant = it }
@@ -236,8 +266,65 @@ fun ManualSprayEntrySheet(
                 }
                 Text("Manual weather is optional and remains authoritative. Station availability never blocks saving.")
             } else {
-                Text("Completed · Manual entry")
-                Text("$reference\n${formatLocal(startInstant, zone)} — ${formatLocal(endInstant, zone)}\n${blockIds.size} blocks · ${reviewPayload?.tanks?.size ?: 0} tanks · ${fmt.formatVolume(reviewPayload?.tanks?.sumOf { it.waterVolumeLitres } ?: 0.0)}")
+                Text(manualSprayReviewStatusLabel(reviewStatus))
+                if (reviewStatus != ManualSprayReviewStatus.REVIEW_ONLY &&
+                    reviewStatus != ManualSprayReviewStatus.SERVER_CONFIRMED) {
+                    Text(when (reviewStatus) {
+                        ManualSprayReviewStatus.SUBMITTING ->
+                            "VineTrack is submitting this manual spray. Do not close or edit until the result is known."
+                        ManualSprayReviewStatus.SAVED_LOCALLY_PENDING_CONFIRMATION ->
+                            "The original manual spray submission is retained on this device. Do not create another application or delete the saved operation. Check Sync status."
+                        else ->
+                            "A previous manual spray submission was attempted, but completion is unverified here. Check the original saved Spray Record and Portal before creating another."
+                    })
+                    Text("This screen does not retry, acknowledge, remove, or overwrite the original submission.")
+                    if (reviewStatus != ManualSprayReviewStatus.SUBMITTING) {
+                        Button(enabled = !isSaving && !isVerifyingReadback, onClick = {
+                            // Exact original persisted operation takes priority.
+                            // Otherwise reconstruct the original from the
+                            // persisted typed manual draft (no new RPC payload).
+                            val original = vm.pendingManualSprayOperations().firstOrNull {
+                                it.kind == com.rork.vinetrack.data.PendingManualSprayKind.SAVE &&
+                                it.payload.vineyardId == vineyardId &&
+                                it.payload.manualEntryId == identities.first
+                            }?.payload ?: runCatching { formDraft().validatedPayload() }.getOrNull()
+                            if (original == null ||
+                                submissionGuard.submittedId(verifiedOwnerId, vineyardId,
+                                    original.manualEntryId) != original.manualEntryId) {
+                                message = "Cannot verify this application: its original complete form is unavailable. Keep the retained record and contact support."
+                            } else {
+                                isVerifyingReadback = true
+                                vm.loadCanonicalSprayReport(original.tripId) { result ->
+                                    isVerifyingReadback = false
+                                    if (verifiedOwnerId != session.userId ||
+                                        vm.ui.value.selectedVineyardId != vineyardId) {
+                                        message = "Account or vineyard changed. No submission state was modified."
+                                    } else if (result.getOrNull()?.let {
+                                            manualSprayReportMatchesOriginal(it, original)
+                                        } != true) {
+                                        message = "The server report is unavailable or does not exactly match the original chemical amounts, water, times and identity. Keep the original submission."
+                                    } else if (vm.pendingManualSprayOperations().any {
+                                            it.kind == com.rork.vinetrack.data.PendingManualSprayKind.SAVE &&
+                                            it.payload.vineyardId == vineyardId &&
+                                            it.payload.manualEntryId == original.manualEntryId
+                                        }) {
+                                        message = "The server report matches, but the original device operation is still retained. Check Sync status; it has not been modified."
+                                    } else {
+                                        submissionGuard.clearIfMatching(verifiedOwnerId, vineyardId,
+                                            original.manualEntryId)
+                                        draftStore.clear(vineyardId)
+                                        savedTripId = original.tripId
+                                        message = "Original manual spray verified against the server report. A separate new application can now be started."
+                                    }
+                                }
+                            }
+                        }) {
+                            Text(if (isVerifyingReadback) "Verifying original spray…" else "Verify original spray on server")
+                        }
+                    }
+                } else {
+                    Text("$reference\n${formatLocal(startInstant, zone)} — ${formatLocal(endInstant, zone)}\n${blockIds.size} blocks · ${reviewPayload?.tanks?.size ?: 0} tanks · ${fmt.formatVolume(reviewPayload?.tanks?.sumOf { it.waterVolumeLitres } ?: 0.0)}")
+                }
                 savedTripId?.let { tripId ->
                     Button(onClick = { scope.launch {
                         val result = runCatching { SprayReportRepository(session).recoverWeather(tripId, endInstant) }.getOrNull()
@@ -249,23 +336,89 @@ fun ManualSprayEntrySheet(
             message?.let { Text(it) }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = if (isReviewing && savedTripId == null) ({ isReviewing = false }) else onDismiss) { Text(if (isReviewing && savedTripId == null) "Back" else "Cancel") }
-                if (savedTripId == null) Button(enabled = !isSaving, onClick = {
-                    val candidate = runCatching { formDraft().validatedPayload() }.getOrElse { error -> message = error.message; return@Button }
-                    if (!isReviewing) { reviewPayload = candidate; isReviewing = true } else scope.launch {
-                        isSaving = true
-                        try {
-                            val response = vm.saveManualSpray(candidate, expectedVersion)
-                            if (response?.serverConfirmed == true) { expectedVersion = response.syncVersion; savedTripId = response.tripId; draftStore.clear(vineyardId); message = "Manual spray saved. Historical station weather is optional." }
-                            else message = "Saved on this device — awaiting sync"
-                        } catch (error: Exception) {
-                            message = error.message ?: "The manual spray could not be saved."
-                        } finally {
-                            isSaving = false
+                TextButton(
+                    enabled = !isSaving && !isVerifyingReadback,
+                    onClick = if (isReviewing && reviewStatus == ManualSprayReviewStatus.REVIEW_ONLY)
+                        ({ isReviewing = false }) else onDismiss
+                ) {
+                    Text(if (isReviewing && reviewStatus == ManualSprayReviewStatus.REVIEW_ONLY) "Back" else "Close")
+                }
+                if (reviewStatus == ManualSprayReviewStatus.REVIEW_ONLY && savedTripId == null) {
+                    Button(enabled = !isSaving, onClick = {
+                        // Prevent two quick taps queuing two concurrent calls.
+                        if (isSaving || isVerifyingReadback ||
+                            reviewStatus != ManualSprayReviewStatus.REVIEW_ONLY) return@Button
+                        val candidate = runCatching { formDraft().validatedPayload() }
+                            .getOrElse { error -> message = error.message; return@Button }
+                        if (!isReviewing) {
+                            reviewPayload = candidate
+                            isReviewing = true
+                        } else {
+                            // Owner/vineyard-scoped marker is durable before
+                            // any coordinator network attempt; it survives
+                            // dismissal, background ACK and process death.
+                            // Preserve the validated original fields before a
+                            // background ACK can remove the operation from the queue.
+                            if (!draftStore.save(formDraft())) {
+                                message = "The complete manual spray could not be saved on this device. No server request was sent."
+                                return@Button
+                            }
+                            if (!submissionGuard.mark(verifiedOwnerId, vineyardId, candidate.manualEntryId)) {
+                                message = "Unable to safely record the original submission. Check Sync status before trying again."
+                                return@Button
+                            }
+                            isSaving = true
+                            scope.launch {
+                                try {
+                                    val response = vm.saveManualSpray(candidate, expectedVersion)
+                                    if (response?.serverConfirmed == true) {
+                                        expectedVersion = response.syncVersion
+                                        savedTripId = response.tripId
+                                        submissionGuard.clearIfMatching(verifiedOwnerId, vineyardId, candidate.manualEntryId)
+                                        draftStore.clear(vineyardId)
+                                        message = "Manual spray confirmed by the server. Historical station weather is optional."
+                                    } else {
+                                        awaitingServerConfirmation = true
+                                        message = "The manual spray remains retained or requires verification. Do not make another entry; check Sync status."
+                                    }
+                                } catch (error: Exception) {
+                                    if (error is com.rork.vinetrack.data.ManualSprayMutationException &&
+                                        vm.pendingManualSprayOperations().none {
+                                            it.kind == com.rork.vinetrack.data.PendingManualSprayKind.SAVE &&
+                                            it.payload.vineyardId == vineyardId &&
+                                            it.payload.manualEntryId == candidate.manualEntryId
+                                        }) {
+                                        submissionGuard.clearIfMatching(verifiedOwnerId, vineyardId,
+                                            candidate.manualEntryId)
+                                        awaitingServerConfirmation = false
+                                        message = "The server rejected this application. Review the original record before submitting corrected details."
+                                        return@launch
+                                    }
+                                    // Explicit local persistence failure occurs
+                                    // before the coordinator sends a request.
+                                    if (error is IllegalStateException &&
+                                        error.message == "The complete manual spray could not be saved on this device." &&
+                                        vm.pendingManualSprayOperations().none {
+                                            it.kind == com.rork.vinetrack.data.PendingManualSprayKind.SAVE &&
+                                            it.payload.vineyardId == vineyardId &&
+                                            it.payload.manualEntryId == candidate.manualEntryId
+                                        }) {
+                                        submissionGuard.clearIfMatching(verifiedOwnerId, vineyardId, candidate.manualEntryId)
+                                    }
+                                    message = error.message ?: "The manual spray could not be confirmed. Check Sync status."
+                                } finally {
+                                    isSaving = false
+                                }
+                            }
                         }
+                    }) { Text(if (isReviewing) "Save manual spray" else "Review") }
+                } else if (savedTripId != null) {
+                    Button(enabled = !isSaving && !isVerifyingReadback, onClick = onSaved) { Text("Done") }
+                } else {
+                    Button(enabled = !isSaving && !isVerifyingReadback, onClick = onDismiss) {
+                        Text(if (hasRetainedSave) "Close — awaiting sync" else "Close — verify submission")
                     }
-                }) { Text(if (isReviewing) "Save manual spray" else "Review") }
-                else Button(onClick = onSaved) { Text("Done") }
+                }
             }
         }
     }

@@ -1,0 +1,148 @@
+name: Issue 47 manual spray UI state native tests (isolated)
+
+on:
+  push:
+    branches:
+      - fix/issue47-customer-spray-workflow-20261102
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ios/VineTrack/LegacyImported/Views/Spray/ManualSprayEntryView.swift'
+      - 'ios/VineTrack/App/SprayEngine/ManualSprayReviewStatus.swift'
+      - 'ios/VineTrackTests/ManualSprayReviewStatusTests.swift'
+      - 'ios/VineTrackTests/ManualSprayEntryWorkflowTests.swift'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ManualSprayEntrySheet.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/ManualSprayReviewStatus.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/spray/ManualSprayReviewStatusTest.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/ManualSprayEntryWorkflowTest.kt'
+      - 'android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/spray/ManualSpraySubmissionGuardInstrumentedTest.kt'
+      - '.github/workflows/issue47-manual-spray-native-tests.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue47-manual-spray-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android source build and targeted JVM tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Pin source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SOURCE_SHA=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Supply Android SDK 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | head -n 1)
+          test -n "$SDKMANAGER" || { echo "::error::Android SDK manager missing"; exit 2; }
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: CI-only substitute for absent generated Config
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt
+          if [ ! -f "$TARGET" ]; then
+            mkdir -p "$(dirname "$TARGET")"
+            cat > "$TARGET" <<'KOTLIN'
+          package com.rork.vinetrack
+          // CI-only stub: never committed or used in production.
+          object Config {
+              val allValues: Map<String, String> = emptyMap()
+          }
+          KOTLIN
+            echo "CI_ONLY_CONFIG_STUB=true"
+          fi
+      - name: Run focused native unit tests
+        working-directory: android-vinetrack
+        shell: bash
+        run: |
+          set -o pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain \
+            --tests 'com.rork.vinetrack.data.spray.ManualSprayReviewStatusTest' \
+            --tests 'com.rork.vinetrack.data.ManualSprayEntryWorkflowTest.issue47*' \
+            2>&1 | tee "$RUNNER_TEMP/issue47-android-native.log"
+      - name: Save native Android receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue47-android-native-receipts
+          path: |
+            android-vinetrack/app/build/test-results/testDebugUnitTest/
+            android-vinetrack/app/build/reports/tests/testDebugUnitTest/
+            ${{ runner.temp }}/issue47-android-native.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  ios:
+    name: iOS source build and targeted XCTest
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Pin source and Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SOURCE_SHA=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          XCODE_ROOT="/Applications/Xcode_26.3.app/Contents/Developer"
+          test -x "$XCODE_ROOT/usr/bin/xcodebuild" || { echo "::error::Xcode 26.3 not installed, CI environment blocked"; exit 2; }
+          echo "DEVELOPER_DIR=$XCODE_ROOT" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_ROOT"
+          xcodebuild -version
+          xcrun swiftc --version
+          xcrun --sdk iphonesimulator --show-sdk-version
+      - name: Resolve iPhone simulator
+        id: sim
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIM=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; a=json.load(sys.stdin)["devices"]; dev=[d["udid"] for k,v in a.items() if "iOS" in k for d in v if d.get("isAvailable",False) and "iPhone" in d.get("name","")]; print(dev[0] if dev else "")')
+          test -n "$SIM" || { echo "::error::iOS simulator unavailable"; exit 2; }
+          echo "id=$SIM" >> "$GITHUB_OUTPUT"
+      - name: Run focused XCTest (no production release)
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project ios/VineTrack.xcodeproj -scheme VineTrack -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.id }}" \
+            -resultBundlePath "$RUNNER_TEMP/Issue47ManualSpray.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:VineTrackTests/ManualSprayReviewStatusTests \
+            -only-testing:VineTrackTests/ManualSprayEntryWorkflowTests/testIssue47ReopenedOutboxAndBackgroundAckRemainFailClosed \
+            -only-testing:VineTrackTests/ManualSprayEntryWorkflowTests/testIssue47CanonicalReportMustMatchExactOriginalActuals \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/issue47-ios-native.log"
+      - name: Save native iOS receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue47-ios-native-receipts
+          path: |
+            ${{ runner.temp }}/Issue47ManualSpray.xcresult
+            ${{ runner.temp }}/issue47-ios-native.log
+          if-no-files-found: warn
+          retention-days: 7

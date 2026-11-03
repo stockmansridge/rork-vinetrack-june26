@@ -175,6 +175,103 @@ class ManualSprayEntryWorkflowTest {
         assertTrue(store.values.any { it.kind == PendingManualSprayKind.DELETE })
     }
 
+    @Test fun issue47ReopenOriginalOperationAndBackgroundAckDoNotEnableNewSave() = runBlocking {
+        val payload = fixture()
+        val store = MemoryStore()
+        val gateway = GatewayDouble(failSave = true)
+        val first = ManualSprayEntryCoordinator(gateway, store)
+        assertNull(first.save(payload, 0))
+
+        // Recreate coordinator, as on process restart, from the SAME durable
+        // storage. No new operation ID or destructive outbox replacement.
+        val reopened = ManualSprayEntryCoordinator(gateway, store)
+        assertEquals(payload.manualEntryId, reopened.pendingPayloads().single().manualEntryId)
+        val stillQueued = com.rork.vinetrack.data.spray.manualSprayReviewStatus(
+            serverConfirmed = false, hasRetainedSave = reopened.pendingOperations().any {
+                it.kind == PendingManualSprayKind.SAVE && it.payload.vineyardId == payload.vineyardId
+            }, hasSubmissionMarker = true
+        )
+        assertEquals(com.rork.vinetrack.data.spray.ManualSprayReviewStatus.SAVED_LOCALLY_PENDING_CONFIRMATION, stillQueued)
+        assertFalse(com.rork.vinetrack.data.spray.manualSprayReviewStatusLabel(stillQueued).contains("Completed"))
+
+        // Successful background replay legitimately removes its original
+        // queue entry, not the UI's separate locally persisted intent marker.
+        reopened.replay { "owner" }
+        assertTrue(reopened.pendingPayloads().isEmpty())
+        val afterBackgroundAck = com.rork.vinetrack.data.spray.manualSprayReviewStatus(
+            serverConfirmed = false, hasRetainedSave = false, hasSubmissionMarker = true
+        )
+        assertEquals(com.rork.vinetrack.data.spray.ManualSprayReviewStatus.VERIFICATION_REQUIRED, afterBackgroundAck)
+        assertFalse(com.rork.vinetrack.data.spray.manualSprayReviewStatusLabel(afterBackgroundAck).contains("Completed"))
+        assertEquals(1, gateway.operationIds.distinct().size)
+    }
+
+    @Test fun issue47CanonicalReadbackRequiresExactIdentityAndActuals() {
+        val original = fixture()
+        val report = com.rork.vinetrack.data.reporting.SprayReportPayloadV1(
+            schemaVersion = "1.2",
+            identity = com.rork.vinetrack.data.reporting.SprayReportPayloadV1.Identity(
+                original.tripId, original.sprayRecordId, original.vineyardId, "Test vineyard",
+                original.reference, original.vineyardTimeZone
+            ),
+            provenance = com.rork.vinetrack.data.reporting.SprayReportPayloadV1.Provenance(
+                source = "manual", manualEntryId = original.manualEntryId,
+                isManualEntry = true, label = "Manual entry"
+            ),
+            trip = com.rork.vinetrack.data.reporting.SprayReportPayloadV1.TripSummary(
+                startUtc = original.startUtc, endUtc = original.endUtc,
+                activeDurationSeconds = null, distanceMetres = null,
+                operatorName = null, pinCount = 0
+            ),
+            blocks = original.blocks.map {
+                com.rork.vinetrack.data.reporting.SprayReportPayloadV1.Block(
+                    blockId = it.blockId, name = it.blockName
+                )
+            },
+            equipment = com.rork.vinetrack.data.reporting.SprayReportPayloadV1.Equipment(
+                tractorName = null, startEngineHours = null, endEngineHours = null,
+                engineHoursUsed = null, sprayUnitName = null
+            ),
+            rows = emptyList(),
+            tanks = original.tanks.map { tank ->
+                com.rork.vinetrack.data.reporting.SprayReportPayloadV1.Tank(
+                    tankNumber = tank.tankNumber,
+                    actualId = tank.actualId,
+                    plannedWaterLitres = null,
+                    actualWaterLitres = tank.waterVolumeLitres,
+                    chemicals = tank.chemicals.map { chemical ->
+                        com.rork.vinetrack.data.reporting.SprayReportPayloadV1.Chemical(
+                            actualChemicalId = chemical.id,
+                            savedChemicalId = chemical.savedChemicalId,
+                            name = chemical.name,
+                            unit = chemical.unit,
+                            actualAmountBase = chemical.actualAmountBase,
+                            matchSource = "actualOnly",
+                            productCategory = chemical.productCategory,
+                            physicalForm = chemical.physicalForm.name,
+                        )
+                    }
+                )
+            },
+            weather = emptyList(),
+            warnings = emptyList(),
+        )
+        assertTrue(com.rork.vinetrack.data.spray.manualSprayReportMatchesOriginal(report, original))
+
+        val modifiedWater = report.copy(tanks = report.tanks.mapIndexed { index, tank ->
+            if (index == 0) tank.copy(actualWaterLitres = (tank.actualWaterLitres ?: 0.0) + 10.0)
+            else tank
+        })
+        assertFalse(com.rork.vinetrack.data.spray.manualSprayReportMatchesOriginal(modifiedWater, original))
+
+        val wrongIdentity = report.copy(identity = report.identity.copy(
+            sprayRecordId = UUID.randomUUID().toString()))
+        assertFalse(com.rork.vinetrack.data.spray.manualSprayReportMatchesOriginal(wrongIdentity, original))
+
+        val missingEvidence = report.copy(tanks = report.tanks.dropLast(1))
+        assertFalse(com.rork.vinetrack.data.spray.manualSprayReportMatchesOriginal(missingEvidence, original))
+    }
+
     private fun fixture(): ManualSprayPayload = ManualSprayPayload(
         vineyardId = UUID.randomUUID().toString(), reference = "Manual 1", operationType = "Foliar Spray",
         startUtc = "2026-09-08T23:30:00Z", endUtc = "2026-09-09T01:00:00Z", vineyardTimeZone = "Australia/Adelaide",
