@@ -3,6 +3,7 @@ name: iOS Guided Sync Repair native validation
 on:
   push:
     branches:
+      - main
       - feat/ios-full-sync-repair-workflow
     paths:
       - 'ios/VineTrack/App/GuidedSyncIssueRepairView.swift'
