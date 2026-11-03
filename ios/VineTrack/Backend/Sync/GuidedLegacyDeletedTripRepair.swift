@@ -38,6 +38,21 @@ enum GuidedLegacyDeletedTripRepair {
         let p_client_evidence: TripActivityCancellation.JSON
     }
 
+    /// Independently re-read the exact pre-repair local evidence archive.
+    /// Only the operation that created this archive may retire its queued ID.
+    static func archiveConfirmed(operationId: UUID, tripId: UUID,
+                                 vineyard: UUID, owner: UUID) -> Bool {
+        let key = "guided_legacy_trip_review_archive_v1_" +
+            operationId.uuidString.lowercased()
+        let outcome: PersistenceStore.LoadOutcome<OriginalArchive> =
+            PersistenceStore.shared.loadOutcome(key: key)
+        guard case .decoded(let saved) = outcome,
+              saved.operationId == operationId, saved.tripId == tripId,
+              saved.vineyard == vineyard, saved.owner == owner,
+              !saved.operatorReason.isEmpty else { return false }
+        return true
+    }
+
     static func reconcile(
         tripId: UUID, vineyard: UUID, owner: UUID,
         applied: Bool, reason: String, operationId: UUID,
