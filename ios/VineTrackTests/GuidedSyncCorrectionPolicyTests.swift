@@ -43,11 +43,14 @@ final class GuidedSyncCorrectionPolicyTests: XCTestCase {
 
     func testDeletedTripNeverOffersRestartTankRepairOrFinalisation() {
         let original = item(kind: .tripUpload, actual: true)
-        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: original, server: .deleted), [.privateReview])
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: original, server: .deleted),
+                       [.reviewLegacyDeleted, .privateReview])
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(for: original, server: .deleted)
+            .contains(.recoverRecordedTank))
 
         let cancellation = item(kind: .tripDeletion)
         XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: cancellation, server: .deleted),
-                       [.verifyCancellation, .privateReview])
+                       [.verifyCancellation, .reviewLegacyDeleted, .privateReview])
         XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: cancellation, server: .active),
                        [.verifyCancellation, .privateReview])
         XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: cancellation, server: .ended), [.privateReview])
