@@ -38,8 +38,9 @@ ios/VineTrackTests/TripEndServerGoldenFixtures.swift, which TripEndServerReplayT
 answer, to the app's real occurrence journal and failure classifier.
 
 This is a deliberately minimal auth/schema harness. It is not proof of the deployed schema: it has no
-GoTrue, none of the Spray/portal triggers and no spray_tank_actuals table. A real non-production
-project remains the definitive proof of those parts.
+GoTrue, none of the Spray/portal triggers and no spray_tank_actuals table. VineTrack has no non-production
+project, so those parts are covered only by the read-only production catalog checks, the production
+rehearsal (sql/occurrence_tank_link_uuid_case_identity_rehearsal.sql) and the original-device acceptance.
 """
 import base64
 import hashlib

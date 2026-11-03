@@ -32,8 +32,11 @@
 --     the owning roles). Capture sql/occurrence_tank_link_uuid_case_identity_verify.sql before and
 --     after; owner, ACL, security flag and search_path must be identical, only the hash and the two
 --     comparison flags change. STOP if anything differs.
---   * Apply to a disposable non-production database first. This file is NOT applied to production
---     by any automated step; production application needs separate explicit authorisation.
+--   * VineTrack has no non-production database. First run sql/occurrence_tank_link_uuid_case_identity_rehearsal.sql
+--     (generated from this file; one statement that always ends in an exception, so it commits nothing)
+--     against production and send back its result. Only apply this file after that result is reviewed.
+--     This file is NOT applied to production by any automated step; production application needs
+--     separate explicit authorisation.
 do $migration$
 declare
   guard_signature constant regprocedure := 'public.guard_trip_occurrence_authority_v1()'::regprocedure;

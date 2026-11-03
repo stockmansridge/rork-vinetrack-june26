@@ -14,8 +14,9 @@
 //    * the compare-and-swap URL carries `%2B`, so the server reads the revision it was given;
 //    * each real failure answer is classified, held or left unheld exactly as the failure policy says.
 //
-//  It does not prove the production schema, GoTrue sessions, Spray actuals or the other Trip triggers. That
-//  needs the non-production Supabase project.
+//  It does not prove the production schema, GoTrue sessions, Spray actuals or the other Trip triggers.
+//  VineTrack has no non-production Supabase project, so those parts are covered only by the production
+//  rehearsal (sql/occurrence_tank_link_uuid_case_identity_rehearsal.sql) and the original-device acceptance.
 //
 //  A mismatch here is a finding about the app or about the Python model that produced the requests. The
 //  assertions are never bent to fit: fix the model (scripts/test-trip-end-http-contract.py), regenerate the

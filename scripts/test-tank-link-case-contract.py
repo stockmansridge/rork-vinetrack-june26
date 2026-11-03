@@ -20,13 +20,17 @@ in order (the stages share one database, so the method names are numbered on pur
   06  negative controls stay rejected (unrecorded / one-digit-off / padded / malformed / cross-Trip / no sessions)
   07  a linked session can still not be removed or replaced
   08  the server's finalise tank-review rule is unchanged
+  00  (runs first) the production REHEARSAL file is derived from the repair, always ends in an exception,
+      keeps nothing, reports what the repair would do, and refuses exactly where the repair refuses
 
-Builds a deliberately minimal auth/schema harness; it is not proof of the deployed schema. Real
-non-production proof is scripts/nonprod-trip-end-integration.py.
+Builds a deliberately minimal auth/schema harness; it is not proof of the deployed schema. VineTrack has
+no non-production Supabase project, so the substitute is sql/occurrence_tank_link_uuid_case_identity_rehearsal.sql
+run against the real deployed functions (it cannot commit), followed by the original-device acceptance.
 """
 import csv
 import importlib.util
 import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -41,6 +45,8 @@ spec.loader.exec_module(A)
 
 MIGRATION = ROOT / 'sql/occurrence_tank_link_uuid_case_identity.sql'
 VERIFY = ROOT / 'sql/occurrence_tank_link_uuid_case_identity_verify.sql'
+REHEARSAL = ROOT / 'sql/occurrence_tank_link_uuid_case_identity_rehearsal.sql'
+GENERATOR = ROOT / 'scripts/build-tank-link-rehearsal-sql.py'
 GUARD = 'public.guard_trip_occurrence_authority_v1()'
 ACTION = 'public.apply_trip_occurrence_action_v1(uuid,uuid,bigint,bigint,jsonb)'
 # The verify script prints regprocedure text, which omits `public.` when it is on the search_path.
@@ -80,6 +86,13 @@ def snapshot():
     if result.returncode:
         raise RuntimeError(result.stderr)
     return {row['function_signature']: row for row in csv.DictReader(io.StringIO(result.stdout))}
+
+
+def rehearsal_report(stderr):
+    """The JSON the rehearsal raises: 'ERROR:  REHEARSAL_PASSED_NOTHING_CHANGED: {...}'."""
+    marker = 'REHEARSAL_PASSED_NOTHING_CHANGED: '
+    start = stderr.index(marker) + len(marker)
+    return json.loads(stderr[start:].splitlines()[0])
 
 
 def function_definition(signature):
@@ -185,6 +198,28 @@ class TankLinkCaseContract(unittest.TestCase):
         accepted = A.sql(done_with_links(android, android_coverage, [lowered]))['coverage']
         self.assertEqual(accepted['states'][android_coverage['items'][0]['occurrenceId']]['tankSessionIds'], [lowered])
 
+    # -- 00 --------------------------------------------------------------------------------------
+    def test_00_rehearsal_is_derived_cannot_commit_and_reports_what_the_repair_would_do(self):
+        stale = subprocess.run([sys.executable, str(GENERATOR), '--check'], text=True, capture_output=True)
+        self.assertEqual(stale.returncode, 0, stale.stdout + stale.stderr)
+        result = run_file(REHEARSAL)
+        self.assertNotEqual(result.returncode, 0, 'the rehearsal must always end in an exception')
+        self.assertIn('REHEARSAL_PASSED_NOTHING_CHANGED', result.stderr)
+        report = rehearsal_report(result.stderr)
+        self.assertEqual(report['live_state_before_repair'], {'guard': 'unpatched', 'action': 'unpatched'})
+        before = {row['function']: row for row in report['catalog_before']}
+        after = {row['function']: row for row in report['catalog_after_inside_this_statement']}
+        self.assertEqual(set(before), {GUARD_KEY, ACTION_KEY})
+        self.assertEqual(set(after), set(before))
+        for key in before:
+            self.assertEqual(before[key]['definition_md5'], self.original[key]['definition_md5'],
+                             'the rehearsal reads the same catalog the verify script reads')
+            self.assertNotEqual(after[key]['definition_md5'], before[key]['definition_md5'],
+                                'inside the statement the repair rewrote the function')
+            for field in ('owner', 'security_definer', 'acl', 'search_path'):
+                self.assertEqual(after[key][field], before[key][field], f'{key}.{field} must not change')
+        self.assertEqual(snapshot(), self.original, 'the rehearsal must leave nothing behind')
+
     # -- 02 --------------------------------------------------------------------------------------
     def test_02_repair_fails_closed_and_changes_nothing_on_unexpected_function_text(self):
         guard, action = self.original_definitions[GUARD], self.original_definitions[ACTION]
@@ -210,6 +245,11 @@ class TankLinkCaseContract(unittest.TestCase):
                     self.assertEqual({k: v['definition_md5'] for k, v in after.items()},
                                      {k: v['definition_md5'] for k, v in before.items()},
                                      'a refused repair must change neither function (validated before any change)')
+                    rehearsal = run_file(REHEARSAL)
+                    self.assertNotEqual(rehearsal.returncode, 0)
+                    self.assertIn('Occurrence tank-link comparison changed', rehearsal.stderr)
+                    self.assertNotIn('REHEARSAL_PASSED_NOTHING_CHANGED', rehearsal.stderr,
+                                     'the rehearsal must refuse exactly where the repair refuses')
                 finally:
                     redefine(self.original_definitions[signature])
                 self.assertEqual(snapshot(), self.original, 'the original definitions must be restored exactly')
@@ -227,6 +267,11 @@ class TankLinkCaseContract(unittest.TestCase):
         second = run_file(MIGRATION)
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(snapshot(), applied, 're-running the repair must be a no-op')
+        already = run_file(REHEARSAL)
+        self.assertNotEqual(already.returncode, 0)
+        self.assertEqual(rehearsal_report(already.stderr)['live_state_before_repair'],
+                         {'guard': 'patched', 'action': 'patched'})
+        self.assertEqual(snapshot(), applied, 'a rehearsal on an already repaired database keeps nothing')
         # Half-applied (guard reverted, action patched): re-running completes it.
         redefine(self.original_definitions[GUARD])
         self.assertEqual(snapshot()[GUARD_KEY]['old_text_comparison_present'], 't')
