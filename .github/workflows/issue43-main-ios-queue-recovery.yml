@@ -31,6 +31,9 @@ on:
       - 'ios/VineTrackTests/TripEndGateTests.swift'
       - 'ios/VineTrackTests/SprayProgramRound2Tests.swift'
       - '.github/workflows/issue43-main-ios-queue-recovery.yml'
+      - 'ios/VineTrack/App/GuidedSyncIssueRepairView.swift'
+      - 'ios/VineTrackTests/GuidedSyncCorrectionPolicyTests.swift'
+      - '.github/workflows/ios-guided-sync-repair-native.yml'
   workflow_dispatch:
 
 permissions:

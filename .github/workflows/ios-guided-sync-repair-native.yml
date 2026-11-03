@@ -21,13 +21,17 @@ on:
       - 'sql/tests/284_guided_repair_contract_tests.sql'
       - 'scripts/test-pr52-postgres-contract.py'
       - '.github/workflows/ios-guided-sync-repair-native.yml'
+      - '.github/workflows/ios-trip-sync-recovery-v3.yml'
+      - '.github/workflows/issue43-main-ios-queue-recovery.yml'
+      - 'ios/VineTrack/App/SyncDiagnosticsView.swift'
+      - 'ios/VineTrack/Backend/Sync/SprayRecordSyncService.swift'
   workflow_dispatch:
 
 permissions:
   contents: read
 concurrency:
-  group: ios-guided-sync-repair-${{ github.ref }}
-  cancel-in-progress: true
+  group: ios-guided-sync-repair-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   simulator:

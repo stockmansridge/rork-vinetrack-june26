@@ -11,6 +11,9 @@ on:
       - 'ios/VineTrackTests/TripQueuedUploadScopeTests.swift'
       - 'ios/VineTrackTests/TripOccurrenceJournalTests.swift'
       - '.github/workflows/ios-trip-sync-recovery-v3.yml'
+      - 'ios/VineTrack/App/GuidedSyncIssueRepairView.swift'
+      - 'ios/VineTrackTests/GuidedSyncCorrectionPolicyTests.swift'
+      - '.github/workflows/ios-guided-sync-repair-native.yml'
   workflow_dispatch:
 
 permissions:
