@@ -1,6 +1,8 @@
 package com.rork.vinetrack.ui.screens
 
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.R
 import com.rork.vinetrack.data.subscription.SubscriptionUiState
 import com.rork.vinetrack.ui.theme.VineColors
+import com.rork.vinetrack.ui.theme.LocalVineColors
 
 /**
  * Subscription / paywall screen — Android port of the iOS
@@ -72,10 +75,67 @@ fun SubscriptionScreen(
      */
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    /** Never show the first-time trial paywall to signed-in users opening Settings. */
+    openedFromSettings: Boolean = false,
 ) {
     val activity = LocalContext.current.findActivity()
 
     BackHandler(enabled = onBack != null) { onBack?.invoke() }
+
+    if (openedFromSettings) {
+        val context = LocalContext.current
+        val vine = LocalVineColors.current
+        Column(
+            modifier = modifier.fillMaxSize().background(vine.appBackground)
+                .verticalScroll(rememberScrollState()).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Subscription", fontSize = 24.sp, fontWeight = FontWeight.Bold,
+                    color = vine.textPrimary, modifier = Modifier.weight(1f))
+                TextButton(onClick = { onBack?.invoke() }) { Text("Back to Settings") }
+            }
+            Text(
+                "Manage your VineTrack subscription",
+                fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary,
+            )
+            Text(
+                "Google Play purchases are managed in the Google account used to subscribe. " +
+                    "For vineyard team or enterprise billing, use the VineTrack Web Portal.",
+                fontSize = 14.sp, color = vine.textSecondary,
+            )
+            Button(
+                onClick = {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW,
+                            Uri.parse("https://play.google.com/store/account/subscriptions")))
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
+            ) {
+                Text("Manage in Google Play")
+            }
+            OutlinedButton(
+                onClick = onRestore,
+                enabled = !state.isRestoring && !state.isOffline,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) { Text(if (state.isRestoring) "Restoring purchases…" else "Restore purchases") }
+            OutlinedButton(
+                onClick = onRecheckAccess,
+                enabled = !state.isLoading && !state.isOffline,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) { Text(if (state.isLoading) "Checking access…" else "Recheck subscription access") }
+            if (state.isOffline) {
+                Text("You are offline. Reconnect to restore or check access.",
+                    fontSize = 13.sp, color = VineColors.Warning)
+            }
+            state.lastError?.let { error ->
+                Text(error, fontSize = 13.sp, color = VineColors.Destructive)
+            }
+        }
+        return
+    }
 
     Box(
         modifier

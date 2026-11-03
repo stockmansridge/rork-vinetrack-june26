@@ -194,6 +194,7 @@ fun SettingsScreen(
             onSignOut = { vm.signOut() },
             onBack = { showSubscription = false },
             modifier = modifier,
+            openedFromSettings = true,
         )
         return
     }
