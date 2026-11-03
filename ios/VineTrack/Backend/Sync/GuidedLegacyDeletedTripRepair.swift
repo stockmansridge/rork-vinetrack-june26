@@ -28,6 +28,7 @@ enum GuidedLegacyDeletedTripRepair {
         let archivedAt: Date
         let operatorClassification: String
         let operatorReason: String
+        let recordedActualsNotAppliedAttested: Bool
     }
     private struct Request: Encodable, Sendable {
         let p_operation_id: UUID
@@ -56,6 +57,7 @@ enum GuidedLegacyDeletedTripRepair {
     static func reconcile(
         tripId: UUID, vineyard: UUID, owner: UUID,
         applied: Bool, reason: String, operationId: UUID,
+        confirmedRecordedActualsNotApplied: Bool,
         store: MigratedDataStore, tripSync: TripSyncService,
         spraySync: SprayRecordSyncService
     ) async throws -> String {
@@ -108,8 +110,9 @@ enum GuidedLegacyDeletedTripRepair {
         let actuals = SprayTankActualStore.shared.records.filter {
             $0.tripId == tripId && $0.vineyardId == vineyard
         }
-        if !applied && !actuals.isEmpty {
-            throw Refused(explanation: "Original confirmed tank use was recorded on this device. Choose the Applied classification and preserve the original amounts.")
+        if !applied && !actuals.isEmpty &&
+           !confirmedRecordedActualsNotApplied {
+            throw Refused(explanation: "Original tank contents were confirmed on this device. Attest explicitly that none were actually sprayed, or select Applied. All amounts remain archived.")
         }
         let sprouts = store.sprayRecords.filter {
             $0.vineyardId == vineyard && $0.canonicalTripId == tripId
@@ -130,7 +133,9 @@ enum GuidedLegacyDeletedTripRepair {
             queuedTripDelete: tripSync.isPendingDelete(tripId),
             archivedAt: Date(),
             operatorClassification: applied ? "applied" : "not_applied",
-            operatorReason: reason.trimmingCharacters(in: .whitespacesAndNewlines))
+            operatorReason: reason.trimmingCharacters(in: .whitespacesAndNewlines),
+            recordedActualsNotAppliedAttested:
+                !applied && confirmedRecordedActualsNotApplied)
         let key = "guided_legacy_trip_review_archive_v1_" + operationId.uuidString.lowercased()
         let existing: PersistenceStore.LoadOutcome<OriginalArchive> =
             PersistenceStore.shared.loadOutcome(key: key)
@@ -140,7 +145,9 @@ enum GuidedLegacyDeletedTripRepair {
         case .decoded(let saved):
             guard saved.owner == owner && saved.vineyard == vineyard &&
                   saved.tripId == tripId && saved.operationId == operationId &&
-                  saved.operatorClassification == original.operatorClassification else {
+                  saved.operatorClassification == original.operatorClassification &&
+                  saved.recordedActualsNotAppliedAttested ==
+                    original.recordedActualsNotAppliedAttested else {
                 throw Refused(explanation: "The original idempotent operation has different evidence. Review rather than replace it.")
             }
         case .missing:
@@ -157,9 +164,15 @@ enum GuidedLegacyDeletedTripRepair {
               SupabaseClientProvider.shared.client.auth.currentUser?.id == owner else {
             throw Refused(explanation: "The exact original server tombstone was not verified. No repair was sent.")
         }
-        let evidence = TripActivityCancellation.complianceFacts(
+        let rawFacts = TripActivityCancellation.complianceFacts(
             tripId: tripId.uuidString.lowercased(),
             vineyardId: vineyard.uuidString.lowercased(), actuals: actuals)
+        guard case .object(var contents) = rawFacts else {
+            throw Refused(explanation: "Recorded original compliance facts could not be encoded.")
+        }
+        contents["confirmed_recorded_actuals_not_applied"] =
+            .bool(!applied && confirmedRecordedActualsNotApplied)
+        let evidence = TripActivityCancellation.JSON.object(contents)
         let request = Request(
             p_operation_id: operationId, p_trip_id: tripId,
             p_vineyard_id: vineyard, p_application: applied ? "applied" : "not_applied",
