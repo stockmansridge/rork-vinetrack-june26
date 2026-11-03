@@ -103,6 +103,12 @@ final class TankDependencyVerificationTests: XCTestCase {
         XCTAssertFalse(TankDependencyVerification.actualMatches(local: local, server: try actual(tripId: UUID())))
     }
 
+    func testUnknownServerActiveStateCannotAcknowledgeOriginalParent() {
+        XCTAssertFalse(OccurrenceParentBootstrapPolicy.isActiveOriginalServerParent(nil))
+        XCTAssertFalse(OccurrenceParentBootstrapPolicy.isActiveOriginalServerParent(false))
+        XCTAssertTrue(OccurrenceParentBootstrapPolicy.isActiveOriginalServerParent(true))
+    }
+
     func testParentBootstrapDoesNotReplayOriginalEndOrOtherOperations() async throws {
         XCTAssertTrue(OccurrenceParentBootstrapPolicy.mayReplay(
             "create_trip_with_occurrences_v1", parentOnly: true))

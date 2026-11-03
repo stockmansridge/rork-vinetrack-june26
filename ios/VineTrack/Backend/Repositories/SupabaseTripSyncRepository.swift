@@ -33,6 +33,10 @@ nonisolated enum OccurrenceParentBootstrapPolicy {
             $0 == "activate_trip_occurrences_v1"
         }
     }
+    // A nil server state is not evidence of an active original Trip.
+    static func isActiveOriginalServerParent(_ value: Bool?) -> Bool {
+        value == true
+    }
 }
 
 final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
@@ -380,7 +384,8 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             let checkedSession = try await provider.client.auth.session
             guard checkedSession.user.id == account,
                   checkedSession.refreshToken == session.refreshToken,
-                  let remote, remote.deletedAt == nil, remote.isActive == true,
+                  let remote, remote.deletedAt == nil,
+                  OccurrenceParentBootstrapPolicy.isActiveOriginalServerParent(remote.isActive),
                   remote.endTime == nil,
                   TripOccurrenceCoverage.read(remote.occurrenceCoverage)?.planId == originalDocument.planId
             else { throw TripOccurrenceCoverage.Failure.reconciliation }
