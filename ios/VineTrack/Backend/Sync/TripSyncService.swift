@@ -262,6 +262,46 @@ final class TripSyncService {
             : "The operator-verified tank time was saved with its original session ID and evidence note. Run the full sync and verify dependent receipts."
     }
 
+    /// Only called by the reviewed legacy deletion coordinator after a server
+    /// cancellation receipt, linked tombstones and a locally persisted original
+    /// evidence archive are independently verified. No generic "clear errors".
+    func guidedRetireReviewedDeletedQueue(
+        tripId: UUID, vineyardId: UUID, ownerId: UUID,
+        operationId: UUID
+    ) throws {
+        struct Refused: LocalizedError {
+            var errorDescription: String? { "Original deletion review did not meet the receipt, archive and account gates." }
+        }
+        guard !isSyncing, let store, let auth, auth.isSignedIn,
+              auth.userId == ownerId,
+              store.currentUserIdProvider?() == ownerId,
+              store.selectedVineyardId == vineyardId,
+              SupabaseClientProvider.shared.client.auth.currentUser?.id == ownerId,
+              store.tripRepo.loadAll().filter({ $0.id == tripId })
+                .allSatisfy({ $0.vineyardId == vineyardId }),
+              GuidedLegacyDeletedTripRepair.archiveConfirmed(
+                operationId: operationId, tripId: tripId,
+                vineyard: vineyardId, owner: ownerId),
+              try GuidedRepairAuditLedger.shared.history(
+                account: ownerId, vineyard: vineyardId, record: tripId)
+                .contains(where: { $0.id == operationId &&
+                    $0.stages.contains(where: { $0.code == "SERVER_CANCEL_RECEIPT_AND_ARCHIVE_VERIFIED" })
+                })
+        else { throw Refused() }
+
+        // Preserve the old deletion intent/review history but note explicitly
+        // that this was an owner-reviewed LEGACY tombstone, not an original
+        // on-device cancellation operation receipt.
+        if let originalIntent = try store.tripDeletionJournal.load().intents[tripId] {
+            try store.tripDeletionJournal.acknowledgeReviewedLegacy(
+                originalIntent, owner: ownerId, vineyard: vineyardId,
+                operationId: operationId)
+        }
+        try metadata.acknowledgeVerifiedCancellation(tripId)
+        SyncIssueCenter.shared.clearIssues([tripId])
+        SyncIssueCenter.shared.notePending(entity: "Trips", count: metadata.pendingUpserts.count)
+    }
+
     /// True while a full sweep is actively pushing/pulling trips.
     var isSyncing: Bool { syncStatus == .syncing }
 
@@ -2020,6 +2060,20 @@ final class TripSyncMetadata {
         guard !ids.isEmpty else { return }
         for id in ids { state.pendingDeletes.removeValue(forKey: id); state.failedDeletes.remove(id) }
         save()
+    }
+
+    /// Exact-ID, all-related queue stages in one durable metadata write.
+    /// Cannot be used without an independently verified cancellation receipt
+    /// by the outer service. Disk errors leave the original queue intact.
+    func acknowledgeVerifiedCancellation(_ id: UUID) throws {
+        var next = state
+        next.pendingUpserts.removeValue(forKey: id)
+        next.failedUpserts.remove(id)
+        next.pendingDeletes.removeValue(forKey: id)
+        next.failedDeletes.remove(id)
+        next.pendingWorkTaskClears.removeValue(forKey: id)
+        try persistence.saveOrThrow(next, key: key)
+        state = next
     }
 
     /// Queue an explicit `work_task_id = null` clear for a trip (offline/failed
