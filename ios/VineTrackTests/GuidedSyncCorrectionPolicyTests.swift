@@ -45,7 +45,9 @@ final class GuidedSyncCorrectionPolicyTests: XCTestCase {
         let cancellation = item(kind: .tripDeletion)
         XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: cancellation, server: .deleted),
                        [.verifyCancellation, .privateReview])
-        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: cancellation, server: .active), [.privateReview])
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: cancellation, server: .active),
+                       [.verifyCancellation, .privateReview])
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: cancellation, server: .ended), [.privateReview])
     }
 
     func testRecordedTankRepairOnlyOfferedForActiveOriginalWithActualEvidence() {
