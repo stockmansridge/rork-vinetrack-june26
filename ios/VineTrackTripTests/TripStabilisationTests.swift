@@ -159,15 +159,19 @@ final class TripStabilisationTests: XCTestCase {
         XCTAssertEqual(completed.skippedPaths, local.skippedPaths)
         XCTAssertEqual(Set(completed.paddockIds), Set(local.paddockIds))
         XCTAssertNil(store.deviceActiveTripId)
-        XCTAssertNil(metadata.pendingUpserts[tripId])
-        XCTAssertFalse(metadata.failedUpsertIds.contains(tripId))
+        // The server's End wins: the Trip is never reopened and never re-uploaded. The server row carries none of
+        // this device's route, tank session or block evidence, so the original queue entry is deliberately retained
+        // under a durable TRIP_LOCAL_EVIDENCE_DIFFERS hold instead of being silently retired.
+        XCTAssertNotNil(metadata.pendingUpserts[tripId])
+        XCTAssertTrue(metadata.failedUpsertIds.contains(tripId))
         let firstUploads = await repository.uploaded
         XCTAssertTrue(firstUploads.isEmpty)
 
         try await service.pushLocalTrips(vineyardId: vineyardId)
         let replayUploads = await repository.uploaded
         XCTAssertTrue(replayUploads.isEmpty)
-        XCTAssertNil(TripSyncMetadata(persistence: PersistenceStore(directory: directory)).pendingUpserts[tripId])
+        // The retained entry is durable: it survives a relaunch and is still never uploaded.
+        XCTAssertNotNil(TripSyncMetadata(persistence: PersistenceStore(directory: directory)).pendingUpserts[tripId])
         let reloaded = try XCTUnwrap(TripRepository(persistence: PersistenceStore(directory: directory)).load(for: vineyardId).first { $0.id == tripId })
         XCTAssertEqual(reloaded.pathPoints, local.pathPoints)
         XCTAssertEqual(reloaded.tankSessions, local.tankSessions)

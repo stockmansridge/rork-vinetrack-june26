@@ -16,6 +16,8 @@ on:
       - 'sql/occurrence_tank_link_uuid_case_identity.sql'
       - 'sql/occurrence_tank_link_uuid_case_identity_verify.sql'
       - 'sql/occurrence_tank_link_uuid_case_identity_rehearsal.sql'
+      - 'sql/occurrence_tank_link_uuid_case_identity_apply.sql'
+      - 'sql/trip_end_recovery_readback.sql'
       - 'sql/tests/276_trip_occurrence_bootstrap.sql'
       - 'sql/284_guided_repair_archived_actual_tombstone_contract.sql'
       - 'sql/tests/284_guided_repair_contract_tests.sql'
@@ -61,7 +63,7 @@ jobs:
       - name: Occurrence authority suite on the shipped SQL (includes the tank-link repair)
         shell: bash
         run: python3 scripts/test-trip-occurrence-authority.py
-      - name: Tank-link UUID-case contract (red baseline, fail-closed, idempotent, iOS wire shape end to end)
+      - name: Tank-link UUID-case contract (red baseline, fail-closed, one-paste apply + readback, idempotent, iOS wire shape end to end)
         shell: bash
         run: python3 scripts/test-tank-link-case-contract.py
       - name: PR52 guided repair contract

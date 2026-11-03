@@ -11,8 +11,10 @@ import Testing
         let service = TripSyncService(repository: DeletionRegressionRepository(), metadata: metadata)
         service.configure(store: store, auth: auth)
         let report = service.pendingUploadDiagnostics
-        #expect(report.contains("queued_trip_uploads: 1"))
-        #expect(report.contains("queue_marked_failed: 0"))
+        // The report separates the device-wide legacy queue from the selected vineyard's slice, so the
+        // device-wide counters carry an explicit `_global_legacy` scope in their label.
+        #expect(report.contains("queued_trip_uploads_global_legacy: 1"))
+        #expect(report.contains("queue_marked_failed_global_legacy: 0"))
         #expect(report.contains("TRIP_ACCOUNT_NOT_VERIFIED: 1"))
         #expect(!report.contains(id.uuidString))
         #expect(metadata.pendingUpserts[id] == queued)

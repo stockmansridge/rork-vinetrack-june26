@@ -20,6 +20,14 @@ in order (the stages share one database, so the method names are numbered on pur
   06  negative controls stay rejected (unrecorded / one-digit-off / padded / malformed / cross-Trip / no sessions)
   07  a linked session can still not be removed or replaced
   08  the server's finalise tank-review rule is unchanged
+  02b the production APPLY file (one paste: repair + verify + readback) applies, reports the committed
+      catalog, writes exactly what the repair writes, is idempotent and completes a half-applied state -
+      in the SQL editor's one-query mode and in psql -f mode
+  02c the APPLY file turns a session that may not replace the writer-owned functions (the production
+      `postgres` topology) into a NORMAL result row with the session, owner and membership facts and
+      changes nothing; it applies when PostgreSQL would allow it and says ALREADY_APPLIED when nothing is needed
+  02d the APPLY file rolls back everything when owner/ACL/security flag/search_path would change or anything fails
+  09  the read-only readback reports the server's Trip End state, never raises and writes nothing
   00  (runs first) the production REHEARSAL file is derived from the repair, always ends in an exception,
       keeps nothing, reports what the repair would do, and refuses exactly where the repair refuses
 
@@ -31,6 +39,7 @@ import csv
 import importlib.util
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -46,7 +55,12 @@ spec.loader.exec_module(A)
 MIGRATION = ROOT / 'sql/occurrence_tank_link_uuid_case_identity.sql'
 VERIFY = ROOT / 'sql/occurrence_tank_link_uuid_case_identity_verify.sql'
 REHEARSAL = ROOT / 'sql/occurrence_tank_link_uuid_case_identity_rehearsal.sql'
+APPLY = ROOT / 'sql/occurrence_tank_link_uuid_case_identity_apply.sql'
+READBACK = ROOT / 'sql/trip_end_recovery_readback.sql'
 GENERATOR = ROOT / 'scripts/build-tank-link-rehearsal-sql.py'
+INCIDENT_TRIP = '492ebafc-b996-4ec4-8ea9-4261a3056810'
+WRITER = 'vinetrack_occurrence_writer'
+OPERATOR = 'vinetrack_test_postgres'  # stands in for the project's `postgres` login in the SQL editor
 GUARD = 'public.guard_trip_occurrence_authority_v1()'
 ACTION = 'public.apply_trip_occurrence_action_v1(uuid,uuid,bigint,bigint,jsonb)'
 # The verify script prints regprocedure text, which omits `public.` when it is on the search_path.
@@ -136,6 +150,94 @@ def finalize(trip, coverage, end='2026-10-14T09:00:00Z'):
 
 def trip_row(trip):
     return A.sql(f"select to_jsonb(x) from (select is_active,end_time,tank_sessions,occurrence_coverage from public.trips where id='{trip}') x;")
+
+
+# -- the production pastes, run the two ways an operator can run them ---------------------------------
+def admin(statement):
+    """Superuser statement for harness set-up and clean-up. The cluster is throw-away and socket-only."""
+    result = psql(['-q', '-c', statement])
+    if result.returncode:
+        raise RuntimeError(f'{statement[:160]}: {result.stderr}')
+
+
+def as_role(role, statement):
+    return psql(['-q', '-c', f'set role {role}; {statement}'])
+
+
+def run_editor(text):
+    """The Supabase SQL editor: the whole paste is ONE query string, run as one implicit transaction."""
+    return psql(['-q', '--csv', '-c', text], timeout=90)
+
+
+def run_script(text):
+    """psql -f: statement by statement, each statement its own transaction."""
+    scratch = Path(A.SOCKET) / 'paste.sql'
+    scratch.write_text(text)
+    return psql(['-q', '--csv', '-f', str(scratch)], timeout=90)
+
+
+def one_row(done):
+    if done.returncode:
+        raise AssertionError(f'the paste failed (rc {done.returncode}): {done.stderr}')
+    rows = list(csv.DictReader(io.StringIO(done.stdout)))
+    if len(rows) != 1:
+        raise AssertionError(f'a paste must return exactly one result row, got {len(rows)}: {done.stdout[:300]}')
+    return rows[0]
+
+
+def paste_text(path, trip=None, prefix='', mutate=None):
+    text = path.read_text()
+    assert text.count(INCIDENT_TRIP) == 1, f'{path.name} must name the incident Trip exactly once'
+    if trip:
+        text = text.replace(INCIDENT_TRIP, trip)
+    return prefix + (mutate(text) if mutate else text)
+
+
+def inject_before(text, marker, statement):
+    assert text.count(marker) == 1, f'{marker!r} must occur exactly once'
+    return text.replace(marker, statement + marker, 1)
+
+
+def apply_result(runner=run_editor, **kwargs):
+    row = one_row(runner(paste_text(APPLY, **kwargs)))
+    details = json.loads(row['details'])
+    repair = details['repair']
+    assert repair['result'] == row['result'], 'the repair must run exactly once per paste: column and details disagree'
+    return row['result'], details, repair
+
+
+def readback_result(trip, runner=run_editor, prefix=''):
+    row = one_row(runner(paste_text(READBACK, trip=trip, prefix=prefix)))
+    return json.loads(row['readback'])
+
+
+def md5s(report):
+    return {row['function']: row['definition_md5'] for row in report}
+
+
+def snapshot_md5s(current):
+    return {key: row['definition_md5'] for key, row in current.items()}
+
+
+def real_table_ddl(path, table):
+    """The repository's own CREATE TABLE, so the readback is proven against the real columns."""
+    match = re.search(rf'create table if not exists public\.{table} \(.*?\n\);', (ROOT / path).read_text(), re.S)
+    if not match:
+        raise AssertionError(f'{table}: CREATE TABLE not found in {path}')
+    return match.group(0)
+
+
+def table_digest(*tables):
+    """One md5 over every row of the named tables, taken by a fresh superuser session: proves a paste wrote nothing."""
+    parts = " || '|' || ".join(
+        f"(select md5(coalesce(string_agg(x::text, ',' order by x::text), '')) from public.{table} x)" for table in tables)
+    return A.sql(f'select to_jsonb({parts});', role='super')
+
+
+def persistent_vinetrack_functions():
+    """The pastes only create session-local (pg_temp) functions: nothing named vinetrack* may exist anywhere else."""
+    return A.sql("select to_jsonb(count(*)) from pg_proc p join pg_namespace n on n.oid = p.pronamespace "
+                 "where p.proname like 'vinetrack%' and n.nspname !~ '^pg_temp';", role='super')
 
 
 class TankLinkCaseContract(unittest.TestCase):
@@ -228,11 +330,11 @@ class TankLinkCaseContract(unittest.TestCase):
         self.assertEqual(guard.count(old_guard), 1)
         self.assertEqual(action.count(old_action), 1)
         variants = [
-            ('action comparison reformatted (old text absent, new text absent)', ACTION, action.replace(old_action, "s->>'id' = session_id")),
-            ('guard comparison present twice', GUARD, guard.replace('  return new;', f"  -- {old_guard}\n  return new;")),
-            ('action carries both the old and the new comparison', ACTION, action.replace('  return result;', f"  -- {new_action}\n  return result;")),
+            ('action comparison reformatted (old text absent, new text absent)', ACTION, action.replace(old_action, "s->>'id' = session_id"), "s->>'id' = session_id"),
+            ('guard comparison present twice', GUARD, guard.replace('  return new;', f"  -- {old_guard}\n  return new;"), f"-- {old_guard}"),
+            ('action carries both the old and the new comparison', ACTION, action.replace('  return result;', f"  -- {new_action}\n  return result;"), f"-- {new_action}"),
         ]
-        for label, signature, variant in variants:
+        for label, signature, variant, fragment in variants:
             with self.subTest(label):
                 self.assertNotEqual(variant, self.original_definitions[signature], 'the variant must differ from the original')
                 redefine(variant)
@@ -250,9 +352,237 @@ class TankLinkCaseContract(unittest.TestCase):
                     self.assertIn('Occurrence tank-link comparison changed', rehearsal.stderr)
                     self.assertNotIn('REHEARSAL_PASSED_NOTHING_CHANGED', rehearsal.stderr,
                                      'the rehearsal must refuse exactly where the repair refuses')
+                    # The production paste does not fail red: it returns a NORMAL row that changes nothing and
+                    # carries the live comparison lines, in either way an operator can run it.
+                    for runner in (run_editor, run_script):
+                        result, _, repair = apply_result(runner)
+                        self.assertEqual(result, 'NOT_APPLIED_LIVE_FUNCTION_DIFFERS')
+                        self.assertFalse(repair['changed'])
+                        self.assertIn('unexpected', repair['live_state_before'].values())
+                        lines = repair['live_comparison_lines']
+                        key = 'guard' if signature == GUARD else 'action'
+                        self.assertTrue(any(fragment in line for line in lines[key]),
+                                        f'the live line must be returned so no second run is needed: {lines}')
+                        self.assertEqual(repair['definition_md5'], {'guard': before[GUARD_KEY]['definition_md5'],
+                                                                    'action': before[ACTION_KEY]['definition_md5']})
+                        self.assertEqual(snapshot_md5s(snapshot()), snapshot_md5s(before), 'a refusal must change nothing')
                 finally:
                     redefine(self.original_definitions[signature])
                 self.assertEqual(snapshot(), self.original, 'the original definitions must be restored exactly')
+
+    # -- 02b -------------------------------------------------------------------------------------
+    def test_02b_apply_paste_repairs_reports_the_committed_catalog_and_is_idempotent(self):
+        # An ACTIVE harness Trip stands in for the incident Trip, so the readback inside the paste has a row to read.
+        trip, _, _ = A.create()
+        guard, action = self.original_definitions[GUARD], self.original_definitions[ACTION]
+
+        def restore():
+            redefine(guard)
+            redefine(action)
+
+        try:
+            for label, runner in (('SQL editor (one query)', run_editor), ('psql -f (statement by statement)', run_script)):
+                with self.subTest(label):
+                    restore()
+                    self.assertEqual(snapshot(), self.original)
+                    result, details, repair = apply_result(runner, trip=trip)
+                    self.assertEqual(result, 'APPLIED')
+                    self.assertTrue(repair['changed'])
+                    self.assertEqual(repair['live_state_before'], {'guard': 'unpatched', 'action': 'unpatched'})
+                    self.assertTrue(repair['identity_unchanged'])
+                    applied = snapshot()
+                    self.assert_catalog_identity_unchanged(applied)
+                    for key, row in applied.items():
+                        self.assertEqual(row['old_text_comparison_present'], 'f', key)
+                        self.assertEqual(row['case_insensitive_comparison_present'], 't', key)
+                    # The report describes the catalog that was COMMITTED, not a transient state inside the statement.
+                    self.assertEqual(md5s(repair['catalog_before']), snapshot_md5s(self.original))
+                    self.assertEqual(md5s(repair['catalog_after']), snapshot_md5s(applied))
+                    before_rows = {row['function']: row for row in repair['catalog_before']}
+                    for row in repair['catalog_after']:
+                        for field in ('owner', 'security_definer', 'acl', 'search_path'):
+                            self.assertEqual(row[field], before_rows[row['function']][field], f"{row['function']}.{field}")
+                    # The readback travels with the result: this Trip is active, so the server has not ended it.
+                    readback = details['original_trip_readback']
+                    self.assertEqual(readback['trip_id'], trip)
+                    self.assertTrue(readback['trip']['found'])
+                    self.assertEqual(readback['trip']['vineyard_id'], A.VINEYARD)
+                    self.assertFalse(readback['summary']['trip_ended_on_server'])
+                    self.assertEqual([op['kind'] for op in readback['occurrence_operations']['accepted']], ['create'])
+                    # The paste writes exactly what the repository repair writes.
+                    via_paste = {GUARD: function_definition(GUARD), ACTION: function_definition(ACTION)}
+                    restore()
+                    migrated = run_file(MIGRATION)
+                    self.assertEqual(migrated.returncode, 0, migrated.stderr)
+                    self.assertEqual({GUARD: function_definition(GUARD), ACTION: function_definition(ACTION)}, via_paste,
+                                     'the paste must write exactly what the repository repair writes')
+                    self.assertEqual(snapshot(), applied)
+                    # Idempotent, whichever way it is run.
+                    for again in (run_editor, run_script):
+                        result, _, repair = apply_result(again, trip=trip)
+                        self.assertEqual(result, 'ALREADY_APPLIED')
+                        self.assertFalse(repair['changed'])
+                        self.assertEqual(repair['catalog_before'], repair['catalog_after'])
+                        self.assertEqual(snapshot(), applied)
+                    # Half applied (guard reverted, action repaired): the paste completes it.
+                    redefine(guard)
+                    result, _, repair = apply_result(runner, trip=trip)
+                    self.assertEqual(result, 'APPLIED')
+                    self.assertEqual(repair['live_state_before'], {'guard': 'unpatched', 'action': 'patched'})
+                    self.assertEqual(snapshot(), applied)
+            # With the repair in place the server completes a Trip End for the iOS wire shape.
+            self.run_ios_flow(upper=True)
+        finally:
+            restore()
+        self.assertEqual(snapshot(), self.original)
+        self.assertEqual(persistent_vinetrack_functions(), 0)
+
+    # -- 02c -------------------------------------------------------------------------------------
+    def test_02c_apply_paste_explains_a_session_that_may_not_replace_the_functions(self):
+        # Production topology (docs/reviews/spray-start-yield-recovery-sync-20261101.md): the project's `postgres` login
+        # owns the guard, but the action belongs to the NOLOGIN writer role, which `postgres` neither is nor inherits.
+        # PostgreSQL then answers 42501 "must be owner of function". OPERATOR stands in for that login.
+        guard, action = self.original_definitions[GUARD], self.original_definitions[ACTION]
+        guard_owner = self.original[GUARD_KEY]['function_owner']
+        self.assertEqual(self.original[ACTION_KEY]['function_owner'], WRITER)
+        prefix = f'set role {OPERATOR};\n'
+        admin(f'create role {OPERATOR} login createrole bypassrls; grant all on schema public to {OPERATOR}; '
+              f'grant select on all tables in schema public to {OPERATOR}')
+
+        def replace_directly(definition):
+            return as_role(OPERATOR, definition.rstrip() + ';')
+
+        def refused(label):
+            session = None
+            for runner in (run_editor, run_script):
+                result, details, repair = apply_result(runner, prefix=prefix)
+                self.assertEqual(result, 'NOT_APPLIED_ROLE_CANNOT_REPLACE_FUNCTIONS', label)
+                self.assertFalse(repair['changed'], label)
+                self.assertEqual(repair['role'], OPERATOR)
+                self.assertEqual(snapshot_md5s(snapshot()), snapshot_md5s(self.original),
+                                 f'{label}: a refused paste must change neither function, not even one it could replace')
+                self.assertIn('original_trip_readback', details)
+                session = repair['session']
+            return session
+
+        def by_function(session):
+            return {row['function']: row for row in session['functions']}
+
+        try:
+            # A. Owns nothing and belongs to no role: what production's `postgres` showed on 1 Nov (42501).
+            direct = replace_directly(action)
+            self.assertNotEqual(direct.returncode, 0)
+            self.assertIn('must be owner of function', direct.stderr, "the harness must reproduce production's 42501")
+            session = refused('A: no ownership, no membership')
+            self.assertEqual(session['current_user'], OPERATOR)
+            self.assertFalse(session['current_role_attributes']['rolsuper'])
+            self.assertTrue(session['may_create_in_schema_public'])
+            facts = by_function(session)
+            self.assertEqual(set(facts), {GUARD_KEY, ACTION_KEY})
+            self.assertEqual(facts[ACTION_KEY]['owner'], WRITER)
+            self.assertEqual(facts[GUARD_KEY]['owner'], guard_owner)
+            for row in facts.values():
+                self.assertFalse(row['session_is_member_of_owner'])
+                self.assertFalse(row['session_has_owner_privileges'])
+            self.assertEqual(session['session_role_memberships'], [])
+            self.assertIn(ACTION_KEY, [row['function'] for row in session['occurrence_functions']])
+
+            # B. Owns the guard and is a member of the writer WITHOUT inheriting its privileges: still refused, and
+            #    the guard it COULD replace stays untouched (both are validated before either is changed).
+            admin(f'alter function {GUARD} owner to {OPERATOR}')
+            admin(f'grant {WRITER} to {OPERATOR} with inherit false, set false')
+            self.assertIn('must be owner of function', replace_directly(action).stderr)
+            session = refused('B: owns the guard, member of the writer without inheriting it')
+            facts = by_function(session)
+            self.assertTrue(facts[GUARD_KEY]['session_has_owner_privileges'])
+            self.assertTrue(facts[ACTION_KEY]['session_is_member_of_owner'])
+            self.assertFalse(facts[ACTION_KEY]['session_has_owner_privileges'])
+            self.assertEqual(session['session_role_memberships'], [WRITER])
+            membership = [row for row in session['owner_role_memberships'] if row['member'] == OPERATOR]
+            self.assertEqual(len(membership), 1)
+            self.assertEqual((membership[0]['role'], membership[0]['inherit_option'], membership[0]['set_option']),
+                             (WRITER, False, False))
+            self.assertEqual({row['owner']: row['session_can_set_role_to_owner'] for row in session['set_role_to_owner']},
+                             {OPERATOR: True, WRITER: False})
+
+            # C. Inherits the writer's privileges (what PostgreSQL itself requires): a plain non-superuser applies it.
+            admin(f'revoke {WRITER} from {OPERATOR}')
+            admin(f'grant {WRITER} to {OPERATOR} with inherit true, set false')
+            result, _, repair = apply_result(run_editor, prefix=prefix)
+            self.assertEqual(result, 'APPLIED', repair)
+            self.assertTrue(repair['changed'])
+            self.assertTrue(repair['identity_unchanged'])
+            applied = snapshot()
+            self.assertEqual(md5s(repair['catalog_after']), snapshot_md5s(applied))
+            self.assertEqual({key: row['function_owner'] for key, row in applied.items()},
+                             {GUARD_KEY: OPERATOR, ACTION_KEY: WRITER}, 'owners must be preserved')
+            for key, row in applied.items():
+                self.assertEqual(row['case_insensitive_comparison_present'], 't', key)
+            result, _, repair = apply_result(run_script, prefix=prefix)
+            self.assertEqual(result, 'ALREADY_APPLIED')
+            self.assertFalse(repair['changed'])
+
+            # D. May act as the owners but may not create in the schema: refused, with that fact reported.
+            restore_both = (guard, action)
+            for definition in restore_both:
+                redefine(definition)
+            self.assertEqual(snapshot_md5s(snapshot()), snapshot_md5s(self.original))
+            admin(f'revoke create on schema public from {OPERATOR}')
+            self.assertIn('permission denied for schema public', replace_directly(guard).stderr)
+            session = refused('D: may act as the owners but not create in the schema')
+            self.assertFalse(session['may_create_in_schema_public'])
+
+            # E. Nothing to replace: an already repaired pair is reported as such, for a session with no privileges at all.
+            admin(f'revoke {WRITER} from {OPERATOR}')
+            migrated = run_file(MIGRATION)
+            self.assertEqual(migrated.returncode, 0, migrated.stderr)
+            result, _, repair = apply_result(run_editor, prefix=prefix)
+            self.assertEqual(result, 'ALREADY_APPLIED')
+            self.assertFalse(repair['changed'])
+        finally:
+            for statement in (f'revoke {WRITER} from {OPERATOR}',
+                              f'alter function {GUARD} owner to "{guard_owner}"',
+                              f'drop owned by {OPERATOR}',
+                              f'drop role {OPERATOR}'):
+                psql(['-q', '-c', statement])
+            redefine(guard)
+            redefine(action)
+        self.assertEqual(snapshot(), self.original)
+        self.assertEqual(persistent_vinetrack_functions(), 0)
+
+    # -- 02d -------------------------------------------------------------------------------------
+    def test_02d_apply_paste_rolls_back_everything_when_anything_goes_wrong(self):
+        flag = 'security invoker' if self.original[GUARD_KEY]['security_definer'] == 't' else 'security definer'
+        after_marker = '  after_report := (\n'
+        breaks = {
+            'search_path changed': f'alter function {GUARD} set search_path = pg_catalog, public, extensions',
+            'security flag flipped': f'alter function {GUARD} {flag}',
+            'grant added': f'grant execute on function {GUARD} to fixture_client',
+        }
+        for label, statement in breaks.items():
+            with self.subTest(label):
+                injected = f"  execute '{statement}';\n"
+                for runner in (run_editor, run_script):
+                    done = runner(paste_text(APPLY, mutate=lambda text: inject_before(text, after_marker, injected)))
+                    self.assertNotEqual(done.returncode, 0, 'the paste must fail red when the catalog identity would change')
+                    self.assertIn('would change owner, grants, security flag or search_path', done.stderr)
+                    self.assertEqual(snapshot(), self.original, 'a failed paste must leave NOTHING behind')
+                rehearsal = run_text(inject_before(REHEARSAL.read_text(), after_marker, injected))
+                self.assertNotEqual(rehearsal.returncode, 0)
+                self.assertIn('REHEARSAL_FAILED_CATALOG_IDENTITY_CHANGED', rehearsal.stderr)
+                self.assertEqual(snapshot(), self.original)
+        # Any failure AFTER both functions were rewritten discards the rewrite as well.
+        forced = ("  raise exception 'forced failure after the rewrite: action md5 %', "
+                  f"md5(pg_get_functiondef('{ACTION}'::regprocedure));\n")
+        for runner in (run_editor, run_script):
+            done = runner(paste_text(APPLY, mutate=lambda text: inject_before(text, '  -- Post-condition', forced)))
+            self.assertNotEqual(done.returncode, 0)
+            match = re.search(r'forced failure after the rewrite: action md5 ([0-9a-f]{32})', done.stderr)
+            self.assertIsNotNone(match, done.stderr)
+            self.assertNotEqual(match.group(1), self.original[ACTION_KEY]['definition_md5'],
+                                'by then the action had been rewritten ...')
+            self.assertEqual(snapshot(), self.original, '... and the failure rolled the rewrite back')
+        self.assertEqual(persistent_vinetrack_functions(), 0)
 
     # -- 03 --------------------------------------------------------------------------------------
     def test_03_repair_preserves_catalog_identity_is_idempotent_and_completes_a_half_applied_state(self):
@@ -341,6 +671,129 @@ class TankLinkCaseContract(unittest.TestCase):
         coverage = A.sql(A.request(trip, coverage, A.action(trip, coverage, 1, to='skipped')))['coverage']
         self.assert_rejected(finalize(trip, coverage), 'OCCURRENCE_TANK_REVIEW_REQUIRED')
         self.assertTrue(trip_row(trip)['is_active'], 'a refused finalise must leave the Trip active')
+
+    # -- 09 --------------------------------------------------------------------------------------
+    def test_09_readback_is_read_only_never_raises_and_reports_the_server_state(self):
+        # Static: outside comments there is no data or privilege statement, and only session-local functions.
+        def code(path):
+            return '\n'.join(line for line in path.read_text().splitlines() if not line.lstrip().startswith('--'))
+
+        def creates(path):
+            return re.findall(r'\bcreate\s+or\s+replace\s+function\s+([\w.]+)', code(path), re.I)
+
+        forbidden = r'\b(?:insert|update|delete|drop|truncate|alter|grant|revoke|copy|vacuum)\b'
+        for path in (READBACK, APPLY):
+            self.assertEqual(re.findall(forbidden, code(path), re.I), [], f'{path.name} must contain no data or privilege statement')
+        self.assertEqual(creates(READBACK), ['pg_temp.vinetrack_trip_readback'])
+        self.assertEqual(len(re.findall(r'\bcreate\b', code(READBACK), re.I)), 1)
+        self.assertEqual(creates(APPLY), ['pg_temp.vinetrack_session_facts', 'pg_temp.vinetrack_apply_tank_link_repair',
+                                          'pg_temp.vinetrack_trip_readback'])
+
+        # A Trip that does not exist is reported, not raised.
+        missing = readback_result(str(uuid.uuid4()))
+        self.assertEqual(missing['trip'], {'found': False})
+        self.assertFalse(missing['summary']['trip_ended_on_server'])
+
+        # The server state after the iOS flow: ended, original (uppercase) session ids, lowercase links, four operations.
+        trip = self.run_ios_flow(upper=True)
+        stored = [s['id'] for s in trip_row(trip)['tank_sessions']]
+        digest_before = table_digest('trips', 'trip_occurrence_operations')
+        for label, runner in (('SQL editor (one query)', run_editor), ('psql -f', run_script)):
+            with self.subTest(label):
+                readback = readback_result(trip, runner)
+                self.assertEqual(readback['trip_id'], trip)
+                facts = readback['trip']
+                self.assertTrue(facts['found'])
+                self.assertIs(facts['is_active'], False)
+                self.assertTrue(facts['end_time'].startswith('2026-10-14T09:00:00'), facts['end_time'])
+                self.assertIsNone(facts['deleted_at'])
+                self.assertEqual(facts['vineyard_id'], A.VINEYARD)
+                self.assertEqual(facts['tank_session_ids'], sorted(stored), 'the stored session ids keep the app text')
+                self.assertEqual(facts['occurrence_linked_tank_session_ids'], sorted(s.lower() for s in stored))
+                self.assertEqual(facts['occurrence_status_counts'], {'done': 1, 'skipped': 1})
+                self.assertIs(readback['summary']['trip_ended_on_server'], True)
+                self.assertEqual(readback['summary']['tank_session_count'], 2)
+                operations = readback['occurrence_operations']
+                self.assertEqual(operations['count'], 4)
+                accepted = operations['accepted']
+                self.assertEqual([(op['kind'], op['to_status'], op['resulting_status']) for op in accepted],
+                                 [('create', None, None), ('setStatus', 'done', 'done'),
+                                  ('setStatus', 'skipped', 'skipped'), ('finalize', None, None)])
+                self.assertEqual(sorted(accepted[1]['linked_tank_session_ids']), sorted(s.lower() for s in stored))
+                self.assertEqual(accepted[3]['requested_end_time'], '2026-10-14T09:00:00Z')
+                self.assertTrue(accepted[3]['result_end_time'].startswith('2026-10-14T09:00:00'), accepted[3]['result_end_time'])
+                self.assertEqual(accepted[3]['result_is_active'], 'false')
+                # Neither Spray table exists in this harness yet: each section says so and the summary says -1.
+                self.assertEqual(readback['tank_actuals']['sqlstate'], '42P01')
+                self.assertEqual(readback['spray_records']['sqlstate'], '42P01')
+                self.assertEqual(readback['summary']['tank_actual_count'], -1)
+                self.assertEqual(readback['summary']['spray_completed_count'], -1)
+        self.assertEqual(table_digest('trips', 'trip_occurrence_operations'), digest_before, 'the readback must write nothing')
+
+        # A table with the wrong columns is reported inside its own section and hides nothing else.
+        admin('create table public.spray_tank_actuals (id uuid)')
+        try:
+            readback = readback_result(trip)
+            self.assertEqual(readback['tank_actuals']['sqlstate'], '42703')
+            self.assertEqual(readback['summary']['tank_actual_count'], -1)
+            self.assertIs(readback['summary']['trip_ended_on_server'], True)
+        finally:
+            admin('drop table public.spray_tank_actuals')
+
+        # The repository's REAL Spray tables: every column the readback names must exist, and the counts must be right.
+        created = run_text(real_table_ddl('sql/007_spray_records_sync.sql', 'spray_records') + '\n'
+                           + real_table_ddl('sql/223_spray_tank_actuals.sql', 'spray_tank_actuals'), 'spray-tables.sql')
+        self.assertEqual(created.returncode, 0, created.stderr)
+        try:
+            record, template, withdrawn = (str(uuid.uuid4()) for _ in range(3))
+            third_session = new_session(upper=True)
+            admin(f"insert into public.spray_records (id, vineyard_id, trip_id, start_time, is_template) values "
+                  f"('{record}', '{A.VINEYARD}', '{trip}', '2026-10-14T08:00:00Z', false), "
+                  f"('{template}', '{A.VINEYARD}', '{trip}', null, true)")
+            admin(f"insert into public.spray_records (id, vineyard_id, trip_id, start_time, end_time, is_template, deleted_at) values "
+                  f"('{withdrawn}', '{A.VINEYARD}', '{trip}', '2026-10-14T07:00:00Z', '2026-10-14T07:30:00Z', false, now())")
+            values = [(str(uuid.uuid4()), stored[0], 1, 41.5, False), (str(uuid.uuid4()), stored[1], 2, 38.25, False),
+                      (str(uuid.uuid4()), third_session, 3, 10, True)]
+            admin('insert into public.spray_tank_actuals (id, vineyard_id, spray_record_id, trip_id, tank_session_id, tank_number, '
+                  'water_volume_l, confirmed_at, confirmed_by, client_updated_at, deleted_at) values ' + ', '.join(
+                      f"('{i}', '{A.VINEYARD}', '{record}', '{trip}', '{s}', {n}, {w}, '2026-10-14T08:45:00Z', '{A.ACTOR}', "
+                      f"'2026-10-14T08:45:00Z', {'now()' if gone else 'null'})" for i, s, n, w, gone in values))
+            digest_before = table_digest('trips', 'trip_occurrence_operations', 'spray_records', 'spray_tank_actuals')
+            for label, runner in (('SQL editor (one query)', run_editor), ('psql -f', run_script)):
+                with self.subTest(f'spray tables, {label}'):
+                    readback = readback_result(trip, runner)
+                    actuals = readback['tank_actuals']
+                    self.assertEqual(actuals['count'], 2, 'a withdrawn (soft-deleted) actual is not counted')
+                    self.assertEqual([(row['tank_number'], row['tank_session_id'], row['water_volume_l']) for row in actuals['rows']],
+                                     [(1, stored[0], 41.5), (2, stored[1], 38.25)])
+                    self.assertEqual({row['spray_record_id'] for row in actuals['rows']}, {record})
+                    spray = readback['spray_records']
+                    self.assertEqual(spray['count'], 2, 'templates are excluded; the withdrawn record is listed')
+                    self.assertEqual(spray['completed_count'], 0, 'an open record, and a withdrawn completed one, do not count')
+                    self.assertEqual({row['id'] for row in spray['rows']}, {record, withdrawn})
+                    self.assertEqual(readback['summary']['tank_actual_count'], 2)
+                    self.assertEqual(readback['summary']['spray_completed_count'], 0)
+                    self.assertIs(readback['summary']['trip_ended_on_server'], True)
+            self.assertEqual(table_digest('trips', 'trip_occurrence_operations', 'spray_records', 'spray_tank_actuals'),
+                             digest_before, 'the readback must write nothing')
+            admin(f"update public.spray_records set end_time = '2026-10-14T09:00:00Z' where id = '{record}'")
+            readback = readback_result(trip)
+            self.assertEqual(readback['spray_records']['completed_count'], 1)
+            self.assertEqual(readback['summary']['spray_completed_count'], 1)
+            # A session that may read nothing gets a section error for every section, never a raised error.
+            admin('create role vinetrack_test_nogrant login')
+            try:
+                denied = readback_result(trip, prefix='set role vinetrack_test_nogrant;\n')
+            finally:
+                psql(['-q', '-c', 'drop owned by vinetrack_test_nogrant; drop role vinetrack_test_nogrant'])
+            for section in ('trip', 'occurrence_operations', 'tank_actuals', 'spray_records'):
+                self.assertEqual(denied[section]['sqlstate'], '42501', section)
+            self.assertIs(denied['summary']['trip_ended_on_server'], False)
+            self.assertEqual(denied['summary']['tank_actual_count'], -1)
+            self.assertEqual(denied['summary']['spray_completed_count'], -1)
+        finally:
+            admin('drop table if exists public.spray_tank_actuals; drop table if exists public.spray_records')
+        self.assertEqual(persistent_vinetrack_functions(), 0)
 
 
 def main():

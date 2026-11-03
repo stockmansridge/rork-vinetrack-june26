@@ -64,6 +64,13 @@ import Foundation
         }
         fileURL = scoped.appendingPathComponent(scope.tripId + ".json")
     }
+    /// Keeps this class's deinit non-isolated on purpose. A `@MainActor` class with no explicit deinit gets an
+    /// implicit ISOLATED deinit, and the iOS 18.x to 26.3 Swift runtime aborts ("pointer being freed was not
+    /// allocated" in swift::TaskLocal::StopLookupScope) when such an instance is released synchronously outside
+    /// a Task (swiftlang/swift#88036, #85663; fixed in the iOS 26.4 runtime). Observed on Xcode 26.3 + iOS 18.5:
+    /// 48 SIGABRTs, every one in TripOccurrenceJournal.__deallocating_deinit (GitHub run 41728287675). All stored
+    /// properties are plain values or a reference, so nothing needs the main actor to be destroyed.
+    deinit {}
     /// Content-free stage classification. A hold is not permission to replay,
     /// and an empty journal does not mean the trip metadata was uploaded.
     static func syncDiagnosticReason(_ state: Snapshot) -> String {
