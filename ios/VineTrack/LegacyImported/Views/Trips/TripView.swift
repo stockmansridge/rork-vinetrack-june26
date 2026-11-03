@@ -184,14 +184,15 @@ struct TripView: View {
         let timing = PerformanceCapture.shared.beginComputation()
         defer { PerformanceCapture.shared.endComputation(timing, label: "Trips filter and sort", records: store.trips.count) }
         var trips = pastTrips
+        let sprayTripIds = Set(store.sprayRecords.compactMap(\.tripId))
 
         switch tripTypeFilter {
         case .all:
             break
         case .spray:
-            trips = trips.filter { hasSprayRecord($0) }
+            trips = trips.filter { sprayTripIds.contains($0.id) }
         case .maintenance:
-            trips = trips.filter { !hasSprayRecord($0) }
+            trips = trips.filter { !sprayTripIds.contains($0.id) }
         }
 
         if let function = tripFunctionFilter {
@@ -250,7 +251,19 @@ struct TripView: View {
     }
 
     private var tripHistoryList: some View {
-        VStack(spacing: 0) {
+        // Recomputing a full pins.filter for every Trip row on every sync
+        // publication created O(trips x pins) main-thread work while scrolling.
+        let pinCounts = Dictionary(
+            store.pins.compactMap { $0.tripId }.map { ($0, 1) },
+            uniquingKeysWith: +
+        )
+        let sprayByTrip = Dictionary(
+            store.sprayRecords.compactMap { record in
+                record.tripId.map { ($0, record) }
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return VStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(TripTypeFilter.allCases, id: \.self) { filter in
@@ -339,9 +352,9 @@ struct TripView: View {
                         NavigationLink(value: trip.id) {
                             TripHistoryRow(
                                 trip: trip,
-                                pinCount: store.pins.filter { $0.tripId == trip.id }.count,
-                                hasSprayRecord: hasSprayRecord(trip),
-                                sprayReferenceName: store.sprayRecords.first(where: { $0.tripId == trip.id })?.sprayReference,
+                                pinCount: pinCounts[trip.id, default: 0],
+                                hasSprayRecord: sprayByTrip[trip.id] != nil,
+                                sprayReferenceName: sprayByTrip[trip.id]?.sprayReference,
                                 displayTitle: tripDisplayName(trip)
                             )
                         }
