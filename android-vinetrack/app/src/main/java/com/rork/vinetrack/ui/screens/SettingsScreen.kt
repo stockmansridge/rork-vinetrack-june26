@@ -159,6 +159,7 @@ fun SettingsScreen(
     var showVineyardSwitcher by remember { mutableStateOf(false) }
     var showNameEditor by remember { mutableStateOf(false) }
     var showSubscription by remember { mutableStateOf(false) }
+    var showSyncDiagnostics by remember { mutableStateOf(false) }
     var searchText by rememberSaveable { mutableStateOf("") }
     var adminLanding by remember { mutableStateOf<AdminLanding?>(null) }
     var detailVineyard by remember { mutableStateOf<Vineyard?>(null) }
@@ -195,6 +196,16 @@ fun SettingsScreen(
             onBack = { showSubscription = false },
             modifier = modifier,
             openedFromSettings = true,
+        )
+        return
+    }
+    if (showSyncDiagnostics) {
+        SyncStatusScreen(
+            vm = vm,
+            state = state,
+            modifier = modifier,
+            onBack = { showSyncDiagnostics = false },
+            screenTitle = "Sync Diagnostics",
         )
         return
     }
@@ -276,7 +287,7 @@ fun SettingsScreen(
                         addRoute("Region & Units", "Country, currency and units", Icons.Filled.Straighten, VineColors.Indigo, ToolRoute.RegionUnits, "preferences data")
                         addRoute("Sync", "Cloud sync for pins, paddocks and trips", Icons.Filled.CloudUpload, VineColors.Info, ToolRoute.SyncStatus, "preferences data")
                         addRoute("Offline Readiness", "Check this device for no-service areas", Icons.Filled.WifiOff, VineColors.Success, ToolRoute.OfflineReadiness, "preferences data")
-                        addRoute("Sync Diagnostics", "Pending uploads, last sync and status", Icons.Filled.MedicalServices, VineColors.Cyan, ToolRoute.SyncStatus, "troubleshoot diagnostic")
+                        add(SettingsSearchEntry("Sync Diagnostics", "Pending uploads, last sync and status", Icons.Filled.MedicalServices, VineColors.Cyan, "troubleshoot diagnostic") { showSyncDiagnostics = true })
                         addRoute("Contact Support", "Send feedback or report an issue", Icons.Filled.Email, VineColors.Success, ToolRoute.ContactSupport, "help")
                         addRoute("Request Account Deletion", "Permanently remove your account", Icons.Filled.DeleteForever, VineColors.Destructive, ToolRoute.DeleteAccount, "privacy")
                         val canManageData = state.currentRole == "owner" || state.currentRole == "manager"
@@ -602,7 +613,7 @@ fun SettingsScreen(
                             VineColors.Cyan,
                             "Sync Diagnostics",
                             "Pending uploads, last sync & status",
-                            onClick = { onOpenTool(ToolRoute.SyncStatus) },
+                            onClick = { showSyncDiagnostics = true },
                         )
                     }
                     RowDivider(vine.cardBorder)

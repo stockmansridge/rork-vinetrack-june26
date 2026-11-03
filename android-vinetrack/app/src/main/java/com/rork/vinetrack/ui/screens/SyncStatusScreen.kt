@@ -110,6 +110,7 @@ fun SyncStatusScreen(
     state: AppUiState,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
+    screenTitle: String = "Sync Status",
 ) {
     val vine = LocalVineColors.current
     val online = state.isOnline
@@ -169,7 +170,7 @@ fun SyncStatusScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Sync Status") },
+                title = { Text(screenTitle) },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
                     TextButton(onClick = {
