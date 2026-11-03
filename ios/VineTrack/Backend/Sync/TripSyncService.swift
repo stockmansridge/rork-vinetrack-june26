@@ -151,11 +151,22 @@ final class TripSyncService {
         }
     }
 
+    /// Explicit human-verified replacement for a missing tank start. The
+    /// original tank ID and Actual Use still come from independently retained
+    /// evidence; only the timestamp is operator supplied and audit-labelled.
+    nonisolated struct GuidedTankStartOverride: Sendable {
+        let sessionId: UUID
+        let startAt: Date
+        let evidenceNote: String
+    }
+
     /// Selected, operator-confirmed repair option: recover ONLY the original
     /// tank start recorded in the same durable confirmed Actual Use. No guessed
     /// chemical amounts, GPS, rows or tank-end events. It never acknowledges a
     /// network operation; the normal ordered sync must prove receipt later.
-    func guidedRestoreConfirmedTankStart(tripId: UUID, vineyardId: UUID) async throws -> String {
+    func guidedRestoreConfirmedTankStart(
+        tripId: UUID, vineyardId: UUID, manual: GuidedTankStartOverride? = nil
+    ) async throws -> String {
         struct NotAdmitted: LocalizedError {
             let explanation: String
             var errorDescription: String? { explanation }
@@ -206,11 +217,35 @@ final class TripSyncService {
         let actuals = confirmedTankActuals(tripId).filter {
             $0.tripId == tripId && $0.vineyardId == vineyardId
         }
-        guard let corrected = ConfirmedTankStartRecovery.restore(
+        guard var corrected = ConfirmedTankStartRecovery.restore(
             trip: local, missingSessionIds: missing,
             confirmedActuals: actuals, linkedSprayIds: linked, ownerId: owner)
         else {
             throw NotAdmitted(explanation: "The retained Actual Use does not uniquely prove the original tank identity and time. Owner review is required; no fields were invented.")
+        }
+        if let manual {
+            let sessionKey = TankDependencyVerification.normalized(manual.sessionId.uuidString)
+            let confirmed = actuals.filter {
+                TankDependencyVerification.normalized($0.tankSessionId) == sessionKey &&
+                $0.confirmedBy == owner && linked.contains($0.sprayRecordId)
+            }
+            guard missing.contains(sessionKey), confirmed.count == 1,
+                  let original = confirmed.first,
+                  remote.tankSessions?.contains(where: { $0.id == manual.sessionId }) != true,
+                  let index = corrected.tankSessions.firstIndex(where: { $0.id == manual.sessionId }),
+                  let localEnd = local.endTime,
+                  GuidedRepairFieldValidation.manualTankTime(
+                    manual.startAt, tripStart: local.startTime, tripEnd: localEnd,
+                    originalConfirmedAt: original.confirmedAt,
+                    reason: manual.evidenceNote) == nil else {
+                throw NotAdmitted(explanation: "The operator-entered start time conflicts with the original confirmed tank ID, Trip interval or existing server evidence. Nothing was corrected.")
+            }
+            corrected.tankSessions[index].startTime = manual.startAt
+            let evidence = manual.evidenceNote.trimmingCharacters(in: .whitespacesAndNewlines)
+            corrected.manualCorrectionEvents.append(
+                "\(Date().ISO8601Format()) guided_verified_tank_start operator=\(owner.uuidString.lowercased()) " +
+                "session=\(sessionKey) actual=\(original.id.uuidString.lowercased()) " +
+                "entered_utc=\(manual.startAt.ISO8601Format()) source=\(evidence)")
         }
         // A same-account deletion or selection change after the remote read
         // invalidates this repair before the first persistent write.
@@ -222,7 +257,9 @@ final class TripSyncService {
             throw NotAdmitted(explanation: "The original Trip scope changed. No changes were written.")
         }
         try store.updateTripOrThrow(corrected)
-        return "The original tank start has been saved locally with an audit entry. Its End, Actual Use and Spray still require independent server acknowledgement. Run the normal sync next."
+        return manual == nil
+            ? "The original confirmed tank start was saved with an audit entry. Its linked work still needs independent server receipts."
+            : "The operator-verified tank time was saved with its original session ID and evidence note. Run the full sync and verify dependent receipts."
     }
 
     /// True while a full sweep is actively pushing/pulling trips.
