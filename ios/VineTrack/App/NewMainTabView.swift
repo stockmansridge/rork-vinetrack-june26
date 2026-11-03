@@ -1,6 +1,7 @@
 import SwiftUI
 import Supabase
 import CoreLocation
+import ImageIO
 import Combine
 import UIKit
 
@@ -1049,20 +1050,13 @@ struct NewHomeTabView: View {
 
     private var titleHeader: some View {
         HStack(spacing: 12) {
-            if let data = store.selectedVineyard?.logoData, let uiImage = UIImage(data: data) {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 40, height: 40)
-                    .clipShape(Circle())
-            } else {
-                ZStack {
-                    Circle()
-                        .fill(VineyardTheme.leafGreen.gradient)
-                        .frame(width: 40, height: 40)
-                    GrapeLeafIcon(size: 22, color: .white)
-                }
-            }
+            HomeVineyardLogoThumbnail(
+                data: store.selectedVineyard?.logoData,
+                size: 40,
+                cornerRadius: 20,
+                isHeader: true
+            )
+            .id(store.selectedVineyardId)
             // The vineyard name is a switcher only when the user belongs to
             // more than one vineyard (portal parity). Single-vineyard users
             // see a plain, finished-looking title with no dropdown affordance.
@@ -1665,6 +1659,70 @@ private struct HomeActiveTripSection: View {
     }
 }
 
+/// Presentation-only Home logo thumbnail. Decode once per logo change rather
+/// than constructing a UIImage during every Home view update while syncing.
+/// The task is cancelled on a vineyard/byte change; a previous vineyard's
+/// thumbnail is never displayed with the new vineyard's data.
+private struct HomeVineyardLogoThumbnail: View {
+    let data: Data?
+    let size: CGFloat
+    let cornerRadius: CGFloat
+    let isHeader: Bool
+
+    @State private var preparedImage: CGImage?
+    @State private var preparedData: Data?
+
+    var body: some View {
+        Group {
+            if let preparedImage, preparedData == data {
+                Image(decorative: preparedImage, scale: 3)
+                    .resizable()
+                    .scaledToFill()
+            } else if isHeader {
+                ZStack {
+                    Circle().fill(VineyardTheme.leafGreen.gradient)
+                    GrapeLeafIcon(size: 22, color: .white)
+                }
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(VineyardTheme.leafGreen.opacity(0.15))
+                    GrapeLeafIcon(size: 24, color: VineyardTheme.leafGreen)
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(.rect(cornerRadius: cornerRadius))
+        .task(id: data) {
+            // Clear immediately when selected vineyard/logo bytes change.
+            preparedImage = nil
+            preparedData = nil
+            guard let data else { return }
+
+            let span = PerformanceCapture.shared.begin("Home logo thumbnail preparation")
+            defer { PerformanceCapture.shared.end(span) }
+            // ImageIO decoding and resizing are performed off the main actor.
+            let image = await Task.detached(priority: .utility) { Self.prepare(data) }.value
+            guard !Task.isCancelled else { return }
+            preparedImage = image
+            preparedData = data
+        }
+    }
+
+    nonisolated private static func prepare(_ data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(
+            data as CFData,
+            [kCGImageSourceShouldCache: false] as CFDictionary
+        ) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 144,
+            kCGImageSourceShouldCacheImmediately: true
+        ] as CFDictionary)
+    }
+}
+
 private struct HomeVineyardOverviewSection: View {
     @Environment(MigratedDataStore.self) private var store
 
@@ -1690,20 +1748,21 @@ private struct HomeVineyardOverviewSection: View {
         fmt.settings.area == .hectares ? "Hectares" : "Acres"
     }
 
-    private var totalHectares: Double {
-        store.paddocks.reduce(0.0) { $0 + $1.areaHectares }
+    // Same values as the former independent reductions, with one read-only pass.
+    private var totals: (hectares: Double, vines: Int) {
+        store.paddocks.reduce(into: (hectares: 0.0, vines: 0)) { totals, paddock in
+            totals.hectares += paddock.areaHectares
+            totals.vines += paddock.summaryVineCount
+        }
     }
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
-    private var totalVines: Int {
-        store.paddocks.reduce(0) { $0 + $1.summaryVineCount }
-    }
-
     var body: some View {
         let preparationStartedAt = PerformanceCapture.shared.beginComputation()
-        let hectares = totalHectares
-        let vines = totalVines
+        let summary = totals
+        let hectares = summary.hectares
+        let vines = summary.vines
         PerformanceCapture.shared.endComputation(
             preparationStartedAt,
             label: "Home vineyard overview",
@@ -1718,20 +1777,13 @@ private struct HomeVineyardOverviewSection: View {
                 VineyardCard {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(spacing: 14) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(VineyardTheme.leafGreen.opacity(0.15))
-                                    .frame(width: 48, height: 48)
-                                if let data = store.selectedVineyard?.logoData, let uiImage = UIImage(data: data) {
-                                    Image(uiImage: uiImage)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                        .frame(width: 48, height: 48)
-                                        .clipShape(.rect(cornerRadius: 12))
-                                } else {
-                                    GrapeLeafIcon(size: 24, color: VineyardTheme.leafGreen)
-                                }
-                            }
+                            HomeVineyardLogoThumbnail(
+                                data: store.selectedVineyard?.logoData,
+                                size: 48,
+                                cornerRadius: 12,
+                                isHeader: false
+                            )
+                            .id(store.selectedVineyardId)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(store.selectedVineyard?.name ?? "No vineyard selected")
                                     .font(.headline)
@@ -1810,13 +1862,29 @@ private struct HomeVintageSummarySection: View {
             records: store.sprayRecords, trips: store.trips,
             vineyardId: store.selectedVineyardId, window: window
         )
+        // Retain the identical membership rules while avoiding three large
+        // temporary arrays from compactMap/flatMap/union on each refresh.
         let currentBlockIds = Set(store.paddocks.map(\.id))
-        let workedBlockIds = Set(vintagePins.compactMap(\.paddockId))
-            .union(vintageTrips.flatMap { $0.paddockIds.isEmpty ? [$0.paddockId].compactMap { $0 } : $0.paddockIds })
-            .union(vintageSprayRecords.flatMap { record in
-                record.applicationGeometry?.blocks?.compactMap { UUID(uuidString: $0.blockId) } ?? []
-            })
-            .intersection(currentBlockIds)
+        let completedPinsCount = vintagePins.reduce(0) { $0 + ($1.isCompleted ? 1 : 0) }
+        var workedBlockIds = Set<UUID>()
+        for pin in vintagePins {
+            if let blockId = pin.paddockId { workedBlockIds.insert(blockId) }
+        }
+        for trip in vintageTrips {
+            if trip.paddockIds.isEmpty {
+                if let blockId = trip.paddockId { workedBlockIds.insert(blockId) }
+            } else {
+                workedBlockIds.formUnion(trip.paddockIds)
+            }
+        }
+        for record in vintageSprayRecords {
+            for block in record.applicationGeometry?.blocks ?? [] {
+                if let blockId = UUID(uuidString: block.blockId) {
+                    workedBlockIds.insert(blockId)
+                }
+            }
+        }
+        workedBlockIds.formIntersection(currentBlockIds)
         PerformanceCapture.shared.endComputation(
             preparationStartedAt,
             label: "Home vintage summary",
@@ -1841,7 +1909,7 @@ private struct HomeVintageSummarySection: View {
                     }
                     .buttonStyle(.plain)
                     Divider()
-                    summaryLink("Pins Completed", value: vintagePins.filter(\.isCompleted).count, icon: "checkmark.circle.fill", tint: VineyardTheme.leafGreen) {
+                    summaryLink("Pins Completed", value: completedPinsCount, icon: "checkmark.circle.fill", tint: VineyardTheme.leafGreen) {
                         PinsView(initialViewMode: .list, initialCompletionFilter: .done)
                     }
                     Divider()
