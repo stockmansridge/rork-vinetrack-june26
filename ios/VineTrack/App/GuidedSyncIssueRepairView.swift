@@ -357,6 +357,7 @@ private struct GuidedSyncIssueDetailView: View {
     @State private var selectedOriginalSession: UUID?
     @State private var legacyApplied = false
     @State private var legacyDeletionConfirmed = false
+    @State private var recordedActualsNotAppliedConfirmed = false
 
     private var contextKey: String {
         (auth.userId?.uuidString ?? "none") + "|" + (store.selectedVineyardId?.uuidString ?? "none")
@@ -505,6 +506,11 @@ private struct GuidedSyncIssueDetailView: View {
                     }
                     .pickerStyle(.segmented)
                     Toggle("I confirm this original Trip was deliberately deleted", isOn: $legacyDeletionConfirmed)
+                    if !legacyApplied {
+                        Toggle("Recorded tank contents were NOT sprayed or applied", isOn: $recordedActualsNotAppliedConfirmed)
+                        Text("Only confirm this when the original tank mix was recorded but genuinely never applied. All original quantities stay in the compliance archive.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Text("The original Trip will remain deleted. Its linked Spray, Actual Use and cost records will be retained in the compliance archive before their live rows are retired. Choose Applied if any physical spray occurred.")
                         .font(.footnote).foregroundStyle(.orange)
                 }
@@ -734,7 +740,7 @@ private struct GuidedSyncIssueDetailView: View {
             .map { $0.key.uuidString + "=" + $0.value }.joined(separator: "|")
         let hash = GuidedRepairAuditLedger.fingerprint(
             "\(issue.id)|\(chosen.rawValue)|\(evidenceNote)|\(manualTime.timeIntervalSince1970)|" +
-            "\(selectedOriginalSession?.uuidString ?? "")|\(waterText)|\(orderedAmounts)|reviewApplied=\(legacyApplied)")
+            "\(selectedOriginalSession?.uuidString ?? "")|\(waterText)|\(orderedAmounts)|reviewApplied=\(legacyApplied)|mixNotApplied=\(recordedActualsNotAppliedConfirmed)")
         let operation: UUID
         do {
             var preferredOriginalCancellationID: UUID?
@@ -832,6 +838,7 @@ private struct GuidedSyncIssueDetailView: View {
                     tripId: issue.relatedTripId ?? issue.recordId,
                     vineyard: vineyard, owner: owner, applied: legacyApplied,
                     reason: evidenceNote, operationId: operation,
+                    confirmedRecordedActualsNotApplied: recordedActualsNotAppliedConfirmed,
                     store: store, tripSync: tripSync, spraySync: spraySync)
                 stage("REVIEWED_LEGACY_CANCELLATION_COMPLETE",
                       "Original server tombstone, compliance archive and linked cancellation receipts verified.")
