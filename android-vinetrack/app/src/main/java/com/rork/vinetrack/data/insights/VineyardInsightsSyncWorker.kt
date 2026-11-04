@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data.insights
 
+import com.rork.vinetrack.data.BackendError
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -261,7 +262,7 @@ class VineyardInsightsSyncWorker(
                 if (e is CancellationException) throw e
                 // Left queued deliberately: the local record is intact, so a
                 // later attempt can still deliver it.
-                error = e.message ?: "Could not sync yet."
+                error = (e as? BackendError.Server)?.diagnostic() ?: e.message ?: "Could not sync yet."
                 store.recordAttempt(entry.id, error)
             }
         }

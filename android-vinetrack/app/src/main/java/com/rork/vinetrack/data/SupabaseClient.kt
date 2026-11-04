@@ -224,5 +224,25 @@ sealed class BackendError(message: String) : Exception(message) {
     object NotConfigured : BackendError("Supabase is not configured.")
     object Unauthorized : BackendError("Your session has expired. Please sign in again.")
     class Network(cause: Throwable) : BackendError(cause.message ?: "Network error.")
-    class Server(val code: Int, val body: String) : BackendError("Request failed ($code).")
+    class Server(val code: Int, val body: String) : BackendError("Request failed ($code).") {
+        /**
+         * Status plus the PostgREST error code and message from the response body, e.g.
+         * `Request failed (400) PGRST204: Could not find the 'x' column ...`. Only `code` and
+         * `message` are surfaced (never `details`, which can echo row values), and the text is
+         * length-capped. Falls back to the plain status message when the body is not PostgREST JSON.
+         */
+        fun diagnostic(): String {
+            val obj = runCatching {
+                kotlinx.serialization.json.Json.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject
+            }.getOrNull() ?: return message ?: "Request failed ($code)."
+            fun field(name: String): String? =
+                (obj[name] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+            val parts = listOfNotNull(field("code"), field("message")?.take(200))
+            return if (parts.isEmpty()) {
+                message ?: "Request failed ($code)."
+            } else {
+                "Request failed ($code) ${parts.joinToString(": ")}"
+            }
+        }
+    }
 }
