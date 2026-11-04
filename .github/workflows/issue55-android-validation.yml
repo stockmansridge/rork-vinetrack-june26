@@ -10,6 +10,7 @@ on:
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SeasonYieldOverviewScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/PinsScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/VineyardMapScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/UnifiedPinComposerScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CostReportsScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/IrrigationScreen.kt'
@@ -79,6 +80,7 @@ jobs:
             --tests "com.rork.vinetrack.data.DamageMapInteractionRegressionTest" \
             --tests "com.rork.vinetrack.data.MainSurfaceRestorationTest" \
             --tests "com.rork.vinetrack.data.PinsMapCurrentLocationRegressionTest" \
+            --tests "com.rork.vinetrack.data.PinsMapFollowMeRegressionTest" \
             --tests "com.rork.vinetrack.data.insights.VineyardInsightsContractCorrectionTest" \
             --tests "com.rork.vinetrack.data.insights.ScoutCaptureTest" \
             --tests "com.rork.vinetrack.data.insights.VintageNotesTest"
