@@ -34,3 +34,16 @@ chat on 2026-11-04. The agent did not run it and cannot independently verify it.
   session reached the row is not shown by this readback.
 
 Incident status: OPEN until the device-side items above are confirmed.
+
+## Device diagnostics, 2026-11-04T01:21:06Z (pasted by the owner; selected vineyard Stockmans Ridge)
+
+- The two attempt records are build 3.1.9 (215) on vineyard `59973CED` (JH Testing): started 2026-11-03T22:25:27Z (stage
+  `sync-failed` 22:25:46Z) and 22:32:09Z (`sync-failed` 22:32:24Z). The server accepted finalize `06ecace9...` at
+  22:25:40.949Z, inside the first attempt. Build 215 therefore reached the server for this Trip once JH Testing was
+  selected. This matches the vineyard-scope hypothesis; it is an inference from timestamps, not a logged confirmation.
+- The retained Trip-upload list now has 7 entries (was 8); `492EBAFC` is no longer in it, and pending Trip upserts went
+  from 2 to 1. No pending tank actual references `492EBAFC` (the 3 pending are legacy `0A5466DF`, `A3C31B89`, `DEAD3350`).
+- What ended each attempt as `sync-failed` is not shown. The Trips entity is still `held`, `last_sync: never`,
+  pending_upserts 1, pending_deletes 1 (deletion `2BE68A70`, `TRIP_DELETE_CREATE_OUTCOME_UNKNOWN`, correctly held).
+- Not shown: the build number running now, the local state of `492EBAFC` (ended, no warning), persistence after reopen.
+- Incident remains OPEN.
