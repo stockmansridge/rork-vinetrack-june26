@@ -1,5 +1,21 @@
 package com.rork.vinetrack.data.insights
 
+/**
+ * Use a percent-encoded deletion cursor. The persisted Postgres timestamp
+ * includes a +00:00 timezone offset; a bare '+' in a URL query decodes to a
+ * space at PostgREST and rejects the GET with HTTP 400. Never alter the
+ * stored cursor or skip tombstones to work around a malformed request.
+ */
+internal fun insightsDeletionQuery(vineyardId: String, deletedAtIso: String?): String =
+    buildString {
+        append("vineyard_insights_deletions?vineyard_id=eq.$vineyardId")
+        if (deletedAtIso != null) {
+            val cursor = java.net.URLEncoder.encode(deletedAtIso, "UTF-8")
+            append("&deleted_at=gte.$cursor")
+        }
+        append("&order=deleted_at.asc,id.asc")
+    }
+
 import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.MaintenanceWriteScope
 import com.rork.vinetrack.data.attachmentScope
@@ -306,13 +322,8 @@ class VineyardInsightsSyncRepository(
     override suspend fun fetchDeletions(
         vineyardId: String,
         deletedAtIso: String?,
-    ): List<VineyardInsightsSyncApi.DeletionRow> = select(
-        buildString {
-            append("vineyard_insights_deletions?vineyard_id=eq.$vineyardId")
-            if (deletedAtIso != null) append("&deleted_at=gte.$deletedAtIso")
-            append("&order=deleted_at.asc,id.asc")
-        },
-    )
+    ): List<VineyardInsightsSyncApi.DeletionRow> =
+        select(insightsDeletionQuery(vineyardId, deletedAtIso))
 
     override suspend fun claimPhotoCleanup(
         vineyardId: String,

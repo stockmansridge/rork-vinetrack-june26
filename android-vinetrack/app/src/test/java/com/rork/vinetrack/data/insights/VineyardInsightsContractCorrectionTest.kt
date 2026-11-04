@@ -19,6 +19,24 @@ import java.time.LocalDate
 class VineyardInsightsContractCorrectionTest {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
+    @Test fun `deletion cursor with timezone offset is percent encoded before PostgREST GET`() {
+        val cursor = "2026-10-19T01:47:08.687519+00:00"
+        val query = insightsDeletionQuery("vineyard", cursor)
+        assertTrue(query.startsWith("vineyard_insights_deletions?vineyard_id=eq.vineyard"))
+        assertTrue(query.contains("2026-10-19T01%3A47%3A08.687519%2B00%3A00"))
+        assertFalse("Unescaped plus changes timezone offset into a space", query.contains("+"))
+        val raw = java.net.URI.create("https://example.test/rest/v1/$query").rawQuery
+        val encoded = raw.substringAfter("deleted_at=gte.").substringBefore("&")
+        assertEquals(cursor, java.net.URLDecoder.decode(encoded, "UTF-8"))
+        assertTrue(query.contains("&order=deleted_at.asc,id.asc"))
+    }
+
+    @Test fun `fresh deletion cursor still includes all tombstones`() {
+        val query = insightsDeletionQuery("vineyard", null)
+        assertFalse(query.contains("deleted_at=gte"))
+        assertTrue(query.contains("&order=deleted_at.asc,id.asc"))
+    }
+
     @Test fun `growth stage upload uses applied database column`() {
         val payload = VineyardInsightsSyncApi.ObservationUpsert(
             id = "o", assessmentId = "a", vineyardId = "v", itemKind = "growth_stage",

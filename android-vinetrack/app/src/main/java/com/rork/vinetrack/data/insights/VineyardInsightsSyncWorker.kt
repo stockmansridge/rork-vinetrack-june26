@@ -135,7 +135,7 @@ class VineyardInsightsSyncWorker(
     } catch (e: Exception) {
         checkActive()
         if (e is CancellationException) throw e
-        Outcome(error = e.message ?: "Could not refresh deletions yet.")
+        Outcome(error = e.syncMessage("Could not refresh deletions yet."))
     }
 
     suspend fun processLocalObjectCleanup(vineyardId: String): Outcome {
