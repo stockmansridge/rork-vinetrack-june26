@@ -860,7 +860,7 @@ private fun LocationStep(
                         ManualIssueContract.rowSelectionSummary(segments.toList()),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
-                        color = VineColors.LeafGreen,
+                        color = VineColors.Primary,
                     )
                     Text(
                         "Block: ${selectedPaddock.name} — detected from the selected row",
@@ -874,7 +874,7 @@ private fun LocationStep(
                         block.name,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (inBlock && segments.isNotEmpty()) VineColors.LeafGreen else vine.textPrimary,
+                        color = if (inBlock && segments.isNotEmpty()) VineColors.Primary else vine.textPrimary,
                         modifier = Modifier.padding(top = 6.dp),
                     )
                     rows.forEach { row ->
@@ -886,7 +886,7 @@ private fun LocationStep(
                                     .width(38.dp)
                                     .heightIn(min = 28.dp)
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(if (wholeSelected) VineColors.LeafGreen else MaterialTheme.colorScheme.surfaceVariant)
+                                    .background(if (wholeSelected) VineColors.Primary else MaterialTheme.colorScheme.surfaceVariant)
                                     .clickable { onRowTap(block.id, all.toSet()) },
                                 contentAlignment = Alignment.Center,
                             ) {
@@ -905,7 +905,7 @@ private fun LocationStep(
                                         .weight(1f)
                                         .heightIn(min = 28.dp)
                                         .clip(RoundedCornerShape(5.dp))
-                                        .background(if (selected) VineColors.LeafGreen else MaterialTheme.colorScheme.surfaceVariant)
+                                        .background(if (selected) VineColors.Primary else MaterialTheme.colorScheme.surfaceVariant)
                                         .clickable { onRowTap(block.id, setOf(segment)) },
                                     contentAlignment = Alignment.Center,
                                 ) {
@@ -1026,7 +1026,7 @@ private fun ComposerBlockList(
                 .background(vine.cardBackground)
                 .then(
                     if (selected) {
-                        Modifier.border(2.dp, VineColors.LeafGreen, RoundedCornerShape(12.dp))
+                        Modifier.border(2.dp, VineColors.Primary, RoundedCornerShape(12.dp))
                     } else {
                         Modifier
                     },
@@ -1043,7 +1043,7 @@ private fun ComposerBlockList(
                 modifier = Modifier.weight(1f),
             )
             if (selected) {
-                Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = VineColors.LeafGreen, modifier = Modifier.size(22.dp))
+                Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = VineColors.Primary, modifier = Modifier.size(22.dp))
             }
         }
     }
