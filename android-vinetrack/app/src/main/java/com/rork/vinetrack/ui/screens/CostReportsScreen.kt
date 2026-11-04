@@ -176,8 +176,13 @@ fun CostReportsScreen(
     val groups = remember(filtered, groupByFunction) { aggregate(filtered, groupByFunction) }
 
     // Season summary, counting each (season, block) yield only once.
-    val totalCost = filtered.sumOf { it.totalCost }
-    val totalArea = filtered.sumOf { it.areaHa }
+    // Saved Trip allocations are the report total, exactly like iOS. Live estimates
+    // for Trips with no saved allocation are shown separately and never summed in.
+    val savedRows = filtered.filterNot { it.isEstimate }
+    val estimatedRows = filtered.filter { it.isEstimate }
+    val totalCost = savedRows.sumOf { it.totalCost }
+    val estimatedCost = estimatedRows.sumOf { it.totalCost }
+    val totalArea = savedRows.sumOf { it.areaHa }
     val totalYield = remember(filtered, state.yieldRecords) {
         filtered.map { it.seasonYear to it.paddockId }.distinct().sumOf { (season, pid) ->
             CostReportBuilder.seasonBlockYieldTonnes(state.yieldRecords, season, pid)
@@ -288,6 +293,14 @@ fun CostReportsScreen(
                             SectionHeader("Vintage Summary", onLight = true)
                             VineyardCard {
                                 SummaryRow("Trip allocation cost", fmt.formatCurrency(totalCost), emphasise = true)
+                                if (estimatedRows.isNotEmpty()) {
+                                    DividerC(vine.cardBorder)
+                                    SummaryRow("Estimated, not saved (excluded)", fmt.formatCurrency(estimatedCost))
+                                    Text(
+                                        "${estimatedRows.map { it.tripId }.distinct().size} Trip(s) have no saved cost allocation yet. Their live estimate is not part of the total above. Ask an owner or manager to recalculate on iOS to save them.",
+                                        color = vine.textSecondary, fontSize = 11.sp,
+                                    )
+                                }
                                 DividerC(vine.cardBorder)
                                 SummaryRow("Treated area", fmt.formatAreaCompact(totalArea))
                                 DividerC(vine.cardBorder)

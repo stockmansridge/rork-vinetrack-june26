@@ -42,9 +42,15 @@ object CostReportBuilder {
         val totalCost: Double,
         val tripDateEpochMs: Long?,
         val warnings: List<String>,
-    )
+    ) {
+        /** True when this row is a live estimate, not a saved Trip allocation. */
+        val isEstimate: Boolean get() = ESTIMATE_WARNING in warnings
+    }
 
     const val UNASSIGNED_VARIETY: String = "Unassigned variety"
+
+    /** Marks a row estimated from today's inputs because the Trip has no saved allocation. */
+    const val ESTIMATE_WARNING: String = "Estimated Trip cost: no saved allocation"
 
     /**
      * Build allocation rows for every completed (ended, non-deleted) trip in the
@@ -143,7 +149,7 @@ object CostReportBuilder {
                         chemicalCost = chemical,
                         totalCost = total,
                         tripDateEpochMs = start,
-                        warnings = est.warnings + "Estimated Trip cost: no saved allocation",
+                        warnings = est.warnings + ESTIMATE_WARNING,
                     )
                 )
             } else {
@@ -172,7 +178,7 @@ object CostReportBuilder {
                             chemicalCost = chemical * frac,
                             totalCost = total * frac,
                             tripDateEpochMs = start,
-                            warnings = est.warnings + "Estimated Trip cost: no saved allocation",
+                            warnings = est.warnings + ESTIMATE_WARNING,
                         )
                     )
                 }
