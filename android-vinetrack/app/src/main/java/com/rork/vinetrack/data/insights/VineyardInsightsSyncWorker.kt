@@ -208,7 +208,7 @@ class VineyardInsightsSyncWorker(
     } catch (e: Exception) {
         checkActive()
         if (e is CancellationException) throw e
-        Outcome(error = e.message ?: "Could not load note types yet.")
+        Outcome(error = e.syncMessage("Could not load note types yet."))
     }
 
     suspend fun pushNoteTypes(vineyardId: String): Outcome {
@@ -231,7 +231,7 @@ class VineyardInsightsSyncWorker(
             } catch (e: Exception) {
                 checkActive()
                 if (e is CancellationException) throw e
-                error = e.message ?: "Could not sync a custom note type yet."
+                error = e.syncMessage("Could not sync a custom note type yet.")
             }
         }
         return Outcome(pushed = pushed, error = error)
@@ -262,7 +262,7 @@ class VineyardInsightsSyncWorker(
                 if (e is CancellationException) throw e
                 // Left queued deliberately: the local record is intact, so a
                 // later attempt can still deliver it.
-                error = (e as? BackendError.Server)?.diagnostic() ?: e.message ?: "Could not sync yet."
+                error = e.syncMessage("Could not sync yet.")
                 store.recordAttempt(entry.id, error)
             }
         }
@@ -544,7 +544,7 @@ class VineyardInsightsSyncWorker(
                 // The local photograph and its queue entry are both retained, so
                 // a half-finished upload stays retryable. A failed upload must
                 // never present as a lost photograph.
-                error = e.message ?: "Could not upload the photograph yet."
+                error = e.syncMessage("Could not upload the photograph yet.")
                 store.recordPhotoFailure(entry.id, error)
                 markPhotoFailed(entry.id)
             }
@@ -676,7 +676,7 @@ class VineyardInsightsSyncWorker(
         } catch (e: Exception) {
             checkActive()
             if (e is CancellationException) throw e
-            Outcome(error = e.message ?: "Could not refresh yet.")
+            Outcome(error = e.syncMessage("Could not refresh yet."))
         }
     }
 
@@ -893,3 +893,7 @@ class VineyardInsightsSyncWorker(
     private fun isUuid(value: String): Boolean =
         runCatching { java.util.UUID.fromString(value) }.isSuccess
 }
+
+/** User-facing sync error: for a server rejection include its PostgREST code and message. */
+private fun Throwable.syncMessage(fallback: String): String =
+    (this as? BackendError.Server)?.diagnostic() ?: message ?: fallback
