@@ -1,0 +1,36 @@
+# Server readback, original Trip 492ebafc-b996-4ec4-8ea9-4261a3056810
+
+Source: `sql/trip_end_recovery_readback.sql` (read-only), run by the project owner on production and pasted into the
+chat on 2026-11-04. The agent did not run it and cannot independently verify it.
+
+## Server state at readback
+
+- Trip: found, vineyard `59973ced-1fb9-42ec-a66d-9eaad3172824`, `is_active=false`, `end_time=2026-11-03T13:41:29+00:00`,
+  `deleted_at=null`, `sync_version=3`, `updated_at=2026-11-03T22:25:41Z`.
+- Tank sessions on the Trip: 1, id `0EFE511B-4B25-49DF-AF82-08BEAE22B23A` (uppercase, original).
+- Tank actual: 1, `4e06a410-fe8f-44d8-a54a-450ec5429e58`, tank 1, 300 L, `confirmed_at=2026-11-03T13:40:42Z`,
+  tank_session_id equals the session above, spray_record_id `33ccca24-e259-405b-bdf8-af3b8777aa26`.
+- Spray record `33ccca24-...`: completed, `end_time=2026-11-03T13:41:29Z`, not deleted, `sync_version=2`.
+- Occurrence ledger, 3 accepted operations:
+  - create `ed906961-9f65-435a-bc5e-043ec4b332b5` at 2026-11-03T13:40:41.834Z
+  - activate `2c42cf71-9e42-4599-9f9d-3b562fc9189e` at 2026-11-03T13:40:41.970Z
+  - finalize `06ecace9-d457-4591-aa7d-6ecb17ee768b` accepted 2026-11-03T22:25:40.949Z,
+    requested end `2026-11-03T13:41:29Z` (the original local End time), result `isActive=false`.
+- Occurrence coverage: revision 2, 8 incomplete, no linked tank sessions. No setStatus or tank-link operation was ever
+  accepted, so the tank-link UUID-case defect was never exercised by this Trip.
+
+## What it shows
+
+- Server side, the original Trip is complete: tank session, tank actual, finalise receipt with the original end time,
+  `is_active=false`, Spray completed.
+- The finalise was accepted about 8h45m after the original End. That is the first server write of the End.
+
+## Not yet established
+
+- That finalize `06ecace9...` is the same operation ID as the one retained in the iPhone journal (needs device diagnostics).
+- Which build and which client sent it.
+- Device acknowledgement, persistence after reopening, and absence of a sync warning.
+- Why `sync_version` is 3 (create, activate, finalise) with a tank session already present; the path by which the tank
+  session reached the row is not shown by this readback.
+
+Incident status: OPEN until the device-side items above are confirmed.
