@@ -186,3 +186,37 @@ Items 1 and 3 happened: see section 11.
   change either, so it cannot show the fix works.
 - Acceptance bar is unchanged: the same command prints `CLEAN` (7 suites, 136 cases, 0 failed, 0 crashed) and the
   workflow concludes `success`. Build 216 stays gated on that.
+
+## 12. Run 3 on `07019dfdfff7a6dd2e02851fbed67c8d98b514b2`: clean
+
+- Workflow `iOS Trip End replay and failure-classification native validation`, run `41744451184`, job
+  `126293825067`, `macos-15`, Xcode 26.3, iOS 18.5 simulator. Started 2026-11-04T00:07:36Z, completed
+  2026-11-04T00:25:21Z, conclusion `success`.
+- Receipts artifact `ios-trip-end-replay-native-receipts` sha256
+  `0724bc54feb55cf163a9d84dc63f30a3ca4e0f3b0432694154ce95b787747098`; it equals the digest GitHub reports.
+  `ios-trip-end-replay-source.txt` records the exact head SHA `07019dfdfff7a6dd2e02851fbed67c8d98b514b2`.
+- `scripts/native-ci-case-summary.py ios-trip-end-replay.log --expect-suites 7 --expect-cases 136`:
+
+  ```
+  suite                                                      started passed failed crashed
+  VineTrackTests.TankDependencyVerificationTests                  12     12      0       0
+  VineTrackTests.TripClosureStatusTests                           11     11      0       0
+  VineTrackTests.TripEndServerReplayTests                         23     23      0       0
+  VineTrackTests.TripOccurrenceJournalTests                       37     37      0       0
+  VineTrackTests.TripQueuedUploadScopeTests                       15     15      0       0
+  VineTrackTests.TripSyncDeterministicFailureTests                 8      8      0       0
+  VineTrackTests.TripSyncStageFailureTests                        30     30      0       0
+  TOTAL                                                          136    136      0       0
+  RESULT: CLEAN (no failed, no crashed cases)
+  ```
+
+- Progression across the three native runs on this work: 29 aborts (`91598512`), 2 aborts (`5795397c`), 0 aborts
+  (`07019dfd`). Each step removed exactly the crash site named in the previous diagnosis, which is the evidence that
+  the isolated-deinit diagnosis and both `deinit {}` corrections are right.
+- Source delta between the red run and this run: `VineyardWriteAuthority.swift` (+8 lines: comment and empty
+  `deinit {}`), the workflow path filter (+1 line) and this note. The SQL contract run (`41738846318`) and the
+  P0 Trip Sync Recovery v3 run (`41738846315`) are therefore not re-triggered; their last result on the parent
+  is `success`.
+- This is a runtime-abort fix proven in CI only. It is not shown to be the cause of the incident and no production
+  crash has been shown. Build 216 was delivered from this source (see
+  `docs/reviews/evidence/ios-p0-trip-end-20261104/build216-delivery-receipt.json`).

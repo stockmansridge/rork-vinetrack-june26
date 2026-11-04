@@ -1,0 +1,89 @@
+{
+  "approved_source_sha": "07019dfdfff7a6dd2e02851fbed67c8d98b514b2",
+  "workspace_head": "d73ee6106dfb9eaa323372e967c8db8ad4a33add",
+  "public_main": "561198101335cbeaf14a26d9f90665d17417cc0d",
+  "public_main_compare_to_approved_sha": "only .rork/ project-state files differ; no ios/, sql/, scripts/, .github/ or docs/ file differs",
+  "github_archive_sha256": "bdb16ebebea2b6910f588308a5e678c1818aaf6321dc8a703b2ca10b04be3737",
+  "source_parity": {"non_generated_ios_files":1311,"pre_upload_differences":[],"extra_nonignored_files":[],"post_upload_differences":[],"also_equal_to_public_main":true,"excluded":"Managed virtual Config.swift"},
+  "ci": {
+    "native_replay_run": {
+      "run_id": 41744451184,
+      "job_id": 126293825067,
+      "workflow": "iOS Trip End replay and failure-classification native validation",
+      "head_sha": "07019dfdfff7a6dd2e02851fbed67c8d98b514b2",
+      "conclusion": "success",
+      "runner": "macos-15, Xcode 26.3, iOS 18.5 simulator",
+      "suites": 7,
+      "cases_started": 136,
+      "cases_passed": 136,
+      "cases_failed": 0,
+      "cases_crashed": 0,
+      "receipts_sha256": "0724bc54feb55cf163a9d84dc63f30a3ca4e0f3b0432694154ce95b787747098",
+      "receipts_sha256_matches_github_artifact_digest": true,
+      "verified_with": "scripts/native-ci-case-summary.py --expect-suites 7 --expect-cases 136 (RESULT: CLEAN)"
+    },
+    "earlier_red_runs_on_the_same_work": {
+      "91598512": "41728287675: 29 of 37 TripOccurrenceJournalTests cases aborted (isolated deinit of a MainActor class, swiftlang/swift#88036)",
+      "5795397c": "41738846486: 134 passed, 2 aborted in VineyardWriteAuthority.__deallocating_deinit; fixed by an explicit empty deinit in 07019dfd"
+    },
+    "other_workflows_last_green_on_parent_5795397c": {
+      "occurrence_sql_contracts": 41738846318,
+      "p0_trip_sync_recovery_v3_native": 41738846315,
+      "source_delta_to_approved_sha": "ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift (+8 lines: doc comment and an empty deinit), .github/workflows/ios-trip-end-replay-native.yml (+1 path filter line), one evidence note. Not re-run: their path filters do not match these files."
+    },
+    "not_covered": "No CI job runs on a signed binary or against production. The managed simulator cannot reproduce the Xcode 26.3 runtime abort, so the clean native run is the only evidence for the deinit fix."
+  },
+  "configuration": {
+    "both_required_variables_configured": true,
+    "requestEnvs_status": "already_set (presence only, nothing replaced)",
+    "clientEnvsHash": "77512c8744941d43de74978b0c1291c3bb06d8da",
+    "matches_215": true,
+    "source_privileged_key_literal_findings": [],
+    "injected_key_type": "not independently attested",
+    "injected_url_and_signed_auth": "not independently verified"
+  },
+  "preflight": {"inventory_count": 415, "maximum": 215, "certificate_id": "P6K283KAMH", "capability_sync": "ok unchanged", "apple_session": "expired, re-authenticated with connectAppleDeveloper before submission"},
+  "upload": {
+    "version": "3.1.9",
+    "build": 216,
+    "submission_id": "7aa02138-174d-4390-9cd3-e370b4c3191a",
+    "status": "ok",
+    "submit_attempts": 1,
+    "created_at": "2026-11-04T00:49:59.142Z",
+    "compile_sign_upload_complete_at": "2026-11-04T00:55:12.008Z",
+    "builder": "limrun",
+    "xcode": "27.1",
+    "archive_source": "supplied-snapshot",
+    "signed_revision_proof": "Embedded signed SHA not exposed; application parity verified, not an exact Git checkout or binary attestation",
+    "certificate": "P6K283KAMH; Rork private key custody confirmed"
+  },
+  "apple": {
+    "build_id": "62ffe762-d52b-4b31-9e66-7d1b29927ac4",
+    "processingState": "VALID",
+    "uploaded_at": "2026-11-03T16:56:23-08:00",
+    "internalBuildState": "IN_BETA_TESTING",
+    "externalBuildState": "READY_FOR_BETA_SUBMISSION",
+    "autoNotifyEnabled": true,
+    "groups": [
+      {"id": "1a8d95a6-44ec-47ac-8754-47a0a283582e", "name": "Internal Testing", "type": "internal", "membership": "all-builds"},
+      {"id": "fda676a8-1022-48c3-921e-c68dfb8095e2", "name": "External Tester", "type": "external", "build_attached": false}
+    ],
+    "build_to_group_explicit_list": [],
+    "external_group_membership": false,
+    "external_review_or_public_submission_requested": false,
+    "actual_build216_install_observed": false
+  },
+  "changes_since_215": [
+    "Trip stage failures keep their real HTTP status and PostgREST code and are shown per stage",
+    "Occurrence hold policy: tank-link conflict and open-tank answers no longer hold the journal; a 401 is retryable",
+    "Retry throttle for deterministic failures (30 minutes, in memory, a relaunch is one fresh attempt)",
+    "Per-vineyard queue breakdown and a resume prompt for a Trip that belongs to a different vineyard (no cross-vineyard replay)",
+    "Local end evidence can no longer print as a server-terminal confirmation",
+    "Explicit deinit on TripOccurrenceJournal and VineyardWriteAuthority (runtime abort workaround)"
+  ],
+  "original_trip": "492ebafc-b996-4ec4-8ea9-4261a3056810",
+  "vineyard": "59973ced-1fb9-42ec-a66d-9eaad3172824",
+  "incident": "OPEN: original iPhone in-place recovery and authoritative server readback still required. Operator-reported server state (not read by the agent): Trip already ended, 1 tank session, 1 tank actual, 1 completed Spray record; occurrence coverage still 8 incomplete with no linked tank sessions. How and by which client the Trip ended is unknown. No customer-record read or write and no original-operation replay was performed in this delivery.",
+  "production_repair": "The UUID-case repair script was run once by the project owner and returned NOT_APPLIED_ROLE_CANNOT_REPLACE_FUNCTIONS, changed=false; nothing was altered. It has not been applied. It is not needed to end this Trip (the server refuses further occurrence actions on an ended Trip with OCCURRENCE_TRIP_CLOSED regardless of the tank-link case) but is still needed for future Trips that link tank sessions to occurrences.",
+  "safety": "Android, unrelated features, production records, original IDs and quantities, retained queues, journals and archives untouched. No uninstall, reset or queue clearing. Compile, sign and upload succeeded and Apple processing is VALID; no device or runtime acceptance is claimed."
+}
