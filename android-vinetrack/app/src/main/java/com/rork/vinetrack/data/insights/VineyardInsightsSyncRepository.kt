@@ -1,5 +1,31 @@
 package com.rork.vinetrack.data.insights
 
+import com.rork.vinetrack.data.BackendError
+import com.rork.vinetrack.data.MaintenanceWriteScope
+import com.rork.vinetrack.data.attachmentScope
+import com.rork.vinetrack.data.attachmentVineyard
+import com.rork.vinetrack.data.vineyardAttachmentWrite
+import com.rork.vinetrack.data.SupabaseClient
+import com.rork.vinetrack.data.auth.SessionStore
+import io.ktor.client.call.body
+import io.ktor.client.request.delete
+import io.ktor.client.request.get
+import io.ktor.client.request.headers
+import io.ktor.client.request.patch
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.content.ByteArrayContent
+import io.ktor.http.contentType
+import io.ktor.http.isSuccess
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+
 /**
  * Use a percent-encoded deletion cursor. The persisted Postgres timestamp
  * includes a +00:00 timezone offset; a bare '+' in a URL query decodes to a
@@ -27,32 +53,6 @@ internal fun insightsUpdatedQuery(table: String, vineyardId: String, sinceIso: S
         }
         append("&order=id.asc")
     }
-
-import com.rork.vinetrack.data.BackendError
-import com.rork.vinetrack.data.MaintenanceWriteScope
-import com.rork.vinetrack.data.attachmentScope
-import com.rork.vinetrack.data.attachmentVineyard
-import com.rork.vinetrack.data.vineyardAttachmentWrite
-import com.rork.vinetrack.data.SupabaseClient
-import com.rork.vinetrack.data.auth.SessionStore
-import io.ktor.client.call.body
-import io.ktor.client.request.delete
-import io.ktor.client.request.get
-import io.ktor.client.request.headers
-import io.ktor.client.request.patch
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.content.ByteArrayContent
-import io.ktor.http.contentType
-import io.ktor.http.isSuccess
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 
 /**
  * Ktor-backed implementation of [VineyardInsightsSyncApi] against Supabase
