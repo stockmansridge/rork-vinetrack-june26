@@ -95,6 +95,7 @@ import com.rork.vinetrack.data.blockDamageForVintage
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.VineAddAction
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
@@ -203,6 +204,13 @@ private fun DamageListView(
             TopAppBar(
                 title = { Text("Damage Reports") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
+                actions = {
+                    VineAddAction(
+                        onClick = { showPicker = true },
+                        contentDescription = "Report damage",
+                        enabled = mappablePaddocks.isNotEmpty(),
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
@@ -233,7 +241,7 @@ private fun DamageListView(
                 onClick = { showPicker = true },
                 enabled = mappablePaddocks.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Orange),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))

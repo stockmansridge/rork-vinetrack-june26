@@ -1163,31 +1163,25 @@ private fun YieldListView(
             TopAppBar(
                 title = { Text("Yield Reports") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
+                actions = {
+                    Box {
+                        VineAddAction(onClick = { createMenu = true }, contentDescription = "Add yield record")
+                        DropdownMenu(expanded = createMenu, onDismissRequest = { createMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("New sampling estimate") },
+                                leadingIcon = { Icon(Icons.Filled.Agriculture, contentDescription = null, tint = VineColors.LeafGreen) },
+                                onClick = { createMenu = false; onCreateEstimate() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Record actual yield") },
+                                leadingIcon = { Icon(Icons.Filled.Scale, contentDescription = null, tint = VineColors.Info) },
+                                onClick = { createMenu = false; onCreate() },
+                            )
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
-        },
-        floatingActionButton = {
-            Box {
-                FloatingActionButton(
-                    onClick = { createMenu = true },
-                    containerColor = VineColors.Primary,
-                    contentColor = Color.White,
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = "Add yield record")
-                }
-                DropdownMenu(expanded = createMenu, onDismissRequest = { createMenu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("New sampling estimate") },
-                        leadingIcon = { Icon(Icons.Filled.Agriculture, contentDescription = null, tint = VineColors.LeafGreen) },
-                        onClick = { createMenu = false; onCreateEstimate() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Record actual yield") },
-                        leadingIcon = { Icon(Icons.Filled.Scale, contentDescription = null, tint = VineColors.Info) },
-                        onClick = { createMenu = false; onCreate() },
-                    )
-                }
-            }
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {

@@ -235,12 +235,12 @@ fun EmptyState(
 
 /** Standard top-bar Add `+` in the shared action blue. Use in TopAppBar `actions`. */
 @Composable
-fun VineAddAction(onClick: () -> Unit, contentDescription: String) {
-    IconButton(onClick = onClick) {
+fun VineAddAction(onClick: () -> Unit, contentDescription: String, enabled: Boolean = true) {
+    IconButton(onClick = onClick, enabled = enabled) {
         Icon(
             Icons.Filled.Add,
             contentDescription = contentDescription,
-            tint = com.rork.vinetrack.ui.theme.VineColors.Primary,
+            tint = com.rork.vinetrack.ui.theme.VineColors.Primary.copy(alpha = if (enabled) 1f else 0.38f),
         )
     }
 }

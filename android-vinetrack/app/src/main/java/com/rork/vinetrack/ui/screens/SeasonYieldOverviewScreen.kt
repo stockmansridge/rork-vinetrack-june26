@@ -194,7 +194,7 @@ private fun VintagePicker(current: Int, selected: Int, onSelect: (Int) -> Unit) 
                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
-                    .background(if (isSelected) VineColors.LeafGreen else vine.cardBackground)
+                    .background(if (isSelected) VineColors.Primary else vine.cardBackground)
                     .clickable { onSelect(vintage) }
                     .padding(horizontal = 14.dp, vertical = 7.dp),
             )
