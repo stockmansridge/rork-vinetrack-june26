@@ -25,8 +25,10 @@ class PinsMapCurrentLocationRegressionTest {
     fun `Pins map centres one valid fix at renderer maximum zoom`() {
         val map = vineyardMap()
         val button = locationButton()
+        // The Pins branch contains nested Follow Me conditional blocks.
+        // A generic "} else {" truncates before My Current Location.
         val pinsControl = map.substringAfter("if (onLocationMessage != null)")
-            .substringBefore("} else {")
+            .substringBefore("// Other map screens retain their existing content-refit control.")
 
         assertTrue(map.contains("private const val PINS_MY_LOCATION_ZOOM = 21f"))
         assertTrue(pinsControl.contains("targetZoom = PINS_MY_LOCATION_ZOOM"))

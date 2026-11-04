@@ -357,10 +357,24 @@ class ScoutCaptureTest {
         val recordId = UUID.randomUUID().toString()
         controller.linkGrowthStageRecord(visit.id, id, null, recordId, "E-L 23 80% cap fall")
 
-        val retained = controller.deleteVisit(visit.id)
+        // Deletion is restricted to owner/manager. This test must explicitly
+        // grant that permission rather than relying on the secure default
+        // (which intentionally refuses deletion with no membership evidence).
+        val deletionController = VineyardInsightsController(
+            store,
+            photoFiles = photoFiles,
+            clock = { Instant.ofEpochMilli(clockMillis) },
+            scoutDeletionAccess = { it == vineyardId },
+        )
+        val retained = deletionController.deleteVisit(visit.id)
 
         assertEquals(listOf(ScoutGrowthStageLink.Unlink(recordId)), retained)
-        assertTrue("the visit itself is gone", controller.visits.value.isEmpty())
+        assertTrue("delete stays queued pending server acknowledgement", deletionController.deletionPending(visit.id))
+        assertTrue("the complete Scout graph remains durable until server acknowledgement",
+            store.loadVisits().any { it.id == visit.id })
+        assertEquals("canonical Growth Stage link is retained until authoritative reconciliation",
+            recordId, store.loadVisits().first { it.id == visit.id }.assessment(blockA)
+                ?.observation(ScoutItem.GROWTH_STAGE)?.linkedGrowthStageRecordId)
     }
 
     @Test
