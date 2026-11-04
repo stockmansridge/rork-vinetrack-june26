@@ -1128,7 +1128,9 @@ private fun YieldListView(
             state.seasonStartMonth, state.seasonStartDay,
         )
     }
-    var selectedVintage by rememberSaveable { mutableIntStateOf(currentVintage) }
+    var selectedVintage by rememberSaveable(state.selectedVineyardId, currentVintage) {
+        mutableIntStateOf(currentVintage)
+    }
     val estimateRows = remember(
         selectedVintage, state.yieldSessions, state.paddocks, state.damageRecords,
         state.seasonStartMonth, state.seasonStartDay,
@@ -1154,9 +1156,13 @@ private fun YieldListView(
     val currentTotal = if (currentBlocks.isEmpty() || currentBlocks.any { it.displayTonnes == null }) null else currentBlocks.sumOf { it.displayTonnes ?: 0.0 }
     val currentReport = com.rork.vinetrack.data.CurrentYieldEstimate.Trip(currentBlocks, currentBlocks.sumOf { it.sampledAreaHa }, currentTotal)
 
-    val totalActual = records.sumOf { it.totalActualYieldTonnes ?: 0.0 }
-    val totalEstimated = records.sumOf { it.totalYieldTonnes }
-    val totalArea = records.sumOf { it.totalAreaHectares }
+    // The selected-vintage actual rows already reconcile Detailed Picking Log
+    // against Basic actuals. Do not show zero just because no archived
+    // historical_yield_records exist for a vintage with real picking data.
+    val archivedForVintage = records.filter { it.year == selectedVintage }
+    val totalActual = actualRows.sumOf { it.tonnes }
+    val totalEstimated = archivedForVintage.sumOf { it.totalYieldTonnes }
+    val totalArea = archivedForVintage.sumOf { it.totalAreaHectares }
 
     Scaffold(
         topBar = {
@@ -1320,7 +1326,7 @@ private fun YieldListView(
                     }
 
                     if (varietySummaries.isNotEmpty()) {
-                        item(key = "variety-hdr") { SectionHeader("By Variety", onLight = true) }
+                        item(key = "variety-hdr") { SectionHeader("All vintages · By Variety", onLight = true) }
                         items(varietySummaries.size, key = { "var-${varietySummaries[it].key}" }) { idx ->
                             VarietyYieldCard(summary = varietySummaries[idx], fmt = state.regionFormatter, onClick = { onOpenVariety(varietySummaries[idx]) })
                         }
