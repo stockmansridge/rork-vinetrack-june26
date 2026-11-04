@@ -178,16 +178,23 @@ struct GuidedSyncIssueRepairView: View {
         (auth.userId?.uuidString ?? "none") + "|" + (store.selectedVineyardId?.uuidString ?? "none")
     }
     private var busy: Bool { syncStatus.isSyncing || tripSync.isSyncing || spraySync.isSyncing }
+    private var vineyardName: String {
+        store.vineyards.first { $0.id == store.selectedVineyardId }?.name ?? "this vineyard"
+    }
+    /// Old queue IDs the server did not place in the selected vineyard stay out
+    /// of the main list; they are never deleted, only tucked away.
+    private func isOtherVineyard(_ item: GuidedSyncRepairIssue) -> Bool {
+        item.kind == .protectedQueue && legacyServerScope[item.recordId] == nil
+    }
+    private var thisVineyardItems: [GuidedSyncRepairIssue] { items.filter { !isOtherVineyard($0) } }
+    private var otherVineyardItems: [GuidedSyncRepairIssue] { items.filter { isOtherVineyard($0) } }
 
     var body: some View {
         Form {
             Section {
-                Text("Choose one record, check its server state, then select a correction. The app checks the original evidence again before making any change.")
-                    .font(.subheadline)
-                Text("Queue entries and failures overlap; they are not separate totals. Historical or other-vineyard work is protected until its original ownership is established.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("The list stays still during background sync. Use Refresh to check updated results.")
+                Label("Showing issues for \(vineyardName)", systemImage: "leaf")
+                    .font(.subheadline.weight(.semibold))
+                Text("Tap an item to review it. Items from other vineyards are listed separately below. Switch vineyard to deal with those.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if isCheckingLegacyScope {
@@ -219,11 +226,11 @@ struct GuidedSyncIssueRepairView: View {
                     Label("Sync is running. Repair actions are disabled until it finishes.", systemImage: "hourglass")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                if items.isEmpty {
-                    Text("No individual issues were found in the currently loaded scope. This does not certify that the global legacy queue is empty.")
+                if thisVineyardItems.isEmpty {
+                    Text("No issues for \(vineyardName). This does not certify that other vineyards are clear.")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(items) { item in
+                ForEach(thisVineyardItems) { item in
                     NavigationLink {
                         GuidedSyncIssueDetailView(issue: item)
                     } label: {
@@ -242,7 +249,7 @@ struct GuidedSyncIssueRepairView: View {
                                 Text(trip.startTime.formatted(date: .abbreviated, time: .shortened))
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
-                            Text(item.recordId.uuidString.lowercased())
+                            Text(String(item.recordId.uuidString.prefix(8)).lowercased())
                                 .font(.caption2.monospaced())
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -253,11 +260,33 @@ struct GuidedSyncIssueRepairView: View {
                     .disabled(busy)
                 }
             } header: {
-                Text("Individual records (\(items.count))")
+                Text("\(vineyardName) (\(thisVineyardItems.count))")
             } footer: {
-                Text("A protected original cannot be modified by selecting the current vineyard. Do not uninstall the app or clear local data.")
+                Text("Do not uninstall the app or clear local data.")
+            }
+            if !otherVineyardItems.isEmpty {
+                Section {
+                    DisclosureGroup("Other vineyards or unmatched (\(otherVineyardItems.count))") {
+                        ForEach(otherVineyardItems) { item in
+                            NavigationLink {
+                                GuidedSyncIssueDetailView(issue: item)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(item.resumeVineyardName.map { "Belongs to \($0)" } ?? "Not matched to \(vineyardName)")
+                                        .font(.subheadline.weight(.medium))
+                                    Text(String(item.recordId.uuidString.prefix(8)).lowercased())
+                                        .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                                }
+                            }
+                            .disabled(busy)
+                        }
+                    }
+                } footer: {
+                    Text("These are kept safe and are never uploaded into the wrong vineyard.")
+                }
             }
         }
+        .onAppear { reload() }
         .navigationTitle("Review Sync Issues")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: contextKey) {
@@ -512,9 +541,36 @@ private struct GuidedSyncIssueDetailView: View {
     private var legacyApplied: Bool { legacyApplicationChoice == "applied" }
     @State private var legacyDeletionConfirmed = false
     @State private var recordedActualsNotAppliedConfirmed = false
+    /// Latched once the server confirms an old Trip is already deleted: the
+    /// screen then shows one short clean-up step instead of the full tool.
+    @State private var simpleMode = false
 
     private var contextKey: String {
         (auth.userId?.uuidString ?? "none") + "|" + (store.selectedVineyardId?.uuidString ?? "none")
+    }
+    private var canSimpleCleanup: Bool {
+        guard originatingContext == contextKey, !isWorking, !syncStatus.isSyncing,
+              !tripSync.isSyncing, !spraySync.isSyncing,
+              auth.isSignedIn, auth.userId == store.currentUserIdProvider?() else { return false }
+        switch access.currentRole {
+        case .owner, .manager: return true
+        default: return false
+        }
+    }
+    private var simpleTripName: String {
+        let id = issue.relatedTripId ?? issue.recordId
+        let local = store.tripRepo.loadAll().first { $0.id == id }
+        let name = local?.tripTitle ?? local?.tripFunction ?? "Trip " + String(id.uuidString.prefix(8)).lowercased()
+        return name
+    }
+    private func simpleCleanup(applied: Bool) {
+        selected = .reviewLegacyDeleted
+        legacyApplicationChoice = applied ? "applied" : "not_applied"
+        legacyDeletionConfirmed = true
+        recordedActualsNotAppliedConfirmed = !applied
+        evidenceNote = "Owner confirmed in the app that this Trip was deliberately deleted and that spray was "
+            + (applied ? "applied." : "not applied.")
+        confirming = true
     }
     private var originalActual: SprayTankActual? {
         SprayTankActualStore.shared.records.first { $0.id == issue.recordId }
@@ -597,6 +653,8 @@ private struct GuidedSyncIssueDetailView: View {
 
     var body: some View {
         Form {
+            if simpleMode { simpleCleanupSections }
+            if !simpleMode {
             Section("1. Original record and issue") {
                 LabeledContent("Record", value: issue.title)
                 Text(issue.recordId.uuidString.lowercased()).font(.footnote.monospaced())
@@ -809,7 +867,8 @@ private struct GuidedSyncIssueDetailView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            if !auditHistory.isEmpty {
+            }
+            if !auditHistory.isEmpty && !simpleMode {
                 Section("Repair history (this account and vineyard)") {
                     ForEach(auditHistory) { entry in
                         VStack(alignment: .leading, spacing: 4) {
@@ -850,6 +909,10 @@ private struct GuidedSyncIssueDetailView: View {
                issue.relatedTripId != nil { await inspect() }
         }
         .onChange(of: server) { _, state in
+            if state == .deleted, [.protectedQueue, .tripUpload].contains(issue.kind),
+               options.contains(.reviewLegacyDeleted) {
+                simpleMode = true
+            }
             if activeAuditOperation == nil {
                 selected = GuidedSyncRepairSuggestion.choose(
                     available: options, server: state, current: selected)
@@ -863,12 +926,76 @@ private struct GuidedSyncIssueDetailView: View {
                 Task { await verify() }
             }
         }
-        .confirmationDialog("Apply correction to original saved record?", isPresented: $confirming,
-                            titleVisibility: .visible) {
-            Button("Apply selected correction") { Task { await apply() } }
+        .confirmationDialog(simpleMode ? "Clean up this deleted Trip?" : "Apply correction to original saved record?",
+                            isPresented: $confirming, titleVisibility: .visible) {
+            Button(simpleMode ? "Confirm deletion and clean up" : "Apply selected correction") {
+                Task { await apply() }
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(selected.explanation + " Original IDs and other pending records must be preserved until server acknowledgement.")
+            if simpleMode {
+                Text("The Trip stays deleted. Its leftover spray records are archived first, then retired. This cannot be undone from the app.")
+            } else {
+                Text(selected.explanation + " Original IDs and other pending records must be preserved until server acknowledgement.")
+            }
+        }
+    }
+
+    @ViewBuilder private var simpleCleanupSections: some View {
+        Section("Deleted Trip") {
+            LabeledContent("Trip", value: simpleTripName)
+            LabeledContent("Vineyard", value: store.vineyards.first { $0.id == store.selectedVineyardId }?.name ?? "Selected vineyard")
+            LabeledContent("Status", value: "Deleted on the server")
+            if let trip = originalTrip {
+                NavigationLink {
+                    TripDetailView(trip: trip)
+                } label: {
+                    Label("Open Trip", systemImage: "arrow.up.right.square")
+                }
+            } else {
+                Text("This Trip is no longer on this phone, so there is nothing to open.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        Section {
+            Text("This Trip was deleted earlier but an old sync item is still waiting for it. Confirm the deletion to remove that item. The Trip stays deleted.")
+                .font(.subheadline)
+            Button(role: .destructive) {
+                simpleCleanup(applied: false)
+            } label: {
+                HStack {
+                    Label("Confirm deletion: no spray applied", systemImage: "trash")
+                    if isWorking { Spacer(); ProgressView() }
+                }
+            }
+            .disabled(!canSimpleCleanup)
+            Button {
+                simpleCleanup(applied: true)
+            } label: {
+                Label("Confirm deletion: spray WAS applied", systemImage: "archivebox")
+            }
+            .disabled(!canSimpleCleanup)
+            if access.currentRole != .owner && access.currentRole != .manager {
+                Text("Only an owner or manager can do this.")
+                    .font(.footnote).foregroundStyle(.orange)
+            }
+        } header: {
+            Text("Confirm")
+        } footer: {
+            Text("Pick the second option if any chemical was really sprayed. Either way the original spray and tank records are saved in a compliance archive before they are retired.")
+        }
+        if outcome != nil || independentReceipt != nil {
+            Section("Result") {
+                if let outcome { Text(outcome).font(.subheadline) }
+                if let receipt = independentReceipt {
+                    Label(receipt.verified ? "Cleaned up and verified" : "Still needs attention",
+                          systemImage: receipt.verified ? "checkmark.seal" : "exclamationmark.triangle")
+                        .foregroundStyle(receipt.verified ? Color.green : Color.orange)
+                    if receipt.verified {
+                        Button("Done") { dismiss() }
+                    }
+                }
+            }
         }
     }
 
