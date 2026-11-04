@@ -68,7 +68,7 @@ struct VineyardInsightsView: View {
                         title: "Scout",
                         subtitle: "Block assessments, observations & photos",
                         icon: "figure.walk",
-                        tint: VineyardTheme.leafGreen,
+                        tint: Color(red: 0.07, green: 0.57, blue: 0.25),
                         actions: ["New Scout Trip", "Draft Scouts", "Completed Scouts"]
                     )
                 }
@@ -125,11 +125,7 @@ private struct HubCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundStyle(tint)
-                    .frame(width: 44, height: 44)
-                    .background(tint.opacity(0.16), in: .rect(cornerRadius: 12))
+                BrightToolIcon(symbol: icon, colors: [tint, tint.opacity(0.85)])
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.headline)
                     Text(subtitle).font(.caption).foregroundStyle(.secondary)

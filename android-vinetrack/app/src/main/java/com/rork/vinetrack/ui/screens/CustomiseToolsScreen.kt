@@ -388,20 +388,11 @@ private fun ToolRowCard(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(tool.tint.copy(alpha = 0.15f * alpha)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                tool.icon,
-                contentDescription = null,
-                tint = tool.tint.copy(alpha = alpha),
-                modifier = Modifier.size(20.dp),
-            )
-        }
+        com.rork.vinetrack.ui.components.BrightToolIcon(
+            icon = tool.icon,
+            colors = operationalGradient(tool.id),
+            size = 36.dp,
+        )
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 tool.title,

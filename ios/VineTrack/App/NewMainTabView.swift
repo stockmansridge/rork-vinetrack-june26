@@ -1214,9 +1214,11 @@ struct NewHomeTabView: View {
                 UnifiedPinComposerView(onSaved: { selectedTab = 1 })
             } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "mappin.circle.fill")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.white)
+                    BrightToolIcon(
+                        symbol: "mappin.and.ellipse",
+                        colors: [.blue, VineyardTheme.actionBlue],
+                        size: 36
+                    )
                     VStack(alignment: .leading, spacing: 1) {
                         Text(UnifiedPinContract.quickActionTitle)
                             .font(.subheadline.weight(.semibold))
@@ -1379,23 +1381,7 @@ struct NewHomeTabView: View {
 
     // Presentation-only palette: matches Android's stable operational tool IDs.
     private func operationalGradient(for id: String, tint: Color) -> [Color] {
-        switch id {
-        case "work_tasks": return [.indigo, .purple]
-        case "equipment_maintenance": return [VineyardTheme.earthBrown, .orange]
-        case "fuel_log": return [.red, .orange]
-        case "irrigation_advisor": return [.blue, .cyan]
-        case "disease_risk": return [.green, .cyan]
-        case "yield_records": return [.orange, .red]
-        case "growth_stages": return [VineyardTheme.leafGreen, .cyan]
-        case "optimal_ripeness": return [.pink, .orange]
-        case "cost_reports": return [.green, .cyan]
-        case "fertiliser_calculator": return [.cyan, VineyardTheme.leafGreen]
-        case "pruning_tracker": return [.cyan, .indigo]
-        case "irrigation_records": return [.cyan, .blue]
-        case "resistance_planner": return [.purple, .pink]
-        case "vineyard_insights": return [.purple, .indigo]
-        default: return [tint, tint.opacity(0.75)]
-        }
+        BrightToolIcon.operationalColors(for: id, tint: tint)
     }
 
     private func iconTile(title: String, icon: String, tint: Color) -> some View {

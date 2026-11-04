@@ -226,7 +226,7 @@ private fun InsightsHub(
                 title = "Scout",
                 subtitle = "Block assessments, observations & photos",
                 icon = Icons.Filled.Explore,
-                tint = VineColors.LeafGreen,
+                tint = Color(0xFF129140),
                 actions = listOf("New Scout Trip", "Draft Scouts", "Completed Scouts"),
             ) { onOpen(InsightsPane.Scout) }
             HubCard(
@@ -298,15 +298,10 @@ private fun HubCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(tint.copy(alpha = 0.16f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, contentDescription = null, tint = tint)
-            }
+            com.rork.vinetrack.ui.components.BrightToolIcon(
+                icon = icon,
+                colors = listOf(tint, tint.copy(alpha = 0.85f)),
+            )
             Column(Modifier.weight(1f)) {
                 Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
                 Text(subtitle, fontSize = 13.sp, color = vine.textSecondary)

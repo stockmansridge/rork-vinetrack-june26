@@ -947,7 +947,11 @@ internal fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, on
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Icon(Icons.Filled.AddLocationAlt, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+            com.rork.vinetrack.ui.components.BrightToolIcon(
+                icon = Icons.Filled.AddLocationAlt,
+                colors = listOf(VineColors.Primary, VineColors.ActionBlue),
+                size = 36.dp,
+            )
             Column(modifier = Modifier.weight(1f)) {
                 Text(UnifiedPinContract.QUICK_ACTION_TITLE, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                 Text(
@@ -1073,7 +1077,7 @@ private data class ToolItem(
 
 // Presentation-only gradient palette shared with the iOS Operational Tools tiles.
 // Stable tool IDs, permissions, routes and ordering remain unchanged.
-private fun operationalGradient(id: String): List<Color> = when (id) {
+internal fun operationalGradient(id: String): List<Color> = when (id) {
     "work_tasks" -> listOf(VineColors.Indigo, VineColors.Purple)
     "equipment_maintenance" -> listOf(VineColors.EarthBrown, VineColors.Orange)
     "fuel_log" -> listOf(VineColors.Destructive, VineColors.Orange)

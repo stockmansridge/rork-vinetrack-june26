@@ -125,14 +125,11 @@ struct CustomiseOperationalToolsView: View {
     @ViewBuilder
     private func row(for tool: OperationalTool, isHiddenRow: Bool) -> some View {
         HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(tool.tint.opacity(isHiddenRow ? 0.10 : 0.15))
-                    .frame(width: 34, height: 34)
-                Image(systemName: tool.icon)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(tool.tint.opacity(isHiddenRow ? 0.6 : 1))
-            }
+            BrightToolIcon(
+                symbol: tool.icon,
+                colors: BrightToolIcon.operationalColors(for: tool.id, tint: tool.tint),
+                size: 36
+            )
             VStack(alignment: .leading, spacing: 1) {
                 Text(tool.title)
                     .font(.subheadline.weight(.semibold))
