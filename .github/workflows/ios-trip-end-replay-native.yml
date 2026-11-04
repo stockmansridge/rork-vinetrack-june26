@@ -11,6 +11,7 @@ on:
     paths:
       - 'ios/VineTrack/Backend/Sync/TripSyncStageFailure.swift'
       - 'ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift'
+      - 'ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift'
       - 'ios/VineTrack/Backend/Sync/TripResumeTarget.swift'
       - 'ios/VineTrack/Backend/Sync/TripQueuedUploadScope.swift'
       - 'ios/VineTrack/Backend/Sync/TripClosureStatus.swift'

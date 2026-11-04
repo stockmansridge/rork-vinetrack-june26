@@ -123,3 +123,66 @@ The 113 MB archive (log, source listing, xcresult, 48 crash reports) is kept out
 1. The change is pushed at the end of the turn; the native workflow re-runs on its `paths:` filter.
 2. Green (acceptance bar above): internal-only build 216, as authorised "once CI is green".
 3. Red: diagnose from the new receipts the same way, per suite, before any further change.
+
+Items 1 and 3 happened: see section 11.
+
+## 11. Second run after the `TripOccurrenceJournal` fix: 29 crashed cases became 2
+
+- GitHub commit `5795397cbe80f0118d1850bbda51ccacc849d420` (message "Fixing the iPhone trip sync failure so completed
+  trips upload correctly"). Its `ios/` blobs equal local HEAD `56c85a908` (1311 files) except the generated
+  `ios/VineTrack/Config.swift`; all 1288 `android-vinetrack/` blobs are identical (Android untouched).
+- Workflow `iOS Trip End replay and failure-classification native validation`, run `41738846486`, job
+  `126274941901`, `macos-15`, Xcode 26.3, iOS 18.5 simulator: **failure** (`xcodebuild` exit 65, 20 min 40 s).
+  On the same commit `Occurrence SQL contracts` (run `41738846318`) and `iOS P0 Trip Sync Recovery v3 native
+  validation` (run `41738846315`) concluded **success**.
+- Receipts via nightly.link, sha256 `aaaf21ac9d741f3b2ee9e67a73a104f064ab89d79fb4e4fd7ec5e35cb3955ba4` (matches
+  GitHub's digest); `ios-trip-end-replay-source.txt` contains the commit above.
+
+`python3 scripts/native-ci-case-summary.py ios-trip-end-replay.log --expect-suites 7 --expect-cases 136`:
+
+| Suite (VineTrackTests) | started | passed | failed | crashed |
+|---|---|---|---|---|
+| TankDependencyVerificationTests | 12 | 12 | 0 | 0 |
+| TripClosureStatusTests | 11 | 11 | 0 | 0 |
+| TripEndServerReplayTests | 23 | 23 | 0 | 0 |
+| **TripOccurrenceJournalTests** | 37 | 35 | 0 | **2** |
+| TripQueuedUploadScopeTests | 15 | 15 | 0 | 0 |
+| TripSyncDeterministicFailureTests | 8 | 8 | 0 | 0 |
+| TripSyncStageFailureTests | 30 | 30 | 0 | 0 |
+| **Total** | 136 | 134 | **0** | **2** |
+
+- Still `NOT CLEAN`. No assertion failed. The two cases that never finished:
+  `testEntitlementHoldPreservesJournalBytesButAllowsRealReceiptAndOriginalResume` and
+  `testHeldCreationLeavesNoJournalDocument`. The log has 2 restarts and 2 `pointer being freed was not allocated`
+  lines.
+- This receipt set has no loose `.ips` files, but the xcresult contains two crash reports (zstd-compressed objects;
+  decode with `zstd -d`). Both are SIGABRT on the main thread with the same runtime frames as section 3, now in a
+  different class:
+
+  ```
+  swift::TaskLocal::StopLookupScope::~StopLookupScope()
+  swift_task_deinitOnExecutorImpl
+  swift_task_deinitOnExecutorMainActorBackDeploy
+  VineyardWriteAuthority.__deallocating_deinit
+  ... TripOccurrenceJournalTests.<the two cases above>()
+  ```
+
+- **No `TripOccurrenceJournal.__deallocating_deinit` frame appears in either report**, and 27 of the 29 cases that
+  aborted in section 2 now finish. That is direct evidence that the empty `deinit {}` removed that crash site and
+  that the diagnosis in section 3 was right.
+- Cause of the remaining two: each builds a throw-away `VineyardWriteAuthority(defaults:)`. That class is also
+  `@MainActor` (explicitly) with no `deinit`, so it has the same implicit isolated deinit, and the test releases it
+  synchronously.
+- Production exposure for this class is nil in normal use: the app uses `VineyardWriteAuthority.shared`, a static that
+  is never released. Other instances are created only by tests and by the debug `TripDeletionValidationView`.
+
+### Correction (not yet proven)
+
+- `ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift`: explicit empty `deinit {}` with a comment. No
+  behaviour change.
+- `.github/workflows/ios-trip-end-replay-native.yml`: that file added to the `paths:` filter, so a change to it
+  alone starts the native run.
+- Local validation is a compile only (`runChecks`, simulator build). The managed simulator did not abort before the
+  change either, so it cannot show the fix works.
+- Acceptance bar is unchanged: the same command prints `CLEAN` (7 suites, 136 cases, 0 failed, 0 crashed) and the
+  workflow concludes `success`. Build 216 stays gated on that.

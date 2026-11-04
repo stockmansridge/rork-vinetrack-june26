@@ -31,6 +31,14 @@ final class VineyardWriteAuthority {
         self.defaults = defaults
         holds = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
     }
+    /// Keeps this class's deinit non-isolated on purpose, exactly as `TripOccurrenceJournal` does. A `@MainActor`
+    /// class with no explicit deinit gets an implicit ISOLATED deinit, and the iOS 18.x to 26.3 Swift runtime aborts
+    /// ("pointer being freed was not allocated" in swift::TaskLocal::StopLookupScope) when such an instance is
+    /// released synchronously (swiftlang/swift#88036, #85663). Observed on Xcode 26.3 + iOS 18.5: the journal tests
+    /// that build a throw-away authority aborted in VineyardWriteAuthority.__deallocating_deinit (GitHub run
+    /// 41738846486). The app uses `.shared`, which is never released; this only matters for short-lived instances.
+    /// Stored properties are plain values and a UserDefaults reference, so nothing needs the main actor to be freed.
+    deinit {}
     private func scope(_ vineyardId: String) -> String? {
         userId.map { $0.lowercased() + ":" + vineyardId.lowercased() }
     }
