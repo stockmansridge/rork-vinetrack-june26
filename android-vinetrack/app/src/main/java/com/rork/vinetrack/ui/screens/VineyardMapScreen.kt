@@ -772,7 +772,7 @@ fun VineyardMapContent(
                     Row(
                         modifier = Modifier
                             .clip(RoundedCornerShape(22.dp))
-                            .background(if (isFollowingUser) BlockAmber else Color(0xCC1C1C1E))
+                            .background(if (isFollowingUser) BlockAmber else VineColors.Primary)
                             .clickable {
                                 if (isFollowingUser) {
                                     stopFollowSession()
