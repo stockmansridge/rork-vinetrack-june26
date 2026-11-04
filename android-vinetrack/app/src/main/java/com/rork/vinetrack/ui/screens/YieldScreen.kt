@@ -119,6 +119,10 @@ import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.components.VineAddAction
+import com.rork.vinetrack.ui.components.VineFilterPill
+import com.rork.vinetrack.ui.components.VineSegmented
+import com.rork.vinetrack.ui.components.vinePrimaryButtonColors
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
@@ -519,13 +523,9 @@ private fun PickingLogView(
             TopAppBar(
                 title = { Text("Picking Log") },
                 navigationIcon = { BackNavIcon(onBack) },
+                actions = { VineAddAction(onClick = onAdd, contentDescription = "Add pick") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = onAdd, containerColor = VineColors.LeafGreen, contentColor = Color.White) {
-                Icon(Icons.Filled.Add, contentDescription = "Add pick")
-            }
         },
     ) { padding ->
         if (records.isEmpty()) {
@@ -961,28 +961,11 @@ private fun YieldDeterminationView(
                 // Pruning method.
                 SectionHeader("Pruning Method", onLight = true)
                 VineyardCard {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().selectableGroup(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        listOf("Spur", "Cane").forEach { method ->
-                            val selected = pruneMethod == method
-                            Box(
-                                modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
-                                    .background(if (selected) VineColors.LeafGreen else vine.appBackground)
-                                    .clickable { pruneMethod = method; persist() }
-                                    .padding(vertical = 10.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    method,
-                                    color = if (selected) Color.White else vine.textPrimary,
-                                    fontSize = 14.sp,
-                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                )
-                            }
-                        }
-                    }
+                    VineSegmented(
+                        options = listOf("Spur", "Cane"),
+                        selectedIndex = if (pruneMethod == "Cane") 1 else 0,
+                        onSelect = { pruneMethod = if (it == 1) "Cane" else "Spur"; persist() },
+                    )
                     Spacer(Modifier.height(8.dp))
                     Text(
                         if (pruneMethod == "Spur") "Spur pruning: short canes (spurs) left with a set number of buds each."
@@ -1057,7 +1040,7 @@ private fun YieldDeterminationView(
                     },
                     enabled = yieldTonnesPerHa > 0,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                    colors = vinePrimaryButtonColors(),
                 ) {
                     Text("Save Result")
                 }
@@ -1246,21 +1229,11 @@ private fun YieldListView(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 vintages.forEach { vintage ->
-                                    val isSelected = vintage == selectedVintage
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(20.dp))
-                                            .background(if (isSelected) VineColors.LeafGreen else vine.cardBackground)
-                                            .clickable { selectedVintage = vintage }
-                                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                                    ) {
-                                        Text(
-                                            if (vintage == currentVintage) "$vintage · Current" else "$vintage",
-                                            color = if (isSelected) Color.White else vine.textSecondary,
-                                            fontSize = 13.sp,
-                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                        )
-                                    }
+                                    VineFilterPill(
+                                        label = if (vintage == currentVintage) "$vintage · Current" else "$vintage",
+                                        selected = vintage == selectedVintage,
+                                        onClick = { selectedVintage = vintage },
+                                    )
                                 }
                             }
                         }
@@ -1781,27 +1754,11 @@ private fun RecordYieldSheet(
             // entry; Detailed logs one picking record per save (sql/180).
             // Editing an existing pick locks the sheet to Detailed.
             if (editing == null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(false to "Basic", true to "Detailed").forEach { (value, label) ->
-                        val isSelected = detailed == value
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (isSelected) VineColors.LeafGreen.copy(alpha = 0.15f) else vine.appBackground)
-                                .clickable { detailed = value }
-                                .padding(vertical = 10.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                label,
-                                color = if (isSelected) VineColors.LeafGreen else vine.textSecondary,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                fontSize = 14.sp,
-                            )
-                        }
-                    }
-                }
+                VineSegmented(
+                    options = listOf("Basic", "Detailed"),
+                    selectedIndex = if (detailed) 1 else 0,
+                    onSelect = { detailed = it == 1 },
+                )
             }
             if (editing != null) {
                 Text(
@@ -1898,7 +1855,7 @@ private fun RecordYieldSheet(
                 onClick = { save() },
                 enabled = canSave,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                colors = vinePrimaryButtonColors(),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text("Save yield record")
@@ -2039,14 +1996,14 @@ private fun RecordYieldSheet(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (isSelected) VineColors.LeafGreen.copy(alpha = 0.15f) else vine.appBackground)
+                            .background(if (isSelected) VineColors.Primary else vine.appBackground)
                             .clickable { sugarUnit = unit }
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                     ) {
                         Text(
                             unit.symbol,
                             fontSize = 13.sp,
-                            color = if (isSelected) VineColors.LeafGreen else vine.textSecondary,
+                            color = if (isSelected) Color.White else vine.textSecondary,
                             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                         )
                     }
@@ -2130,7 +2087,7 @@ private fun RecordYieldSheet(
                 onClick = { saveDetailed() },
                 enabled = canSaveDetailed,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                colors = vinePrimaryButtonColors(),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text(if (editing != null) "Save changes" else "Save pick")
@@ -2378,7 +2335,7 @@ private fun EstimateYieldSheet(
                 onClick = { save() },
                 enabled = canSave,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                colors = vinePrimaryButtonColors(),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text(if (existing != null) "Save estimate" else "Create estimate")
@@ -2465,7 +2422,7 @@ private fun EditYieldActualsSheet(
                 onClick = { save() },
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                colors = vinePrimaryButtonColors(),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text("Save changes")

@@ -93,6 +93,8 @@ import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SeasonSelector
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.components.VineAddAction
+import com.rork.vinetrack.ui.components.VineSegmented
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
@@ -100,6 +102,24 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
+
+/** Saves a [SeasonSelection] across rotation / process recreation. */
+private val SeasonSelectionSaver = androidx.compose.runtime.saveable.Saver<SeasonSelection, Any>(
+    save = {
+        when (it) {
+            SeasonSelection.Automatic -> "auto"
+            SeasonSelection.All -> "all"
+            is SeasonSelection.Vintage -> it.year
+        }
+    },
+    restore = {
+        when (it) {
+            "all" -> SeasonSelection.All
+            is Int -> SeasonSelection.Vintage(it)
+            else -> SeasonSelection.Automatic
+        }
+    },
+)
 
 /** Brand colour for the fuel surface (matches the Home Operational Tools card). */
 private val FuelTint: Color = VineColors.Pink
@@ -144,7 +164,10 @@ fun FuelLogScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modi
     // date range, so totals and lists filter on the event-date column each
     // record already has. Fuel spans two record types, so the option list is
     // built from BOTH purchases and fills.
-    var seasonSelection by remember { mutableStateOf<SeasonSelection>(SeasonSelection.Automatic) }
+    // Saveable so the filter survives rotation and returning from a sheet/screen.
+    var seasonSelection by rememberSaveable(stateSaver = SeasonSelectionSaver) {
+        mutableStateOf<SeasonSelection>(SeasonSelection.Automatic)
+    }
     val fuelEventDates = remember(purchases, state.fuelLogs) {
         purchases.map { purchaseEpochMs(it.date) } + state.fuelLogs.map { it.fillEpochMs }
     }
@@ -170,25 +193,17 @@ fun FuelLogScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modi
             TopAppBar(
                 title = { Text("Fuel Log") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
+                actions = {
+                    if (tab == 0) {
+                        if (canManageSetup) {
+                            VineAddAction(onClick = { creatingPurchase = true }, contentDescription = "Add fuel purchase")
+                        }
+                    } else {
+                        VineAddAction(onClick = { creatingFill = true }, contentDescription = "Record fuel fill")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
-        },
-        floatingActionButton = {
-            if (tab == 0) {
-                if (canManageSetup) {
-                    FloatingActionButton(
-                        onClick = { creatingPurchase = true },
-                        containerColor = FuelTint,
-                        contentColor = Color.White,
-                    ) { Icon(Icons.Filled.Add, contentDescription = "Add fuel purchase") }
-                }
-            } else {
-                FloatingActionButton(
-                    onClick = { creatingFill = true },
-                    containerColor = FuelTint,
-                    contentColor = Color.White,
-                ) { Icon(Icons.Filled.Add, contentDescription = "Record fuel fill") }
-            }
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -350,35 +365,11 @@ private fun FuelMetricCell(modifier: Modifier, title: String, value: String, tin
 
 @Composable
 private fun FuelTabSelector(selected: Int, onSelect: (Int) -> Unit) {
-    val vine = LocalVineColors.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(vine.cardBackground)
-            .padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        listOf("Purchases", "Refuelling").forEachIndexed { idx, label ->
-            val active = idx == selected
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(if (active) FuelTint else Color.Transparent)
-                    .clickable { onSelect(idx) }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    label,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (active) Color.White else vine.textSecondary,
-                )
-            }
-        }
-    }
+    VineSegmented(
+        options = listOf("Purchases", "Refuelling"),
+        selectedIndex = selected,
+        onSelect = onSelect,
+    )
 }
 
 // MARK: - Fuel purchases (moved here from the Equipment area)

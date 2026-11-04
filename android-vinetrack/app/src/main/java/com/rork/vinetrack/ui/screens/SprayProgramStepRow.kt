@@ -88,14 +88,16 @@ internal fun SprayProgramStepRow(
 @Composable
 internal fun SprayProgramStageBadge(label: String?, modifier: Modifier = Modifier, capsule: Boolean = false) {
     val vine = LocalVineColors.current
+    // Bright, accessible green for E-L numbers (darker on light, brighter on dark) — mirrors iOS.
+    val stageGreen = if (androidx.compose.foundation.isSystemInDarkTheme()) androidx.compose.ui.graphics.Color(0xFF4DD966) else androidx.compose.ui.graphics.Color(0xFF118429)
     Text(
         label ?: "—",
-        fontSize = 13.sp,
-        fontWeight = FontWeight.Bold,
-        color = if (label == null) vine.textSecondary else VineColors.LeafGreen,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.ExtraBold,
+        color = if (label == null) vine.textSecondary else stageGreen,
         modifier = modifier
             .clip(if (capsule) RoundedCornerShape(50) else RoundedCornerShape(8.dp))
-            .background(if (label == null) vine.textSecondary.copy(alpha = 0.08f) else VineColors.LeafGreen.copy(alpha = 0.14f))
+            .background(if (label == null) vine.textSecondary.copy(alpha = 0.08f) else stageGreen.copy(alpha = 0.16f))
             .widthIn(min = 46.dp)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         textAlign = androidx.compose.ui.text.style.TextAlign.Center,

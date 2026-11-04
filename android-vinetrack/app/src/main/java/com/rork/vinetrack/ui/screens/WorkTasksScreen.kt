@@ -123,6 +123,7 @@ import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.components.VineAddAction
 import com.rork.vinetrack.ui.components.WorkTaskLabourLineRow
 import com.rork.vinetrack.ui.components.WorkTaskLabourLineSheet
 import com.rork.vinetrack.data.WorkTaskLabourCosting
@@ -405,9 +406,7 @@ private fun WorkTasksHub(
             TopAppBar(
                 title = { Text("Work Tasks") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
-                actions = {
-                    IconButton(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = "Log task") }
-                },
+                actions = { VineAddAction(onClick = onAdd, contentDescription = "Log task") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
@@ -471,7 +470,7 @@ private fun WorkTasksHub(
                 VineyardCard(modifier = Modifier.clickable { onAdd() }) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Box(
-                            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(VineColors.LeafGreen),
+                            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(VineColors.Primary),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(Icons.Filled.Add, contentDescription = null, tint = Color.White)
@@ -657,7 +656,7 @@ private fun WorkTaskLogView(
             TopAppBar(
                 title = { Text("Task Log") },
                 navigationIcon = { BackNavIcon(onBack) },
-                actions = { IconButton(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = "Log task") } },
+                actions = { VineAddAction(onClick = onAdd, contentDescription = "Log task") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
@@ -768,12 +767,12 @@ private fun WTFilterChipMenu(
 ) {
     val vine = LocalVineColors.current
     var expanded by remember { mutableStateOf(false) }
-    val fg = if (active) VineColors.PrimaryAccent else vine.textPrimary
+    val fg = if (active) VineColors.Primary else vine.textPrimary
     Box {
         Row(
             modifier = Modifier
                 .clip(CircleShape)
-                .background(if (active) VineColors.PrimaryAccent.copy(alpha = 0.15f) else vine.cardBackground)
+                .background(if (active) VineColors.Primary.copy(alpha = 0.15f) else vine.cardBackground)
                 .clickable { expanded = true }
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,

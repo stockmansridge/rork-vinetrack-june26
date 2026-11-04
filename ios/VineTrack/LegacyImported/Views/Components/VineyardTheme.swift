@@ -4,6 +4,13 @@ import UIKit
 enum VineyardTheme {
     // Brand palette
     static let leafGreen = Color(red: 0.36, green: 0.55, blue: 0.30)
+    /// Bright, accessible green for E-L stage numbers (Spray Program). Darker in
+    /// light mode for contrast on white, brighter in dark mode. Mirrors Android.
+    static let elStageGreen = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.30, green: 0.85, blue: 0.40, alpha: 1)
+            : UIColor(red: 0.07, green: 0.52, blue: 0.17, alpha: 1)
+    })
     static let olive = Color.blue
     static let darkGreen = Color(red: 0.20, green: 0.40, blue: 0.18)
     static let earthBrown = Color(red: 0.45, green: 0.32, blue: 0.22)

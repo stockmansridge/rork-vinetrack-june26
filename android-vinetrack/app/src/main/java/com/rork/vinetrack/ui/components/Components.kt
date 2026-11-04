@@ -3,6 +3,7 @@ package com.rork.vinetrack.ui.components
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -223,4 +224,108 @@ fun EmptyState(
         }
     }
     Spacer(Modifier.height(0.dp))
+}
+
+// ---------------------------------------------------------------------------
+// Shared blue action controls (Issue #55 UI consistency).
+// One definition of "selected / primary" so screens stop hand-rolling green
+// copies. Semantic status colours (completion green, warning orange/red) and
+// pin/overlay colours are NOT routed through these.
+// ---------------------------------------------------------------------------
+
+/** Standard top-bar Add `+` in the shared action blue. Use in TopAppBar `actions`. */
+@Composable
+fun VineAddAction(onClick: () -> Unit, contentDescription: String) {
+    IconButton(onClick = onClick) {
+        Icon(
+            Icons.Filled.Add,
+            contentDescription = contentDescription,
+            tint = com.rork.vinetrack.ui.theme.VineColors.Primary,
+        )
+    }
+}
+
+/** Filled blue primary button colours (iOS `.borderedProminent` parity). */
+@Composable
+fun vinePrimaryButtonColors() = ButtonDefaults.buttonColors(
+    containerColor = com.rork.vinetrack.ui.theme.VineColors.Primary,
+    contentColor = Color.White,
+    disabledContainerColor = com.rork.vinetrack.ui.theme.VineColors.Primary.copy(alpha = 0.35f),
+    disabledContentColor = Color.White.copy(alpha = 0.8f),
+)
+
+/** Rounded filter pill: selected = solid blue, unselected = neutral surface. */
+@Composable
+fun VineFilterPill(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val vine = LocalVineColors.current
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (selected) com.rork.vinetrack.ui.theme.VineColors.Primary else vine.cardBackground,
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (selected) Color.White else vine.textPrimary,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * Shared segmented control (iOS segmented Picker parity). Selected segment is
+ * solid blue. Labels wrap to two lines rather than clipping at large font scales.
+ */
+@Composable
+fun VineSegmented(
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val vine = LocalVineColors.current
+    val blue = com.rork.vinetrack.ui.theme.VineColors.Primary
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(vine.appBackground)
+            .border(BorderStroke(1.dp, blue.copy(alpha = 0.35f)), RoundedCornerShape(10.dp))
+            .padding(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        options.forEachIndexed { index, label ->
+            val selected = index == selectedIndex
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (selected) blue else Color.Transparent)
+                    .clickable { onSelect(index) }
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (selected) Color.White else vine.textPrimary,
+                    maxLines = 2,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+            }
+        }
+    }
 }

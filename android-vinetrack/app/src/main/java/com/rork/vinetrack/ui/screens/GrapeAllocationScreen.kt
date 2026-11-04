@@ -81,6 +81,9 @@ import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.components.VineAddAction
+import com.rork.vinetrack.ui.components.VineFilterPill
+import com.rork.vinetrack.ui.components.VineSegmented
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.LocalDate
@@ -192,18 +195,14 @@ fun GrapeAllocationScreen(
             TopAppBar(
                 title = { Text("Grape Allocation") },
                 navigationIcon = { BackNavIcon(onBack) },
+                actions = { VineAddAction(onClick = { creating = true }, contentDescription = "Add Allocation") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { creating = true }, containerColor = VineColors.LeafGreen) {
-                Icon(Icons.Filled.Add, contentDescription = "Add Allocation")
-            }
         },
     ) { padding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp).padding(bottom = 96.dp),
+                .padding(horizontal = 16.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             SectionHeader("Vintage")
@@ -212,17 +211,10 @@ fun GrapeAllocationScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 availableVintages.forEach { vintage ->
-                    val isSelected = vintage == reportVintage
-                    Text(
-                        text = if (vintage == currentVintage) "$vintage · Current" else "$vintage",
-                        fontSize = 12.sp,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (isSelected) Color.White else vine.textSecondary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isSelected) VineColors.LeafGreen else vine.cardBackground)
-                            .clickable { selectedVintage = if (vintage == currentVintage) null else vintage }
-                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                    VineFilterPill(
+                        label = if (vintage == currentVintage) "$vintage · Current" else "$vintage",
+                        selected = vintage == reportVintage,
+                        onClick = { selectedVintage = if (vintage == currentVintage) null else vintage },
                     )
                 }
             }
@@ -561,18 +553,13 @@ private fun GrapeAllocationEditor(
                 .padding(horizontal = 16.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                SegmentedButton(
-                    selected = !isExternal,
-                    onClick = { allocationType = GrapeAllocation.TYPE_OWN_USE },
-                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                ) { Text("Own Use") }
-                SegmentedButton(
-                    selected = isExternal,
-                    onClick = { allocationType = GrapeAllocation.TYPE_EXTERNAL },
-                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                ) { Text("Sale / Commitment") }
-            }
+            VineSegmented(
+                options = listOf("Own Use", "Sale / Commitment"),
+                selectedIndex = if (isExternal) 1 else 0,
+                onSelect = {
+                    allocationType = if (it == 1) GrapeAllocation.TYPE_EXTERNAL else GrapeAllocation.TYPE_OWN_USE
+                },
+            )
 
             SectionHeader("Vintage")
             Row(
@@ -580,17 +567,10 @@ private fun GrapeAllocationEditor(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 vintageOptions.forEach { option ->
-                    val isSelected = option == vintage
-                    Text(
-                        text = if (option == currentVintage) "$option · Current" else "$option",
-                        fontSize = 12.sp,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (isSelected) Color.White else vine.textSecondary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isSelected) VineColors.LeafGreen else vine.cardBackground)
-                            .clickable { vintage = option }
-                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                    VineFilterPill(
+                        label = if (option == currentVintage) "$option · Current" else "$option",
+                        selected = option == vintage,
+                        onClick = { vintage = option },
                     )
                 }
             }

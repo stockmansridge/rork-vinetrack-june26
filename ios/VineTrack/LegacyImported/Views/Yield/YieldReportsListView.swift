@@ -103,7 +103,7 @@ struct YieldReportsListView: View {
                                 .foregroundStyle(isSelected ? .white : .secondary)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 7)
-                                .background(isSelected ? VineyardTheme.leafGreen : Color(.tertiarySystemFill), in: .capsule)
+                                .background(isSelected ? Color.blue : Color(.tertiarySystemFill), in: .capsule)
                         }
                         .buttonStyle(.plain)
                     }
@@ -526,7 +526,7 @@ struct YieldReportsListView: View {
                             .font(.subheadline.weight(.semibold))
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(VineyardTheme.leafGreen, in: .capsule)
+                            .background(Color.blue, in: .capsule)
                             .foregroundStyle(.white)
                     }
                     .buttonStyle(.plain)

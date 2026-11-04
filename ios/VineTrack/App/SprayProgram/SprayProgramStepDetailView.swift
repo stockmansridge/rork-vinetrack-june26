@@ -224,11 +224,11 @@ struct SprayProgramStepDetailView: View {
             if let stage = currentStep.elStageLabel {
                 HStack(spacing: 8) {
                     Text(stage)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(VineyardTheme.leafGreen)
+                        .font(.subheadline.weight(.heavy))
+                        .foregroundStyle(VineyardTheme.elStageGreen)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .background(VineyardTheme.leafGreen.opacity(0.14), in: Capsule())
+                        .background(VineyardTheme.elStageGreen.opacity(0.16), in: Capsule())
                     if let description = currentStep.growthStageDescription {
                         Text(description)
                             .font(.caption)

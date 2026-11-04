@@ -103,12 +103,12 @@ struct SprayProgramStepRow: View {
     private var stageBadge: some View {
         if let label = step.elStageLabel {
             Text(label)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(VineyardTheme.leafGreen)
+                .font(.subheadline.weight(.heavy))
+                .foregroundStyle(VineyardTheme.elStageGreen)
                 .frame(minWidth: 46)
                 .padding(.vertical, 6)
                 .padding(.horizontal, 6)
-                .background(VineyardTheme.leafGreen.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                .background(VineyardTheme.elStageGreen.opacity(0.16), in: RoundedRectangle(cornerRadius: 8))
         } else {
             // An unknown stage says so. Inventing "EL1" would place the step at
             // the head of the program.

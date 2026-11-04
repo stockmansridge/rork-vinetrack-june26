@@ -65,6 +65,7 @@ import com.rork.vinetrack.data.model.isFertiliserProduct
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.VineSegmented
 import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
@@ -188,34 +189,12 @@ private fun FertCard(content: @Composable ColumnScope.() -> Unit) {
 
 @Composable
 private fun FertTabBar(selected: Int, onSelect: (Int) -> Unit) {
-    val vine = LocalVineColors.current
-    val tabs = listOf("Calculator", "Records")
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(vine.cardBackground)
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        tabs.forEachIndexed { index, label ->
-            val isOn = index == selected
-            Text(
-                label,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isOn) Color.White else vine.textPrimary,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (isOn) VineColors.Primary else Color.Transparent)
-                    .clickable { onSelect(index) }
-                    .padding(vertical = 8.dp),
-            )
-        }
-    }
+    VineSegmented(
+        options = listOf("Calculator", "Records"),
+        selectedIndex = selected,
+        onSelect = onSelect,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
 }
 
 // MARK: - Calculator tab

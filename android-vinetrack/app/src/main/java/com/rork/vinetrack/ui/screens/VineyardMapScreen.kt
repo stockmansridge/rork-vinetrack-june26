@@ -837,7 +837,7 @@ fun VineyardMapContent(
                         .align(Alignment.BottomEnd)
                         .padding(end = 12.dp, bottom = 16.dp)
                         .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.55f))
+                        .background(VineColors.Primary)
                         .clickable {
                             scope.launch {
                                 cameraPositionState.fitToContent(
@@ -1045,7 +1045,7 @@ private fun OverlayChip(
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(18.dp))
-            .background(if (selected) VineColors.LeafGreen else Color.Transparent)
+            .background(if (selected) VineColors.Primary else Color.Transparent)
             .clickable { onClick() }
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1085,7 +1085,7 @@ private fun ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(18.dp))
-            .background(if (selected) VineColors.LeafGreen else Color.Transparent)
+            .background(if (selected) VineColors.Primary else Color.Transparent)
             .clickable { onClick() }
             .padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,

@@ -113,6 +113,7 @@ import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.components.VineAddAction
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import coil3.compose.AsyncImage
@@ -210,7 +211,7 @@ private fun MaintenanceListView(
             TopAppBar(
                 title = { Text("Maintenance Log") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
-                actions = { IconButton(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = "Log maintenance") } },
+                actions = { VineAddAction(onClick = onAdd, contentDescription = "Log maintenance") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },

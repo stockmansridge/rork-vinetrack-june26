@@ -199,7 +199,7 @@ struct GrowthStageBlockDetailView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(green)
+            .tint(.blue)
         }
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))

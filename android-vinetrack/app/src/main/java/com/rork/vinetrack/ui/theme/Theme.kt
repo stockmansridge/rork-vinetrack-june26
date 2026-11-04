@@ -39,6 +39,10 @@ val LocalVineColors = staticCompositionLocalOf {
 private val DarkColorScheme = darkColorScheme(
     primary = VineColors.Primary,
     secondary = VineColors.LeafGreen,
+    // Selected FilterChip / SegmentedButton use secondaryContainer: route them
+    // through the shared action blue so no screen shows the default lavender.
+    secondaryContainer = Color(0xFF1B3A5E),
+    onSecondaryContainer = Color(0xFF7AB8FF),
     tertiary = VineColors.EarthBrown,
     background = VineColors.AppBackgroundDark,
     surface = VineColors.CardBackgroundDark,
@@ -48,6 +52,8 @@ private val DarkColorScheme = darkColorScheme(
 private val LightColorScheme = lightColorScheme(
     primary = VineColors.Primary,
     secondary = VineColors.LeafGreen,
+    secondaryContainer = Color(0xFFD6E8FF),
+    onSecondaryContainer = Color(0xFF0050A8),
     tertiary = VineColors.EarthBrown,
     background = VineColors.AppBackgroundLight,
     surface = VineColors.CardBackgroundLight,

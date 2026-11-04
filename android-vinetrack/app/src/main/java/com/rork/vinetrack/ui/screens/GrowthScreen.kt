@@ -122,6 +122,9 @@ import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.ForegroundLocationSubscriptionEffect
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.components.VineAddAction
+import com.rork.vinetrack.ui.components.VineSegmented
+import com.rork.vinetrack.ui.components.vinePrimaryButtonColors
 import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
@@ -229,37 +232,22 @@ private fun GrowthRecordsViewSelector(
         GrowthRecordsViewMode.SUMMARY to "Summary",
         GrowthRecordsViewMode.HEATMAP to "Growth Stage Heatmap",
     )
-    SingleChoiceSegmentedButtonRow(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        options.forEachIndexed { index, (value, label) ->
-            SegmentedButton(
-                selected = mode == value,
-                onClick = { onSelect(value) },
-                shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
-            ) {
-                Text(label, fontSize = 13.sp)
-            }
-        }
-    }
+    VineSegmented(
+        options = options.map { it.second },
+        selectedIndex = options.indexOfFirst { it.first == mode }.coerceAtLeast(0),
+        onSelect = { onSelect(options[it].first) },
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
 }
 
 @Composable
 private fun GrowthTabRow(tab: GrowthTab, onTabChange: (GrowthTab) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        GrowthTab.entries.forEach { entry ->
-            FilterChip(
-                selected = tab == entry,
-                onClick = { onTabChange(entry) },
-                label = { Text(entry.label) },
-            )
-        }
-    }
+    VineSegmented(
+        options = GrowthTab.entries.map { it.label },
+        selectedIndex = GrowthTab.entries.indexOf(tab),
+        onSelect = { onTabChange(GrowthTab.entries[it]) },
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -358,6 +346,7 @@ private fun GrowthListView(
                 title = { Text("Growth Stage Records") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
+                    VineAddAction(onClick = onCreate, contentDescription = "Add observation")
                     // Shown only when it performs a real export.
                     if (canExport && records.isNotEmpty() && viewMode == GrowthRecordsViewMode.SUMMARY) {
                         IconButton(onClick = { runExport() }, enabled = !exporting) {
@@ -367,15 +356,6 @@ private fun GrowthListView(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = onCreate,
-                containerColor = VineColors.Primary,
-                contentColor = Color.White,
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Add observation")
-            }
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -821,18 +801,12 @@ private enum class VarietyCatalogTab(val label: String) {
 
 @Composable
 private fun VarietyCatalogTabRow(tab: VarietyCatalogTab, onTabChange: (VarietyCatalogTab) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        VarietyCatalogTab.entries.forEach { entry ->
-            FilterChip(
-                selected = tab == entry,
-                onClick = { onTabChange(entry) },
-                label = { Text(entry.label) },
-            )
-        }
-    }
+    VineSegmented(
+        options = VarietyCatalogTab.entries.map { it.label },
+        selectedIndex = VarietyCatalogTab.entries.indexOf(tab),
+        onSelect = { onTabChange(VarietyCatalogTab.entries[it]) },
+        modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 4.dp),
+    )
 }
 
 private data class VarietyUsage(val blocks: Int, val areaHectares: Double)
@@ -1105,7 +1079,7 @@ private fun PhenologyEditSheet(
                 onClick = { save() },
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                colors = vinePrimaryButtonColors(),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text("Save dates")
@@ -1746,7 +1720,7 @@ fun GrowthSheet(
                         onClick = { save() },
                         enabled = canSave,
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                        colors = vinePrimaryButtonColors(),
                     ) {
                         if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                         else Text(if (existing == null) "Save observation" else "Save changes")
@@ -2022,7 +1996,7 @@ internal fun GrowthStageConfirm(
         Button(
             onClick = onConfirm,
             modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+            colors = vinePrimaryButtonColors(),
         ) {
             Text("Confirm ${stage.code}", fontWeight = FontWeight.SemiBold)
         }

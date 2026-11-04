@@ -33,18 +33,18 @@ struct SprayProgramStepPickerSheet: View {
                     } label: {
                         HStack(spacing: 12) {
                             Text(step.elStageLabel ?? "—")
-                                .font(.caption.weight(.bold))
+                                .font(.subheadline.weight(.heavy))
                                 .foregroundStyle(
                                     step.elStageLabel == nil
                                         ? AnyShapeStyle(.tertiary)
-                                        : AnyShapeStyle(VineyardTheme.leafGreen)
+                                        : AnyShapeStyle(VineyardTheme.elStageGreen)
                                 )
                                 .frame(minWidth: 46)
                                 .padding(.vertical, 5)
                                 .background(
                                     (step.elStageLabel == nil
                                         ? Color(.tertiarySystemFill)
-                                        : VineyardTheme.leafGreen.opacity(0.14)),
+                                        : VineyardTheme.elStageGreen.opacity(0.16)),
                                     in: RoundedRectangle(cornerRadius: 8)
                                 )
 

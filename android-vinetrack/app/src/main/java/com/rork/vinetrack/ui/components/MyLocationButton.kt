@@ -45,7 +45,7 @@ fun MapMyLocationButton(
     camera: CameraPositionState,
     onMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
-    containerColor: Color = Color(0xCC1C1C1E),
+    containerColor: Color = com.rork.vinetrack.ui.theme.VineColors.Primary,
     contentColor: Color = Color.White,
     contentDescription: String = "Go to current location",
     targetZoom: Float? = null,

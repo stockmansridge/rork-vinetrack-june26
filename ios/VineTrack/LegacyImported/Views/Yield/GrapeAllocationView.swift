@@ -180,7 +180,7 @@ struct GrapeAllocationView: View {
                                 .foregroundStyle(isSelected ? .white : .secondary)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 7)
-                                .background(isSelected ? VineyardTheme.leafGreen : Color(.tertiarySystemFill), in: .capsule)
+                                .background(isSelected ? Color.blue : Color(.tertiarySystemFill), in: .capsule)
                         }
                         .buttonStyle(.plain)
                     }

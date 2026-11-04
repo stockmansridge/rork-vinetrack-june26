@@ -744,7 +744,7 @@ private fun SegmentChip(label: String, active: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(if (active) VineColors.LeafGreen else Color.Transparent)
+            .background(if (active) VineColors.Primary else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,

@@ -2807,7 +2807,7 @@ private fun PinRow(
             // Per-pin quick actions, evenly distributed so the row aligns (iOS parity).
             Row(modifier = Modifier.fillMaxWidth()) {
                 PinActionButton(Icons.Filled.Map, "Map", VineColors.Primary, modifier = Modifier.weight(1f), onClick = onMap)
-                PinActionButton(Icons.Filled.Directions, "Directions", VineColors.LeafGreen, modifier = Modifier.weight(1f), onClick = onDirections)
+                PinActionButton(Icons.Filled.Directions, "Directions", VineColors.Primary, modifier = Modifier.weight(1f), onClick = onDirections)
                 PinActionButton(Icons.Filled.PhotoCamera, "Photo", VineColors.Purple, modifier = Modifier.weight(1f), busy = photoBusy, onClick = onPhoto)
                 PinActionButton(
                     icon = Icons.Filled.CheckCircle,
@@ -3570,7 +3570,7 @@ private fun PinDetailSheet(
             // Quick actions (iOS ActionButton row parity — no Edit; the pin's
             // fields are read-only after creation, matching iOS).
             Row(modifier = Modifier.fillMaxWidth()) {
-                PinActionButton(Icons.Filled.Directions, "Directions", VineColors.LeafGreen, modifier = Modifier.weight(1f), onClick = onDirections)
+                PinActionButton(Icons.Filled.Directions, "Directions", VineColors.Primary, modifier = Modifier.weight(1f), onClick = onDirections)
                 PinActionButton(Icons.Filled.PhotoCamera, "Photo", VineColors.Purple, modifier = Modifier.weight(1f), busy = photoBusy, onClick = onPhoto)
                 PinActionButton(
                     icon = Icons.Filled.CheckCircle,

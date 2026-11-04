@@ -364,29 +364,30 @@ struct FuelLogHubView: View {
 
     // MARK: - Shared pieces
 
+    /// Full-width prominent blue primary action (shared Add pattern). `tint` is
+    /// kept for call-site compatibility but the action is always primary blue.
     private func addActionCard(title: String, subtitle: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: "plus.circle.fill")
                     .font(.title3)
                     .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(tint.gradient, in: .rect(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.white)
                     Text(subtitle)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white.opacity(0.85))
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.white.opacity(0.7))
             }
-            .padding(12)
-            .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.blue, in: .rect(cornerRadius: 14))
         }
         .buttonStyle(.plain)
     }

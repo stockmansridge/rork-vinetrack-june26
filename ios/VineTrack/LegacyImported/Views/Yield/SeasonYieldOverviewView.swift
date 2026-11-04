@@ -99,7 +99,7 @@ struct SeasonYieldOverviewView: View {
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 7)
                                 .background(
-                                    isSelected ? VineyardTheme.leafGreen : Color(.tertiarySystemFill),
+                                    isSelected ? Color.blue : Color(.tertiarySystemFill),
                                     in: .capsule
                                 )
                         }

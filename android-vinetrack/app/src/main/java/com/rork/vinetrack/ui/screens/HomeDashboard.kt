@@ -187,6 +187,11 @@ fun HomeDashboard(
     }
 }
 
+/** In-memory Home scroll offsets, keyed by "userId|vineyardId". */
+private object HomeScrollMemory {
+    val positions = mutableMapOf<String, Int>()
+}
+
 /** Full-screen overlays reachable directly from the Home dashboard. */
 private enum class HomeOverlay { None, Map, Overview, Rain }
 
@@ -213,6 +218,17 @@ private fun DashboardContent(
     val syncStatus = remember(state, pendingWrites, pendingPhotos, pendingLabels, outboxIssue, evidenceIssue) {
         vm.homeSyncStatus(state)
     }
+    // Home scroll position survives opening a tool/overlay and returning, tab
+    // switches and rotation. Scoped to user + vineyard so one account or
+    // vineyard never inherits another's position.
+    val scrollKey = "${state.currentUserId}|${state.selectedVineyardId}"
+    val homeScroll = androidx.compose.runtime.saveable.rememberSaveable(
+        scrollKey,
+        saver = androidx.compose.foundation.ScrollState.Saver,
+    ) { androidx.compose.foundation.ScrollState(HomeScrollMemory.positions[scrollKey] ?: 0) }
+    LaunchedEffect(scrollKey, homeScroll) {
+        androidx.compose.runtime.snapshotFlow { homeScroll.value }.collect { HomeScrollMemory.positions[scrollKey] = it }
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         // Vineyard gradient backdrop
         Box(
@@ -227,7 +243,7 @@ private fun DashboardContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(homeScroll)
                 .statusBarsPadding()
                 .padding(vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),

@@ -382,11 +382,13 @@ private fun GddSourceCard(
                         Text("Last refreshed ${refreshTimestamp(it)}", color = vine.textSecondary, fontSize = 11.sp)
                     }
                 }
-                TextButton(onClick = onRecheck, enabled = !weather.isUpdating) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(if (weather.isUpdating) "Refreshing…" else "Recheck weather data")
-                }
+            }
+            // Action sits below the labels (not beside them) so the source text
+            // keeps the full card width at large font scales and narrow screens.
+            TextButton(onClick = onRecheck, enabled = !weather.isUpdating) {
+                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(if (weather.isUpdating) "Refreshing…" else "Recheck weather data")
             }
             weather.refreshMessage?.let {
                 Text(it, color = VineColors.LeafGreen, fontSize = 11.sp)

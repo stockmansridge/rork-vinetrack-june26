@@ -1125,7 +1125,7 @@ private fun ComposerMapIconButton(
         modifier = modifier
             .size(40.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(Color.Black.copy(alpha = 0.55f))
+            .background(VineColors.Primary)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

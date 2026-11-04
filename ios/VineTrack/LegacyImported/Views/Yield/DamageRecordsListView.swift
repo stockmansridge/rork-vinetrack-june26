@@ -47,6 +47,8 @@ struct DamageRecordsListView: View {
             VStack(spacing: 20) {
                 overviewSection
 
+                reportDamageButton
+
                 if !affectedPaddocks.isEmpty {
                     yieldImpactSection
                 }
@@ -64,7 +66,7 @@ struct DamageRecordsListView: View {
                 Button {
                     showReportSheet = true
                 } label: {
-                    Label("Report Damage", systemImage: "plus.circle.fill")
+                    Label("Report Damage", systemImage: "plus")
                 }
                 .disabled(paddocks.isEmpty)
             }
@@ -81,6 +83,22 @@ struct DamageRecordsListView: View {
         .refreshable {
             await damageRecordSync.syncForSelectedVineyard()
         }
+    }
+
+    // MARK: - Report Damage (prominent action under the stats)
+
+    private var reportDamageButton: some View {
+        Button {
+            showReportSheet = true
+        } label: {
+            Label("Report Damage", systemImage: "plus")
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .tint(.blue)
+        .disabled(paddocks.isEmpty)
     }
 
     // MARK: - Damage Overview

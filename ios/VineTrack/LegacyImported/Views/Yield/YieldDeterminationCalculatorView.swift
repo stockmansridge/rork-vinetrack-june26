@@ -220,7 +220,7 @@ struct YieldDeterminationCalculatorView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(VineyardTheme.leafGreen)
+                .tint(.blue)
                 .disabled(yieldTonnesPerHa <= 0)
 
                 if let lastSavedAt {

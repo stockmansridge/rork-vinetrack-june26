@@ -413,7 +413,7 @@ struct PruningTrackerView: View {
             .foregroundStyle(createAccess.isAllowed && !paddocks.isEmpty ? .white : Color.secondary)
             .background(
                 createAccess.isAllowed && !paddocks.isEmpty
-                    ? AnyShapeStyle(VineyardTheme.leafGreen)
+                    ? AnyShapeStyle(Color.blue)
                     : AnyShapeStyle(VineyardTheme.cardBackground),
                 in: .rect(cornerRadius: 14)
             )

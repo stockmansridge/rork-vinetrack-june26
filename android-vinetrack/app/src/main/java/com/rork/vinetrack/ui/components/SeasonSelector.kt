@@ -128,7 +128,7 @@ private fun SeasonChip(
         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (isSelected) VineColors.LeafGreen else vine.cardBackground)
+            .background(if (isSelected) VineColors.Primary else vine.cardBackground)
             .clickable(enabled = !isSelected) { onClick() }
             .defaultMinSize(minHeight = 44.dp)
             .padding(horizontal = 14.dp, vertical = 13.dp),
