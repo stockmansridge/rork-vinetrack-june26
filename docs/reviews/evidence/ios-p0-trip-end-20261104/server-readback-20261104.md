@@ -47,3 +47,13 @@ Incident status: OPEN until the device-side items above are confirmed.
   pending_upserts 1, pending_deletes 1 (deletion `2BE68A70`, `TRIP_DELETE_CREATE_OUTCOME_UNKNOWN`, correctly held).
 - Not shown: the build number running now, the local state of `492EBAFC` (ended, no warning), persistence after reopen.
 - Incident remains OPEN.
+
+## Device Trip closure status, build 3.1.9 (216), 2026-11-04 ~01:00 local (pasted by the owner, screenshot IMG_3825)
+
+- `trip=492ebafc-b996-4ec4-8ea9-4261a3056810 state=CLOSED_SYNCED evidence=fresh_server_read`
+- server_terminal active=false, end_time_set=true; locally_ended=false; unresolved_markers 0; occurrence_pending 0, held=false;
+  tank_actuals total_sessions 1, pending 0; server_sessions 1; linked_spray matching_completion; reasons none.
+- UI: "Synced" badge, ended 4 Nov 2026 12:41 am, "Closed and synced, verified with server".
+- Combined with the server readback above, the original Trip passes server and device checks on build 216.
+- Caveats: `source_revision` is `unknown_no_verified_build_receipt` (signed binary not attested). Force-quit/reopen persistence
+  and the Trips-entity "held / last sync never" status are not yet re-checked. Legacy queue items remain unreconciled.
