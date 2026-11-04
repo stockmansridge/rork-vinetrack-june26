@@ -65,6 +65,8 @@ import com.rork.vinetrack.data.IrrigationForecastRepository
 import com.rork.vinetrack.data.IrrigationPrefsStore
 import com.rork.vinetrack.data.PersistedRainfallRepository
 import com.rork.vinetrack.data.RainForecastRepository
+import com.rork.vinetrack.data.WillyWeatherRepository
+import com.rork.vinetrack.data.VineyardWeatherIntegrationRepository
 import com.rork.vinetrack.data.RecentRainfallSummary
 import com.rork.vinetrack.data.SoilProfileRepository
 import com.rork.vinetrack.data.auth.SessionStore
@@ -101,7 +103,13 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
     val formatter = LocalRegionFormatter.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val forecastRepo = remember { IrrigationForecastRepository() }
+    val forecastRepo = remember(context) {
+        val session = SessionStore(context)
+        IrrigationForecastRepository(
+            WillyWeatherRepository(session),
+            VineyardWeatherIntegrationRepository(session),
+        )
+    }
     val prefsStore = remember { IrrigationPrefsStore(context) }
     val savedDefaults = remember { prefsStore.load() }
     val soilRepo = remember { SoilProfileRepository(SessionStore(context)) }
@@ -135,7 +143,6 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
     var forecast by remember { mutableStateOf<IrrigationForecast?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var didAutoLoadForecast by remember { mutableStateOf(false) }
 
     // Collapsible section state — lower-priority sections start collapsed so the
     // recommendation is visible without excessive scrolling (mirrors iOS, where
@@ -208,7 +215,11 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
         isLoading = true
         errorMessage = null
         try {
-            forecast = forecastRepo.fetchForecast(loc.first, loc.second)
+            forecast = forecastRepo.fetchForecast(
+                latitude = loc.first,
+                longitude = loc.second,
+                vineyardId = state.selectedVineyardId,
+            )
             etoOverrides = emptyMap()
             rainOverrides = emptyMap()
         } catch (e: Exception) {
@@ -222,11 +233,13 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
     // Auto-load the forecast once the location resolves, mirroring iOS
     // (didAutoLoad + loadForecast on appear). Keeps the recommendation card at
     // the top of the page populated without a manual "Load Forecast" tap.
-    LaunchedEffect(location) {
-        if (!didAutoLoadForecast && forecast == null && location != null) {
-            didAutoLoadForecast = true
-            refreshForecast()
-        }
+    LaunchedEffect(location, state.selectedVineyardId) {
+        // Changing vineyard must discard the previous vineyard's forecast,
+        // even if both properties use the same coordinates.
+        forecast = null
+        etoOverrides = emptyMap()
+        rainOverrides = emptyMap()
+        if (location != null) refreshForecast()
     }
 
     // Pre-fill the application rate. For a single block use its drip system rate;
@@ -936,6 +949,10 @@ private fun RecommendationResultBody(
         fontSize = 11.sp,
         color = vine.textSecondary,
     )
+    forecast?.fallbackReason?.let { reason ->
+        Box(Modifier.height(4.dp))
+        Text(reason, fontSize = 11.sp, color = VineColors.Warning)
+    }
 }
 
 @Composable

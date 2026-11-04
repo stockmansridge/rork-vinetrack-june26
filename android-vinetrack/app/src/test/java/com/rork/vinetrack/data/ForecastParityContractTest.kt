@@ -85,4 +85,38 @@ class ForecastParityContractTest {
             assertNull(days[index].rainMinMm)
         }
     }
+    @Test fun irrigationAdvisorUsesVineyardForecastProvider() {
+        assertEquals(true, shouldUseWillyWeather("willyweather", configuredLocation = false))
+        assertEquals(true, shouldUseWillyWeather("auto", configuredLocation = true))
+        assertEquals(false, shouldUseWillyWeather("auto", configuredLocation = false))
+        assertEquals(false, shouldUseWillyWeather("open_meteo", configuredLocation = true))
+    }
+
+    @Test fun irrigationForecastMapsWillyWeatherEtoRainAndVineyardDate() {
+        val forecast = WillyWeatherForecastResult(
+            source = "WillyWeather",
+            timezone = "Australia/Sydney",
+            days = listOf(
+                WillyWeatherForecastDay(date = "2026-11-04", et0Mm = 4.2, rainMm = 2.1),
+                WillyWeatherForecastDay(date = "2026-11-05", et0Mm = 3.8, rainMm = 0.6),
+            ),
+        ).asIrrigationForecast()
+        assertEquals("WillyWeather", forecast.source)
+        assertEquals(2, forecast.days.size)
+        assertEquals(4.2, forecast.days[0].forecastEToMm, 0.0001)
+        assertEquals(2.1, forecast.days[0].forecastRainMm, 0.0001)
+        assertEquals(3.8, forecast.days[1].forecastEToMm, 0.0001)
+        assertEquals(0.6, forecast.days[1].forecastRainMm, 0.0001)
+        assertEquals(
+            "04", SimpleDateFormat("dd", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("Australia/Sydney")
+            }.format(Date(forecast.days[0].dateEpochMs)),
+        )
+        assertEquals(
+            "03", SimpleDateFormat("dd", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("America/Los_Angeles")
+            }.format(Date(forecast.days[0].dateEpochMs)),
+        )
+    }
+
 }

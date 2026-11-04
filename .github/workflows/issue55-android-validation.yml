@@ -13,6 +13,7 @@ on:
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/IrrigationScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/HomeDashboard.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/CostReportBuilder.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/IrrigationForecastRepository.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/insights/VineyardInsightsSyncWorker.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/insights/VineyardInsightsSyncRepository.kt'
       - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/**'
