@@ -16,6 +16,18 @@ internal fun insightsDeletionQuery(vineyardId: String, deletedAtIso: String?): S
         append("&order=deleted_at.asc,id.asc")
     }
 
+/** The same timezone-safe cursor contract for Scout and Notes updated_at pulls. */
+internal fun insightsUpdatedQuery(table: String, vineyardId: String, sinceIso: String?): String =
+    buildString {
+        require(table == "scout_visits" || table == "vintage_notes")
+        append("$table?vineyard_id=eq.$vineyardId")
+        if (sinceIso != null) {
+            val cursor = java.net.URLEncoder.encode(sinceIso, "UTF-8")
+            append("&updated_at=gt.$cursor")
+        }
+        append("&order=id.asc")
+    }
+
 import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.MaintenanceWriteScope
 import com.rork.vinetrack.data.attachmentScope
@@ -254,13 +266,7 @@ class VineyardInsightsSyncRepository(
         vineyardId: String,
         sinceIso: String?,
     ): List<VineyardInsightsSyncApi.VisitRow> =
-        select(
-            buildString {
-                append("scout_visits?vineyard_id=eq.$vineyardId")
-                if (sinceIso != null) append("&updated_at=gt.$sinceIso")
-                append("&order=id.asc")
-            },
-        )
+        select(insightsUpdatedQuery("scout_visits", vineyardId, sinceIso))
 
     override suspend fun fetchAssessments(
         vineyardId: String,
@@ -311,13 +317,7 @@ class VineyardInsightsSyncRepository(
         vineyardId: String,
         sinceIso: String?,
     ): List<VineyardInsightsSyncApi.NoteRow> =
-        select(
-            buildString {
-                append("vintage_notes?vineyard_id=eq.$vineyardId")
-                if (sinceIso != null) append("&updated_at=gt.$sinceIso")
-                append("&order=id.asc")
-            },
-        )
+        select(insightsUpdatedQuery("vintage_notes", vineyardId, sinceIso))
 
     override suspend fun fetchDeletions(
         vineyardId: String,

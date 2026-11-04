@@ -31,6 +31,23 @@ class VineyardInsightsContractCorrectionTest {
         assertTrue(query.contains("&order=deleted_at.asc,id.asc"))
     }
 
+    @Test fun `Scout and Notes incremental cursor timestamps retain encoded timezone`() {
+        val cursor = "2026-11-04T08:22:10.003412+11:00"
+        listOf("scout_visits", "vintage_notes").forEach { table ->
+            val query = insightsUpdatedQuery(table, "vineyard", cursor)
+            assertTrue(query.startsWith("$table?vineyard_id=eq.vineyard"))
+            assertTrue(query.contains("&updated_at=gt.2026-11-04T08%3A22%3A10.003412%2B11%3A00"))
+            assertFalse(query.contains("+"))
+            assertTrue(query.endsWith("&order=id.asc"))
+            val token = query.substringAfter("updated_at=gt.").substringBefore("&")
+            assertEquals(cursor, java.net.URLDecoder.decode(token, "UTF-8"))
+        }
+        assertEquals(
+            "vintage_notes?vineyard_id=eq.vineyard&order=id.asc",
+            insightsUpdatedQuery("vintage_notes", "vineyard", null),
+        )
+    }
+
     @Test fun `fresh deletion cursor still includes all tombstones`() {
         val query = insightsDeletionQuery("vineyard", null)
         assertFalse(query.contains("deleted_at=gte"))
