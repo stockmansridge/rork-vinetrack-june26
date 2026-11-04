@@ -9,6 +9,8 @@ on:
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/DamageRecordsScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SeasonYieldOverviewScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/PinsScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/UnifiedPinComposerScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CostReportsScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/IrrigationScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/HomeDashboard.kt'
