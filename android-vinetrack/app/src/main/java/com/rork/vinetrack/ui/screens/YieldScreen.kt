@@ -204,10 +204,8 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
             )
             "reports" -> YieldListView(
                 state = state,
-                varietySummaries = varietySummaries,
                 onBack = { destination = YieldDestination.HUB },
                 onOpen = { selectedId = it.id },
-                onOpenVariety = { selectedVarietyKey = it.key },
                 onCreate = { creating = true },
                 onCreateEstimate = { creatingEstimate = true },
             )
@@ -1098,10 +1096,8 @@ private fun CalcInput(label: String, value: String, onChange: (String) -> Unit) 
 @Composable
 private fun YieldListView(
     state: AppUiState,
-    varietySummaries: List<VarietyYieldSummary>,
     onBack: (() -> Unit)?,
     onOpen: (HistoricalYieldRecord) -> Unit,
-    onOpenVariety: (VarietyYieldSummary) -> Unit,
     onCreate: () -> Unit,
     onCreateEstimate: () -> Unit,
 ) {
@@ -1149,9 +1145,9 @@ private fun YieldListView(
     val currentBlocks = state.paddocks.mapNotNull { paddock ->
         val trip = YieldVintageReport.latestCompletedSessionForBlock(
             state.yieldSessions.filter { it.vineyardId == state.selectedVineyardId }, paddock.id,
-            selectedVintage, state.seasonStartMonth, state.seasonStartDay) ?: return@mapNotNull null
+            currentVintage, state.seasonStartMonth, state.seasonStartDay) ?: return@mapNotNull null
         com.rork.vinetrack.data.CurrentYieldEstimate.block(trip, paddock, currentWeights,
-            state.damageRecords.remainingYieldMultiplierForVintage(paddock.id, state.paddocks, selectedVintage, state.seasonStartMonth, state.seasonStartDay))
+            state.damageRecords.remainingYieldMultiplierForVintage(paddock.id, state.paddocks, currentVintage, state.seasonStartMonth, state.seasonStartDay))
     }
     val currentTotal = if (currentBlocks.isEmpty() || currentBlocks.any { it.displayTonnes == null }) null else currentBlocks.sumOf { it.displayTonnes ?: 0.0 }
     val currentReport = com.rork.vinetrack.data.CurrentYieldEstimate.Trip(currentBlocks, currentBlocks.sumOf { it.sampledAreaHa }, currentTotal)
@@ -1159,10 +1155,17 @@ private fun YieldListView(
     // The selected-vintage actual rows already reconcile Detailed Picking Log
     // against Basic actuals. Do not show zero just because no archived
     // historical_yield_records exist for a vintage with real picking data.
-    val archivedForVintage = records.filter { it.year == selectedVintage }
-    val totalActual = actualRows.sumOf { it.tonnes }
-    val totalEstimated = archivedForVintage.sumOf { it.totalYieldTonnes }
-    val totalArea = archivedForVintage.sumOf { it.totalAreaHectares }
+    // Mirrors iOS: the four overview metrics describe the CURRENT vintage,
+    // independent of the historical vintage filter below.
+    val currentVineyardSessionCount = state.yieldSessions.count {
+        it.vineyardId == state.selectedVineyardId
+    }
+    val sampledBlockCount = currentReport.blocks.count { it.samplesRecorded > 0 }
+    val currentTonnes = currentReport.totalTonnes?.let { "${formatTonnes(it)} t" }
+        ?: "Bunch weight required"
+    val currentTonnesPerHa = currentReport.tonnesPerHa?.let {
+        state.regionFormatter.formatYieldPerArea(it)
+    } ?: "—"
 
     Scaffold(
         topBar = {
@@ -1218,6 +1221,21 @@ private fun YieldListView(
                 ) {
                     state.yieldError?.let { err ->
                         item { Text(err, color = VineColors.Destructive, fontSize = 13.sp) }
+                    }
+
+                    // The four iOS-style overview tiles sit ABOVE Vintage.
+                    item(key = "yield-overview-stats") {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            SectionHeader("Yield Overview", onLight = true)
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                                YieldOverviewTile("Estimates", "$currentVineyardSessionCount", Icons.Filled.Assessment, VineColors.LeafGreen, Modifier.weight(1f))
+                                YieldOverviewTile("Blocks Sampled", "$sampledBlockCount", Icons.Filled.SquareFoot, VineColors.Indigo, Modifier.weight(1f))
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                                YieldOverviewTile("Est. Tonnes", currentTonnes, Icons.Filled.Scale, VineColors.Orange, Modifier.weight(1f))
+                                YieldOverviewTile("Avg Yield/${state.regionFormatter.areaUnitAbbreviation}", currentTonnesPerHa, Icons.Filled.TrackChanges, VineColors.Info, Modifier.weight(1f))
+                            }
+                        }
                     }
 
                     // ---- Vintage selector ----
@@ -1306,16 +1324,11 @@ private fun YieldListView(
                         }
                     }
 
-                    item {
-                        VineyardCard {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                YieldStat("Actual", formatTonnes(totalActual), Icons.Filled.Scale, VineColors.Info, Modifier.weight(1f))
-                                YieldStat("Archived est.", formatTonnes(totalEstimated), Icons.Filled.Agriculture, VineColors.LeafGreen, Modifier.weight(1f))
-                                YieldStat("Archived area", state.regionFormatter.formatAreaCompact(totalArea), Icons.Filled.SquareFoot, VineColors.Orange, Modifier.weight(1f))
-                            }
+                    if (grouped.isNotEmpty()) {
+                        item(key = "yield-historical-hdr") {
+                            SectionHeader("Historical Results", onLight = true)
                         }
                     }
-
                     grouped.forEach { (year, yearRecords) ->
                         item(key = "hdr-$year") {
                             SectionHeader("Vintage $year · ${yearRecords.size} record${if (yearRecords.size == 1) "" else "s"}", onLight = true)
@@ -1325,15 +1338,40 @@ private fun YieldListView(
                         }
                     }
 
-                    if (varietySummaries.isNotEmpty()) {
-                        item(key = "variety-hdr") { SectionHeader("All vintages · By Variety", onLight = true) }
-                        items(varietySummaries.size, key = { "var-${varietySummaries[it].key}" }) { idx ->
-                            VarietyYieldCard(summary = varietySummaries[idx], fmt = state.regionFormatter, onClick = { onOpenVariety(varietySummaries[idx]) })
-                        }
-                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun YieldOverviewTile(
+    label: String,
+    value: String,
+    icon: ImageVector,
+    tint: Color,
+    modifier: Modifier = Modifier,
+) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = modifier
+            .height(108.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(vine.cardBackground)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            Text(label, fontSize = 12.sp, color = vine.textSecondary, maxLines = 1)
+        }
+        Text(
+            value,
+            fontSize = if (value.length > 15) 14.sp else 21.sp,
+            fontWeight = FontWeight.Bold,
+            color = vine.textPrimary,
+            maxLines = 2,
+        )
     }
 }
 
