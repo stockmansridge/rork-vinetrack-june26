@@ -4725,9 +4725,7 @@ struct SprayCalculatorView: View {
     }
 
     private var parsedStartEngineHours: Double? {
-        let normalized = startEngineHoursText.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
-        guard let value = Double(normalized), value.isFinite, value >= 0 else { return nil }
-        return value
+        EngineHoursInput.parse(startEngineHoursText)
     }
 
     private var latestSelectedTractorEngineHours: Double? {

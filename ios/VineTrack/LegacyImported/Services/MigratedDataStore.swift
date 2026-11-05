@@ -1702,6 +1702,10 @@ final class MigratedDataStore {
         var trip = next[index]
         trip.isActive = false
         trip.endTime = endedAt
+        // An ended trip is not paused. Duration is still derived from the
+        // recorded pause/resume timestamps, so ending while paused keeps the
+        // paused interval excluded; only the live flag is closed.
+        trip.isPaused = false
         next[index] = trip
         try tripRepo.saveSliceOrThrow(next, for: vineyardId)
         trips = next

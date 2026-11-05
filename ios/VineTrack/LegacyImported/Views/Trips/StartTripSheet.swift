@@ -18,6 +18,10 @@ struct StartTripSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedPaddockIds: Set<UUID> = []
+    /// True while `tracking.startTrip` is in flight. A planned (row-sequence)
+    /// start awaits server acceptance before GPS begins; without this the
+    /// button stayed live and a second tap minted a second Trip identity.
+    @State private var isStartingTrip: Bool = false
     @State private var trackingPattern: TrackingPattern = .sequential
     /// Selected start path (e.g. 0.5, 1.5, … N+0.5). Path X.5 sits between rows X and X+1.
     /// Path 0.5 is before row 1; path (totalRows+0.5) is after the last row.
@@ -244,8 +248,10 @@ struct StartTripSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .disabled(isStartingTrip)
                 }
             }
+            .interactiveDismissDisabled(isStartingTrip)
             .onAppear {
                 if personName.isEmpty, let name = auth.userName {
                     personName = name
@@ -1165,19 +1171,24 @@ struct StartTripSheet: View {
                 handleStart()
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "play.fill")
-                        .font(.headline)
-                    Text("Start Trip")
+                    if isStartingTrip {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: "play.fill")
+                            .font(.headline)
+                    }
+                    Text(isStartingTrip ? "Starting…" : "Start Trip")
                         .font(.headline)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .background(canStartTrip ? Color.blue : Color.gray.opacity(0.4), in: .rect(cornerRadius: 14))
+                .background(canStartTrip && !isStartingTrip ? Color.blue : Color.gray.opacity(0.4), in: .rect(cornerRadius: 14))
                 .foregroundStyle(.white)
                 .shadow(color: canStartTrip ? Color.blue.opacity(0.25) : .clear, radius: 6, y: 3)
             }
             .buttonStyle(.plain)
-            .disabled(!canStartTrip)
+            .disabled(!canStartTrip || isStartingTrip)
+            .accessibilityIdentifier("trip.start")
 
             if !canStartTrip {
                 Text("Select at least one block to start the trip.")
@@ -1213,6 +1224,7 @@ struct StartTripSheet: View {
     }
 
     private func handleStart() {
+        guard !isStartingTrip else { return }
         if isSeedingSelected, !useFrontBox, !useBackBox {
             tracking.errorMessage = "Enable at least one seed box for a Seeding trip."
             return
@@ -1246,7 +1258,7 @@ struct StartTripSheet: View {
         let initialPath = sequence.first
         let startHours: Double? = {
             guard selectedMachineId != nil,
-                  let hours = Double(startEngineHoursText.trimmingCharacters(in: .whitespaces)),
+                  let hours = EngineHoursInput.parse(startEngineHoursText),
                   hours >= 0 else { return nil }
             return hours
         }()
@@ -1258,6 +1270,7 @@ struct StartTripSheet: View {
                 : nil
         }()
 
+        isStartingTrip = true
         tracking.startTrip(
             type: .maintenance,
             primaryPaddockId: primary?.id,
@@ -1278,7 +1291,10 @@ struct StartTripSheet: View {
             operatorCategoryId: accessControl.loadedVineyardId == store.selectedVineyardId ? accessControl.currentWorkerTypeId : nil,
             startEngineHours: startHours,
             seedingDetails: tripSeedingDetails,
-            onStarted: { success in if success { dismiss() } }
+            onStarted: { success in
+                isStartingTrip = false
+                if success { dismiss() }
+            }
         )
     }
 

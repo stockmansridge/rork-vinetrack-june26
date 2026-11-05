@@ -47,6 +47,9 @@ struct ActiveTripView: View {
     /// in the trip stack ever read it — so a blocked End Trip looked like a
     /// completely dead button with no way to discover the cause.
     @State private var endTripBlockedMessage: String?
+    /// The block is only a running fill timer, so the alert can offer the
+    /// explicit "Stop Fill & End Trip" action instead of a dead end.
+    @State private var endTripBlockedByFill: Bool = false
 
     /// Display-only trail segments. Recomputed on a 1Hz throttled timer rather
     /// than every GPS tick or every SwiftUI body invocation.
@@ -460,6 +463,28 @@ struct ActiveTripView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.vertical, 8)
+            }
+            if let message = tracking.errorMessage,
+               SprayTankActualStore.shared.initialMix(tripId: liveTrip.id) == nil {
+                // Tracking errors (location permission, a tank/fill/pause that
+                // could not be saved, a held recording) used to be set on the
+                // service and never shown on this screen.
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(message)
+                        .font(.caption)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        tracking.errorMessage = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .accessibilityLabel("Dismiss message")
+                }
+                .padding(.horizontal, 16).padding(.vertical, 8)
+                .background(Color.orange.opacity(0.12))
+                .accessibilityIdentifier("trip.errorBanner")
             }
             tripInfoBar
 
@@ -1907,15 +1932,7 @@ struct ActiveTripView: View {
             .accessibilityIdentifier("trip.end")
             .confirmationDialog("End Trip?", isPresented: $showEndConfirmation) {
                 Button("End Trip", role: .destructive) {
-                    let outcome = tracking.endTrip()
-                    if outcome.isEnded {
-                        ticker?.invalidate()
-                        ticker = nil
-                    } else {
-                        // The trip is still running, so the ticker must keep
-                        // going and the operator must be told exactly why.
-                        endTripBlockedMessage = outcome.operatorMessage
-                    }
+                    handleEndOutcome(tracking.endTrip())
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -1931,7 +1948,15 @@ struct ActiveTripView: View {
                 ),
                 presenting: endTripBlockedMessage
             ) { _ in
-                Button("OK", role: .cancel) { endTripBlockedMessage = nil }
+                if endTripBlockedByFill {
+                    Button("Stop Fill & End Trip", role: .destructive) {
+                        endTripBlockedMessage = nil
+                        endTripBlockedByFill = false
+                        // Present any follow-up block after this alert closes.
+                        Task { @MainActor in handleEndOutcome(tracking.stopFillAndEndTrip()) }
+                    }
+                }
+                Button("OK", role: .cancel) { endTripBlockedMessage = nil; endTripBlockedByFill = false }
             } message: { message in
                 Text(message)
             }
@@ -1943,6 +1968,18 @@ struct ActiveTripView: View {
     }
 
     // MARK: - Helpers
+
+    private func handleEndOutcome(_ outcome: TripEndOutcome) {
+        if outcome.isEnded {
+            ticker?.invalidate()
+            ticker = nil
+            return
+        }
+        // The trip is still running, so the ticker must keep going and the
+        // operator must be told exactly why.
+        if case .blocked(.fillingTank) = outcome { endTripBlockedByFill = true } else { endTripBlockedByFill = false }
+        endTripBlockedMessage = outcome.operatorMessage
+    }
 
     /// Label for the primary "mark current path complete & move on" button.
     /// Includes the actual planned path number so the operator can see in

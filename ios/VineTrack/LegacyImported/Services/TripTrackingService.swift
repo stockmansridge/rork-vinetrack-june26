@@ -312,7 +312,12 @@ final class TripTrackingService {
             let journal = try occurrenceJournal(for: trip, initializeIfMissing: false)
             guard let state = try journal.load() else { return trip }
             return try trip.withOccurrenceProjection(state.projected)
-        } catch { errorMessage = error.localizedDescription; return trip }
+        } catch {
+            // Read-only accessor evaluated during SwiftUI body updates: it must
+            // not publish state. `occurrenceActivationMessage` already surfaces
+            // an unreadable journal as held/recovery on the trip screen.
+            return trip
+        }
     }
 
     /// Admission precedes live-state changes as well as the store/journal guards.
@@ -904,6 +909,24 @@ final class TripTrackingService {
         errorMessage = nil
     }
 
+    // MARK: - Durable operator actions
+
+    /// Saves an operator-initiated Trip change and reports a failed disk write
+    /// instead of swallowing it. Live GPS samples keep the non-throwing path;
+    /// a Pause, Fill or row action that never reached disk used to vanish
+    /// silently and leave duration, fill time or coverage wrong after relaunch.
+    @discardableResult
+    private func saveOperatorChange(_ trip: Trip, failure: String) -> Bool {
+        guard let store else { return false }
+        do {
+            try store.updateTripOrThrow(trip)
+            return true
+        } catch {
+            errorMessage = failure
+            return false
+        }
+    }
+
     // MARK: - Pause / Resume
 
     func pauseTrip() {
@@ -914,7 +937,7 @@ final class TripTrackingService {
         guard var trip = activeTrip, !trip.isPaused else { return }
         trip.isPaused = true
         trip.pauseTimestamps.append(Date())
-        store?.updateTrip(trip)
+        guard saveOperatorChange(trip, failure: "Pause could not be saved on this device. Tracking continues; please retry Pause.") else { return }
         isPaused = true
         stopTrackingLoops(stopLocation: false)
         #if DEBUG
@@ -930,7 +953,7 @@ final class TripTrackingService {
         guard var trip = activeTrip, trip.isPaused else { return }
         trip.isPaused = false
         trip.resumeTimestamps.append(Date())
-        store?.updateTrip(trip)
+        guard saveOperatorChange(trip, failure: "Resume could not be saved on this device. The trip is still paused; please retry Resume.") else { return }
         isPaused = false
         beginTracking()
         #if DEBUG
@@ -996,17 +1019,18 @@ final class TripTrackingService {
         // no "next row" to trigger the advance). Safe to call even if
         // the sheet already invoked it; idempotent. No-ops on Free Drive,
         // which has no planned sequence to finalise.
-        finalizePendingRowsForReview()
+        guard finalizePendingRowsForReview() else {
+            return .persistenceFailed(errorMessage ?? "The final row credits could not be saved.")
+        }
 
         guard var trip = activeTrip else { return .noActiveTrip }
         // Persist the manual-correction audit trail onto the trip so the
         // saved record (and the Trip Report) reflects every override that
         // happened during the live trip.
-        if !diagManualCorrectionEvents.isEmpty {
-            for event in diagManualCorrectionEvents where !trip.manualCorrectionEvents.contains(event) {
-                trip.manualCorrectionEvents.append(event)
-            }
-            store?.updateTrip(trip)
+        guard persistManualCorrections(into: &trip) else {
+            let detail = "The trip's correction history could not be saved."
+            errorMessage = TripEndOutcome.persistenceFailed(detail).operatorMessage
+            return .persistenceFailed(detail)
         }
 
         // Durably record the finished trip BEFORE tearing down tracking or
@@ -1026,6 +1050,17 @@ final class TripTrackingService {
             return .persistenceFailed(detail)
         }
 
+        finishLocalEnd(of: trip)
+        breadcrumb("endTrip")
+        // The final state is already durably on disk (endTripOrThrow above),
+        // and only then was tracking torn down and the active trip cleared.
+        return .ended
+    }
+
+    /// Shared teardown once a Trip end is durably on disk (legacy and
+    /// occurrence paths alike): final spray weather snapshot, stop GPS and
+    /// timers, and clear every live value so the next Trip starts clean.
+    private func finishLocalEnd(of trip: Trip) {
         Task { await SprayReportRepository.shared.captureUnavailableIfDue(for: trip, at: Date(), isFinal: true) }
         sprayWeatherTask?.cancel()
         sprayWeatherTask = nil
@@ -1089,10 +1124,40 @@ final class TripTrackingService {
         diagFreeDriveWindowSeconds = 0
         diagFreeDriveDwellSamples = 0
         diagFreeDriveCompletedCount = 0
-        breadcrumb("endTrip")
-        // The final state is already durably on disk (endTripOrThrow above),
-        // and only then was tracking torn down and the active trip cleared.
-        return .ended
+    }
+
+    /// Writes the in-memory manual-correction audit trail onto the Trip.
+    /// Returns false only when there were events and the save failed.
+    private func persistManualCorrections(into trip: inout Trip) -> Bool {
+        guard !diagManualCorrectionEvents.isEmpty else { return true }
+        let missing = diagManualCorrectionEvents.filter { !trip.manualCorrectionEvents.contains($0) }
+        guard !missing.isEmpty else { return true }
+        trip.manualCorrectionEvents.append(contentsOf: missing)
+        do {
+            try store?.updateTripOrThrow(trip)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// One explicit operator action for "Stop Fill & End Trip". The end gate
+    /// still refuses to invent a fill end; this records it at the moment the
+    /// operator chose to finish, durably, and only then ends the trip.
+    @discardableResult
+    func stopFillAndEndTrip() -> TripEndOutcome {
+        guard let trip = activeTrip else { return .noActiveTrip }
+        let fillOpen = trip.isFillingTank
+            || trip.tankSessions.contains { $0.fillStartTime != nil && $0.fillEndTime == nil }
+        if fillOpen {
+            stopFillTimer()
+            guard let after = activeTrip,
+                  !after.isFillingTank,
+                  !after.tankSessions.contains(where: { $0.fillStartTime != nil && $0.fillEndTime == nil }) else {
+                return .persistenceFailed(errorMessage ?? "The fill time could not be saved.")
+            }
+        }
+        return endTrip()
     }
 
     // MARK: - Manual point
@@ -1625,7 +1690,7 @@ final class TripTrackingService {
             trip.fillingTankNumber = nextNumber
         }
         trip.isFillingTank = true
-        store?.updateTrip(trip)
+        saveOperatorChange(trip, failure: "The fill timer could not be saved on this device. Please retry Start Fill.")
     }
 
     /// Stop the fill timer. Records fillEndTime on the open fill session.
@@ -1637,7 +1702,7 @@ final class TripTrackingService {
         }
         trip.isFillingTank = false
         trip.fillingTankNumber = nil
-        store?.updateTrip(trip)
+        saveOperatorChange(trip, failure: "The fill time could not be saved on this device. Please retry Stop Fill.")
     }
 
     /// Cancel a running fill timer without recording it.
@@ -1656,7 +1721,7 @@ final class TripTrackingService {
         }
         trip.isFillingTank = false
         trip.fillingTankNumber = nil
-        store?.updateTrip(trip)
+        saveOperatorChange(trip, failure: "The fill timer reset could not be saved on this device. Please retry.")
     }
 
     // MARK: - Resume after launch
@@ -2697,6 +2762,11 @@ final class TripTrackingService {
             }
         }
         if case let .blocked(blocker) = TripEndGate.evaluate(trip: readyTrip) { errorMessage = blocker.message; return .blocked(blocker) }
+        guard persistManualCorrections(into: &readyTrip) else {
+            let detail = "The trip's correction history could not be saved."
+            errorMessage = TripEndOutcome.persistenceFailed(detail).operatorMessage
+            return .persistenceFailed(detail)
+        }
         do {
             let journal = try occurrenceJournal(for: readyTrip)
             let ended = try prepareTrackedSprayEnd(readyTrip, store: store)
@@ -2717,7 +2787,7 @@ final class TripTrackingService {
             local.isActive = false; local.isPaused = false; local.endTime = ended
             try store.updateTripOrThrow(local)
             store.releaseDeviceTripAfterLocalEnd(local)
-            stopTrackingLoops(stopLocation: true); isTracking = false; isPaused = false
+            finishLocalEnd(of: local)
             errorMessage = "Trip stopped locally. Occurrence review is saved; finalisation awaits dependency-safe sync."
             return .ended
         } catch {
@@ -2753,7 +2823,7 @@ final class TripTrackingService {
             if idx + 1 < trip.rowSequence.count {
                 trip.nextRowNumber = trip.rowSequence[idx + 1]
             }
-            store?.updateTrip(trip)
+            guard saveOperatorChange(trip, failure: "The path change could not be saved on this device. Please retry.") else { return }
             recordCorrection("snap_to_live_path: \(livePath)")
         }
     }
@@ -2786,7 +2856,7 @@ final class TripTrackingService {
         if trip.rowSequence.indices.contains(clamped) {
             trip.currentRowNumber = trip.rowSequence[clamped]
         }
-        store?.updateTrip(trip)
+        guard saveOperatorChange(trip, failure: "Path \(String(format: "%g", path)) could not be saved as complete on this device. Please retry.") else { return }
         recordCorrection("manual_complete: \(path)")
     }
 
@@ -2816,7 +2886,7 @@ final class TripTrackingService {
         if trip.rowSequence.indices.contains(clamped) {
             trip.currentRowNumber = trip.rowSequence[clamped]
         }
-        store?.updateTrip(trip)
+        guard saveOperatorChange(trip, failure: "Path \(String(format: "%g", path)) could not be saved as skipped on this device. Please retry.") else { return }
         recordCorrection("manual_skip: \(path)")
     }
 
@@ -2884,7 +2954,7 @@ final class TripTrackingService {
         let restored = trip.rowSequence[newIndex]
         trip.completedPaths.removeAll { abs($0 - restored) < 0.01 }
         trip.skippedPaths.removeAll { abs($0 - restored) < 0.01 }
-        store?.updateTrip(trip)
+        guard saveOperatorChange(trip, failure: "Undo could not be saved on this device. Please retry.") else { return }
         recordCorrection("manual_back_path: \(restored)")
     }
 
@@ -2906,7 +2976,7 @@ final class TripTrackingService {
             if idx + 1 < trip.rowSequence.count {
                 trip.nextRowNumber = trip.rowSequence[idx + 1]
             }
-            store?.updateTrip(trip)
+            guard saveOperatorChange(trip, failure: "The realignment could not be saved on this device. Please retry.") else { return }
             recordCorrection("auto_realign_accepted: \(path)")
         }
         autoRealignSuggestedPath = nil
@@ -3064,11 +3134,47 @@ final class TripTrackingService {
     ///    the operator stops the trip before the exit-corridor rule
     ///    triggers.
     /// Idempotent — already completed/skipped paths are left alone.
-    func finalizePendingRowsForReview() {
-        guard let active = activeTrip, store?.operationalWriteAuthority.canWrite(vineyardId: active.vineyardId.uuidString) == true else { return }
-        guard let store, var trip = activeTrip else { return }
-        guard trip.coverageBasis == .legacy else { return }
-        guard !trip.rowSequence.isEmpty else { return }
+    /// Returns false only when credits were due but could not be saved.
+    @discardableResult
+    func finalizePendingRowsForReview() -> Bool {
+        guard let active = activeTrip, store?.operationalWriteAuthority.canWrite(vineyardId: active.vineyardId.uuidString) == true else { return true }
+        guard let store, var trip = activeTrip else { return true }
+        let credited = pendingRowCredits(for: trip, store: store)
+        guard !credited.isEmpty else { return true }
+        trip.completedPaths.append(contentsOf: credited)
+
+        // Advance the sequence index past any newly completed entries
+        // so the End Trip Review counts reflect the fix immediately.
+        var idx = trip.sequenceIndex
+        while idx < trip.rowSequence.count {
+            let p = trip.rowSequence[idx]
+            if !trip.completedPaths.contains(p) && !trip.skippedPaths.contains(p) { break }
+            idx += 1
+        }
+        let clamped = min(idx, max(trip.rowSequence.count - 1, 0))
+        if clamped != trip.sequenceIndex {
+            trip.sequenceIndex = clamped
+            if trip.rowSequence.indices.contains(clamped) {
+                trip.currentRowNumber = trip.rowSequence[clamped]
+            }
+        }
+        guard saveOperatorChange(trip, failure: "The final row credits could not be saved on this device. Please retry.") else { return false }
+        let summary = credited.sorted().map { String(format: "%g", $0) }.joined(separator: ",")
+        recordCorrection("end_review_auto_finalize: [\(summary)]")
+        return true
+    }
+
+    /// Read-only preview of the rows `finalizePendingRowsForReview()` would
+    /// credit right now. End Trip Review shows these without saving them, so
+    /// opening the review and pressing Cancel no longer marks rows complete.
+    func pendingRowCreditsForReview() -> [Double] {
+        guard let store, let trip = activeTrip else { return [] }
+        return pendingRowCredits(for: trip, store: store)
+    }
+
+    private func pendingRowCredits(for trip: Trip, store: MigratedDataStore) -> [Double] {
+        guard trip.coverageBasis == .legacy else { return [] }
+        guard !trip.rowSequence.isEmpty else { return [] }
 
         // Resolve all paddocks selected for this trip.
         var ids: [UUID] = trip.paddockIds
@@ -3076,7 +3182,7 @@ final class TripTrackingService {
         let paddocks: [Paddock] = ids.compactMap { id in
             store.paddocks.first(where: { $0.id == id })
         }
-        guard !paddocks.isEmpty else { return }
+        guard !paddocks.isEmpty else { return [] }
 
         // Candidate rows to revisit: the current planned sequence path
         // and the locked live path (if different and still in the
@@ -3140,31 +3246,11 @@ final class TripTrackingService {
             let lockedFallbackHits = isCurrentlyLocked && accumulated >= 3.0 && isEdge
 
             if accumulated >= threshold || lockedFallbackHits {
-                trip.completedPaths.append(path)
                 credited.append(path)
             }
         }
 
-        guard !credited.isEmpty else { return }
-
-        // Advance the sequence index past any newly completed entries
-        // so the End Trip Review counts reflect the fix immediately.
-        var idx = trip.sequenceIndex
-        while idx < trip.rowSequence.count {
-            let p = trip.rowSequence[idx]
-            if !trip.completedPaths.contains(p) && !trip.skippedPaths.contains(p) { break }
-            idx += 1
-        }
-        let clamped = min(idx, max(trip.rowSequence.count - 1, 0))
-        if clamped != trip.sequenceIndex {
-            trip.sequenceIndex = clamped
-            if trip.rowSequence.indices.contains(clamped) {
-                trip.currentRowNumber = trip.rowSequence[clamped]
-            }
-        }
-        store.updateTrip(trip)
-        let summary = credited.sorted().map { String(format: "%g", $0) }.joined(separator: ",")
-        recordCorrection("end_review_auto_finalize: [\(summary)]")
+        return credited
     }
 
     private func rowLength(forPath path: Double, paddock: Paddock) -> Double? {

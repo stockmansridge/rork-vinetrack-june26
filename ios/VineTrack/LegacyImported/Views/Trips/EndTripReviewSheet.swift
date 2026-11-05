@@ -11,6 +11,9 @@ struct EndTripReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var manualCompletes: Set<Double> = []
+    /// Rows the final completion pass WILL credit on Finish. Shown as complete
+    /// but not saved until Finish, so Cancel leaves the trip untouched.
+    @State private var pendingAutoCredits: Set<Double> = []
     @State private var manualSkips: Set<Double> = []
     /// Optional free-text completion notes typed by the operator.
     /// Persisted onto the trip and synced as `trips.completion_notes`.
@@ -29,6 +32,7 @@ struct EndTripReviewSheet: View {
     /// operator can act on it, rather than dismissing over a trip that is
     /// in fact still running.
     @State private var finishBlockedMessage: String?
+    @State private var finishBlockedByFill: Bool = false
 
     private struct DisplayRow: Identifiable {
         let id: Int
@@ -58,7 +62,10 @@ struct EndTripReviewSheet: View {
         let derived = RowCompletionDeriver.results(for: live)
         return derived.enumerated().map { idx, r in
             var result = r
-            if result.status == .notComplete,
+            if result.status != .complete,
+               pendingAutoCredits.contains(where: { abs($0 - r.path) < 0.01 }) {
+                result = RowCompletionResult(path: r.path, status: .complete, source: .auto)
+            } else if result.status == .notComplete,
                let cp = currentPath,
                abs(cp - r.path) < 0.01 {
                 result = RowCompletionResult(path: r.path, status: .partial, source: .auto)
@@ -184,12 +191,12 @@ struct EndTripReviewSheet: View {
             .navigationTitle("Review & Finish Trip")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
-                // Final completion pass: credits the current/last
-                // locked row if it was clearly driven but never
-                // produced a normal row-end transition (typical for
-                // first row started mid-way and last row with no
-                // following row to trigger advance).
-                tracking.finalizePendingRowsForReview()
+                // Preview (never save) the final completion pass that
+                // credits the current/last locked row if it was clearly
+                // driven but never produced a normal row-end transition.
+                // The credit is applied by endTrip() on Finish; Cancel
+                // must leave the live trip exactly as it was.
+                pendingAutoCredits = Set(tracking.pendingRowCreditsForReview())
                 // Pre-fill any existing notes (e.g. when reopening the
                 // sheet after dismissing without finishing).
                 if completionNotes.isEmpty,
@@ -199,7 +206,9 @@ struct EndTripReviewSheet: View {
                 }
                 if endEngineHoursText.isEmpty,
                    let existing = tracking.activeTrip?.endEngineHours {
-                    endEngineHoursText = Self.engineHoursFormatter.string(from: NSNumber(value: existing)) ?? ""
+                    // Grouping-free text: "1,234.5" used to fail to parse
+                    // on Finish and erase the saved end reading.
+                    endEngineHoursText = EngineHoursInput.editableText(existing)
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -207,7 +216,14 @@ struct EndTripReviewSheet: View {
                 get: { finishBlockedMessage != nil },
                 set: { if !$0 { finishBlockedMessage = nil } }
             )) {
-                Button("OK", role: .cancel) { finishBlockedMessage = nil }
+                if finishBlockedByFill {
+                    Button("Stop Fill & End Trip", role: .destructive) {
+                        finishBlockedMessage = nil
+                        finishBlockedByFill = false
+                        Task { @MainActor in applyAndFinish(stoppingFill: true) }
+                    }
+                }
+                Button("OK", role: .cancel) { finishBlockedMessage = nil; finishBlockedByFill = false }
             } message: {
                 Text(finishBlockedMessage ?? "")
             }
@@ -237,9 +253,7 @@ struct EndTripReviewSheet: View {
     private var parsedEndEngineHours: Double? {
         let trimmed = endEngineHoursText.trimmingCharacters(in: .whitespaces)
         guard liveTrip.startEngineHours != nil,
-              let value = Double(trimmed),
-              value.isFinite,
-              value >= 0 else { return nil }
+              let value = EngineHoursInput.parse(trimmed) else { return nil }
         return value
     }
 
@@ -471,6 +485,7 @@ struct EndTripReviewSheet: View {
         let isManualCompleted = row.manuallyTicked
         let live = liveTrip
         let alreadyCompleted = live.completedPaths.contains(where: { abs($0 - row.path) < 0.01 })
+            || pendingAutoCredits.contains(where: { abs($0 - row.path) < 0.01 })
         let alreadySkipped = live.skippedPaths.contains(where: { abs($0 - row.path) < 0.01 })
         let displayStatus = row.status
 
@@ -579,7 +594,21 @@ struct EndTripReviewSheet: View {
         }
     }
 
-    private func applyAndFinish() {
+    private func handle(_ outcome: TripEndOutcome) {
+        if outcome.isEnded { dismiss(); return }
+        if case .blocked(.fillingTank) = outcome { finishBlockedByFill = true } else { finishBlockedByFill = false }
+        finishBlockedMessage = outcome.operatorMessage
+    }
+
+    private func applyAndFinish(stoppingFill: Bool = false) {
+        // A typed reading that cannot be read must not be dropped silently.
+        if liveTrip.startEngineHours != nil,
+           !endEngineHoursText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           parsedEndEngineHours == nil {
+            finishBlockedByFill = false
+            finishBlockedMessage = "The end engine hours \"\(endEngineHoursText)\" can't be read. Enter a number such as 1234.5, or clear the field."
+            return
+        }
         if liveTrip.coverageBasis != .legacy {
             guard liveTrip.coverageBasis == .occurrence, var current = tracking.activeTrip else {
                 finishBlockedMessage = "Update required. Saved occurrence states were retained."; return
@@ -588,8 +617,7 @@ struct EndTripReviewSheet: View {
             current.endEngineHours = parsedEndEngineHours
             do { try store.updateTripOrThrow(current) }
             catch { finishBlockedMessage = error.localizedDescription; return }
-            let outcome = tracking.endTrip()
-            if outcome.isEnded { dismiss() } else { finishBlockedMessage = outcome.operatorMessage }
+            handle(stoppingFill ? tracking.stopFillAndEndTrip() : tracking.endTrip())
             return
         }
         // Persist any manual ticks AND the optional completion notes
@@ -617,7 +645,11 @@ struct EndTripReviewSheet: View {
                 changed = true
             }
             if changed {
-                store.updateTrip(live)
+                do { try store.updateTripOrThrow(live) }
+                catch {
+                    finishBlockedMessage = "Your review changes could not be saved on this device, so the trip is still running. \(error.localizedDescription)"
+                    return
+                }
             }
             if !manualCompletes.isEmpty {
                 let summary = manualCompletes
@@ -631,11 +663,6 @@ struct EndTripReviewSheet: View {
         // Only dismiss once the trip is genuinely ended. Dismissing on a
         // blocked or failed end hid the cause and left the operator back on
         // a still-active trip with no explanation.
-        let outcome = tracking.endTrip()
-        if outcome.isEnded {
-            dismiss()
-        } else {
-            finishBlockedMessage = outcome.operatorMessage
-        }
+        handle(stoppingFill ? tracking.stopFillAndEndTrip() : tracking.endTrip())
     }
 }

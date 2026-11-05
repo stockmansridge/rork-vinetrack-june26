@@ -1,8 +1,20 @@
 import Foundation
 
+/// Server end/delete state of one Trip row, without its GPS history.
+nonisolated struct TripServerEndState: Sendable, Equatable {
+    let id: UUID
+    let hasEnded: Bool
+    let isDeleted: Bool
+}
+
 protocol TripSyncRepositoryProtocol: Sendable {
     func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip]
     func fetchAllTrips(vineyardId: UUID) async throws -> [BackendTrip]
+    /// Every Trip id in the vineyard with only its end/delete state. Upload
+    /// preflight used to download every Trip's full GPS history on each sweep.
+    func fetchTripEndStates(vineyardId: UUID) async throws -> [TripServerEndState]
+    /// Full rows for the given ids only (the Trips queued for upload).
+    func fetchTrips(ids: [UUID], vineyardId: UUID) async throws -> [BackendTrip]
     /// Fetch every non-deleted trip the current user can see across all
     /// vineyards (RLS gates the result). Used by the admin trip audit tool.
     func fetchAllAccessibleTrips() async throws -> [BackendTrip]
@@ -31,6 +43,18 @@ protocol TripSyncRepositoryProtocol: Sendable {
 }
 
 extension TripSyncRepositoryProtocol {
+    // Defaults keep test fakes and probes working unchanged; the Supabase
+    // repository overrides both with column- and id-scoped queries.
+    func fetchTripEndStates(vineyardId: UUID) async throws -> [TripServerEndState] {
+        try await fetchAllTrips(vineyardId: vineyardId).map {
+            TripServerEndState(id: $0.id, hasEnded: $0.endTime != nil, isDeleted: $0.deletedAt != nil)
+        }
+    }
+    func fetchTrips(ids: [UUID], vineyardId: UUID) async throws -> [BackendTrip] {
+        let wanted = Set(ids)
+        guard !wanted.isEmpty else { return [] }
+        return try await fetchAllTrips(vineyardId: vineyardId).filter { wanted.contains($0.id) }
+    }
     func reverifyDeletion(_ scope: TripDeletionJournal.Scope, isCurrent: () -> Bool) async throws -> String {
         throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ABSENCE_OR_ACCESS_UNVERIFIED")
     }

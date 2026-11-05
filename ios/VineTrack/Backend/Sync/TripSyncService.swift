@@ -1353,8 +1353,13 @@ final class TripSyncService {
         if !dirty.isEmpty {
             // An admin end wins over an offline active snapshot regardless of its
             // client timestamp. Read before replay; do not upload that snapshot.
-            let serverTrips = try await repository.fetchAllTrips(vineyardId: vineyardId)
-            let serverIds = Set(serverTrips.map { $0.id })
+            // Light preflight: ids + end/delete state for the vineyard, then
+            // full rows ONLY for queued Trips. Previously every sweep pulled
+            // every Trip's complete GPS history here (twice per sweep).
+            let serverStates = try await repository.fetchTripEndStates(vineyardId: vineyardId)
+            let serverIds = Set(serverStates.map(\.id))
+            let queuedOnServer = serverStates.filter { dirty[$0.id] != nil }.map(\.id)
+            let serverTrips = try await repository.fetchTrips(ids: queuedOnServer, vineyardId: vineyardId)
             let acceptedIds = Set(try store.acceptedLegacySprayPairs(vineyard: vineyardId).map { $0.trip.id })
             for id in Array(dirty.keys) where acceptedIds.contains(id) && !serverIds.contains(id) {
                 dirty.removeValue(forKey: id)

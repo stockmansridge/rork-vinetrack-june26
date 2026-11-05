@@ -268,12 +268,29 @@ struct NewMainTabView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
+                // A device-owned trip must keep recording after a relaunch or
+                // return to foreground even if the operator never reopens the
+                // Trip tab. No-op when nothing is active or already tracking.
+                tripTracking.resumeIfNeeded()
                 Task {
                     await runFullSweep(alertRefresh: .refresh)
                     await prefetchOptimalRipenessWeather()
                 }
                 Task { await appNoticeService.refresh() }
             }
+        }
+        // Selected-vineyard restore can land after TripTrackingService.configure;
+        // the owned trip is only resolvable once its vineyard is selected.
+        .onChange(of: store.selectedVineyardId) { _, _ in
+            tripTracking.resumeIfNeeded()
+        }
+        // Upload a Trip start or a durably saved Trip end straight away rather
+        // than waiting up to three minutes for the periodic sweep. The sweep
+        // keeps its dependency order (tank actuals before the final ended
+        // state) and coalesces with any sweep already running.
+        .onChange(of: store.deviceActiveTripId) { old, new in
+            guard old != new, network.isOnline, scenePhase == .active else { return }
+            Task { await runFullSweep(alertRefresh: .none) }
         }
         // Retry queued pushes the moment the network comes back.
         .onChange(of: network.isOnline) { _, online in

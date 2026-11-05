@@ -104,6 +104,18 @@ nonisolated enum TripTankCASRequestURL {
     }
 }
 
+/// Column-scoped preflight row: no GPS, tank or coverage payload.
+private nonisolated struct TripEndStateRow: Decodable, Sendable {
+    let id: UUID
+    let endTime: String?
+    let deletedAt: String?
+    enum CodingKeys: String, CodingKey {
+        case id
+        case endTime = "end_time"
+        case deletedAt = "deleted_at"
+    }
+}
+
 final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     private let provider: SupabaseClientProvider
     private let deletionAuthority: VineyardWriteAuthority
@@ -164,6 +176,60 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
 
     func fetchAllTrips(vineyardId: UUID) async throws -> [BackendTrip] {
         try await fetchTrips(vineyardId: vineyardId, since: nil)
+    }
+
+    func fetchTripEndStates(vineyardId: UUID) async throws -> [TripServerEndState] {
+        do {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        // Paged so a vineyard above the PostgREST row cap is never truncated
+        // (an absent id must not be mistaken for a missing server parent).
+        let page = 1000
+        var offset = 0
+        var states: [TripServerEndState] = []
+        while true {
+            let rows: [TripEndStateRow] = try await provider.client
+                .from("trips")
+                .select("id,end_time,deleted_at")
+                .eq("vineyard_id", value: vineyardId.uuidString)
+                .order("id", ascending: true)
+                .range(from: offset, to: offset + page - 1)
+                .execute()
+                .value
+            states.append(contentsOf: rows.map {
+                TripServerEndState(id: $0.id, hasEnded: $0.endTime != nil, isDeleted: $0.deletedAt != nil)
+            })
+            guard rows.count == page else { break }
+            offset += page
+        }
+        return states
+        } catch {
+            RecoveryDecodeEvidence.record(error, source: "supabase_response", operation: "trips.fetchTripEndStates")
+            throw error
+        }
+    }
+
+    func fetchTrips(ids: [UUID], vineyardId: UUID) async throws -> [BackendTrip] {
+        do {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let unique = Array(Set(ids))
+        guard !unique.isEmpty else { return [] }
+        var result: [BackendTrip] = []
+        for start in stride(from: 0, to: unique.count, by: 50) {
+            let chunk = unique[start..<min(start + 50, unique.count)].map(\.uuidString)
+            let rows: [BackendTrip] = try await provider.client
+                .from("trips")
+                .select()
+                .eq("vineyard_id", value: vineyardId.uuidString)
+                .in("id", values: chunk)
+                .execute()
+                .value
+            result.append(contentsOf: rows)
+        }
+        return result
+        } catch {
+            RecoveryDecodeEvidence.record(error, source: "supabase_response", operation: "trips.fetchTripsById")
+            throw error
+        }
     }
 
     /// Exact scoped lookup: a capped vineyard list cannot establish absence.
