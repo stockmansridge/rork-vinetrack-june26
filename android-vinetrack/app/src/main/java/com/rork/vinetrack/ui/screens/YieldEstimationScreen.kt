@@ -175,12 +175,15 @@ fun YieldEstimationScreen(
         }
         showCountMethod = false
     }
-    if (showCountMethod && state.isSystemAdmin) {
+    if (showCountMethod) {
         AlertDialog(onDismissRequest = { showCountMethod = false },
-            title = { Text("Start Bunch Count Trip") },
+            title = { Text("Choose Yield Estimate Count Method") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = { startCount(false) }) { Text("1. Bunches Per Vine Count") }
-                TextButton(onClick = { startCount(true) }) { Text("2. Quadrant Count") }
+                TextButton(onClick = { startCount(true) }, enabled = state.isSystemAdmin) {
+                    Text("2. Quadrant Count" + if (state.isSystemAdmin) "" else " (System Admin only)")
+                }
+                TextButton(onClick = {}, enabled = false) { Text("3. Panel Count (not yet enabled)") }
             } },
             confirmButton = { TextButton(onClick = { showCountMethod = false }) { Text("Cancel") } })
     }
@@ -276,7 +279,7 @@ fun YieldEstimationScreen(
                 draft = draft,
                 completedTrips = completedTrips,
                 onStart = {
-                    if (state.isSystemAdmin) showCountMethod = true else startCount(false)
+                    showCountMethod = true
                 },
                 onResume = { resumed ->
                     activeTripId = resumed.id
@@ -334,7 +337,7 @@ private fun BunchCountTripHome(
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
-                title = { Text("Bunch Count Trips") },
+                title = { Text("Yield Estimate Trips") },
                 navigationIcon = { BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
@@ -351,16 +354,15 @@ private fun BunchCountTripHome(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Icon(Icons.Filled.Explore, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(22.dp))
-                        Text("Bunch Count Trip", color = vine.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        Text("Yield Estimate Trip", color = vine.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                     }
                     Text(
-                        "Perform a bunch count trip to update the current yield estimate. " +
-                            "Walk the sampling route, count bunches at each sample site, then confirm " +
-                            "bunch weights to produce the estimate for each block.",
+                        "Choose a count method and collect yield samples by block. " +
+                            "Permanent sampling locations are optional.",
                         color = vine.textSecondary, fontSize = 13.sp,
                     )
                     Text(
-                        "Repeat trips through the season — the latest completed trip drives the current Yield Estimate for its blocks; earlier trips stay in history.",
+                        "Completed trips remain in history. The active estimate selection is unchanged until the new methods are enabled.",
                         color = vine.textSecondary, fontSize = 12.sp,
                     )
                 }
@@ -371,17 +373,17 @@ private fun BunchCountTripHome(
                     onClick = onStart,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     enabled = blocks.isNotEmpty(),
-                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Info),
                 ) {
                     Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Start Bunch Count Trip", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Start Yield Estimate Trip", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
 
             if (blocks.isEmpty()) {
                 VineyardCard {
                     Text(
-                        "Map at least one block boundary in Blocks before starting a bunch count trip.",
+                        "Map at least one block boundary in Blocks before starting a yield estimate trip.",
                         color = vine.textSecondary, fontSize = 13.sp,
                     )
                 }
