@@ -62,9 +62,12 @@ struct YieldEstimationView: View {
                 introContent
             }
         }
-        .confirmationDialog("Start Bunch Count Trip", isPresented: $showCountMethod, titleVisibility: .visible) {
+        .confirmationDialog("Choose Yield Estimate Count Method", isPresented: $showCountMethod, titleVisibility: .visible) {
             Button("1. Bunches Per Vine Count") { startTrip() }
-            if systemAdmin.isSystemAdmin { Button("2. Quadrant Count") { startQuadrantTrip() } }
+            Button("2. Quadrant Count") { startQuadrantTrip() }
+                .disabled(!systemAdmin.isSystemAdmin)
+            Button("3. Panel Count (not yet enabled)") { }
+                .disabled(true)
             Button("Cancel", role: .cancel) {}
         }
         .task { if refreshSharedDefaults { await syncSamplingDefault() } }
@@ -90,12 +93,12 @@ struct YieldEstimationView: View {
         ScrollView {
             VStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Bunch Count Trip", systemImage: "figure.walk")
+                    Label("Yield Estimate Trip", systemImage: "figure.walk")
                         .font(.headline)
-                    Text("Perform a bunch count trip to update the current yield estimate. Walk the sampling route, count bunches at each sample site, then confirm bunch weights to produce the estimate for each block.")
+                    Text("Choose a count method and collect yield samples by block. Permanent sampling locations are optional.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text("Repeat trips through the season — the latest completed trip drives the current Yield Estimate for its blocks; earlier trips stay in history.")
+                    Text("Completed trips remain in history. The current estimate selection is unchanged until the expanded methods are available.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -104,15 +107,15 @@ struct YieldEstimationView: View {
                 .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
 
                 Button {
-                    if systemAdmin.isSystemAdmin { showCountMethod = true } else { startTrip() }
+                    showCountMethod = true
                 } label: {
-                    Label("Start Bunch Count Trip", systemImage: "plus.circle.fill")
+                    Label("Start Yield Estimate Trip", systemImage: "plus.circle.fill")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(VineyardTheme.leafGreen)
+                .tint(.blue)
                 .disabled(paddocks.isEmpty)
 
                 if let draft = activeDraft {
@@ -198,7 +201,7 @@ struct YieldEstimationView: View {
             .padding(.horizontal)
             .padding(.bottom, 32)
         }
-        .navigationTitle("Bunch Count Trips")
+        .navigationTitle("Yield Estimate Trips")
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -269,7 +272,7 @@ struct YieldEstimationView: View {
                 setupContent
             }
         }
-        .navigationTitle(viewModel.isQuadrantCount ? "Quadrant Count" : "Bunch Count Trip")
+        .navigationTitle(viewModel.isQuadrantCount ? "Quadrant Count" : "Yield Estimate Trip")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
