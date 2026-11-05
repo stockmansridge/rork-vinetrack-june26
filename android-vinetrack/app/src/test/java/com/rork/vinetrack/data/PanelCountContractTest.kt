@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.model.PanelCountMeasurement
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 import org.junit.Assert.*
 import org.junit.Test
 
