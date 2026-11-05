@@ -88,6 +88,24 @@ nonisolated enum TankSessionLifecycle {
         return updated
     }
 
+    /// End the single running spray tank before final Trip closure. Does not
+    /// manufacture Actual Use or close fill timers. The caller must durably
+    /// save the returned tank first, then persist Trip End separately.
+    ///
+    /// If evidence is inconsistent, this deliberately leaves the Trip intact;
+    /// TripEndGate will surface the blocker rather than silently finalising.
+    static func endRunningTankBeforeTripEnd(
+        trip: Trip, at timestamp: Date, currentRow: Double?
+    ) -> Trip {
+        guard trip.isActive, trip.endTime == nil,
+              trip.activeTankNumber != nil,
+              !trip.isFillingTank, trip.fillingTankNumber == nil,
+              !trip.tankSessions.contains(where: {
+                  $0.fillStartTime != nil && $0.fillEndTime == nil
+              }) else { return trip }
+        return end(trip: trip, at: timestamp, currentRow: currentRow)
+    }
+
     /// Repairs only an ended active tank with no other open spray or fill. Never changes session data.
     static func reconciled(_ trip: Trip) -> Trip {
         guard let number = trip.activeTankNumber,
