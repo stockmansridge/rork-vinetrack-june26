@@ -561,6 +561,14 @@ private struct PermanentItemPilotEditor: View {
     @State private var showLibrary = false
     @State private var showCamera = false
 
+    // A newly-created server type is reflected in parent state as well as this
+    // in-flight editor. Avoid duplicate Picker IDs on that parent rerender.
+    private var typeOptions: [PermanentItemPilotType] {
+        customTypes.filter { existing in
+            !addedTypes.contains(where: { $0.id == existing.id })
+        } + addedTypes
+    }
+
     init(existing: PermanentItemPilotRow?, paddocks: [Paddock],
          customTypes: [PermanentItemPilotType],
          onCreateType: @escaping (String, String) async throws -> PermanentItemPilotType,
@@ -592,7 +600,7 @@ private struct PermanentItemPilotEditor: View {
                             Text(PermanentItemsPilotPolicy.types[index].label)
                                 .tag(PermanentItemsPilotPolicy.types[index].id)
                         }
-                        ForEach(customTypes + addedTypes) { entry in
+                        ForEach(typeOptions) { entry in
                             Text(entry.name).tag(entry.typeKey)
                         }
                     }
@@ -606,13 +614,13 @@ private struct PermanentItemPilotEditor: View {
                 }
                 HStack(spacing: 8) {
                     Circle().fill(PermanentItemsPilotPolicy.color(
-                        type, custom: customTypes + addedTypes))
+                        type, custom: typeOptions))
                         .frame(width: 14, height: 14)
                     Text("Pin colour")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Text(PermanentItemsPilotPolicy.hex(
-                        type, custom: customTypes + addedTypes))
+                        type, custom: typeOptions))
                         .font(.caption.monospaced()).foregroundStyle(.secondary)
                 }
                 Picker("Block (optional)", selection: $paddockId) {
@@ -671,7 +679,7 @@ private struct PermanentItemPilotEditor: View {
                                 Image(systemName: "mappin.circle.fill")
                                     .font(.largeTitle)
                                     .foregroundStyle(PermanentItemsPilotPolicy.color(
-                                        type, custom: customTypes + addedTypes))
+                                        type, custom: typeOptions))
                             }
                         }
                     }
