@@ -417,7 +417,7 @@ private fun GrowthListView(
                         StageReferenceImage(
                             vm = vm,
                             state = state,
-                            code = el?.takeIf { it == it.toInt().toDouble() }?.let { "EL${it.toInt()}" } ?: "",
+                            code = el?.let { if (it == it.toInt().toDouble()) "EL${it.toInt()}" else "EL$it" } ?: "",
                             modifier = Modifier.size(50.dp),
                         )
                         Column(Modifier.weight(1f)) {

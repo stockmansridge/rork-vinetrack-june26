@@ -278,17 +278,23 @@ internal fun StageReferenceImage(vm: AppViewModel, state: AppUiState, code: Stri
         url = null
         image?.imagePath?.let { vm.requestGrowthStageImageUrl(it) { resolved -> url = resolved } }
     }
-    val model: Any? = url ?: GrowthStageBundledImages.resFor(code)
+    val bundled = GrowthStageBundledImages.referenceFor(code)
+    val model: Any? = url ?: bundled?.first
     if (model != null) {
         AsyncImage(
             model = model,
-            contentDescription = "$code reference image",
+            contentDescription = if (url == null && bundled != null && bundled.second != code)
+                "$code: approximate reference photo from ${bundled.second}"
+                else "$code reference photo",
             contentScale = ContentScale.Crop,
             modifier = modifier.clip(RoundedCornerShape(10.dp)),
         )
     } else {
-        Box(modifier = modifier.clip(RoundedCornerShape(10.dp)).background(VineColors.LeafGreen.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Filled.Spa, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(22.dp))
+        Box(
+            modifier = modifier.clip(RoundedCornerShape(10.dp)).background(VineColors.LeafGreen.copy(alpha = 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("?", color = VineColors.LeafGreen, fontWeight = FontWeight.Bold)
         }
     }
 }

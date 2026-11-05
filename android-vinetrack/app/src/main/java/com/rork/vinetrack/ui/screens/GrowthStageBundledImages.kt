@@ -39,6 +39,22 @@ object GrowthStageBundledImages {
     /** Bundled drawable resource id for an E-L code, or null when none ships. */
     fun resFor(code: String?): Int? = code?.let { byCode[it] }
 
-    /** True when this E-L code has either a bundled photo (custom uploads are checked separately). */
+    /**
+     * A non-bundled E-L value (EL13, EL14, etc.) can use the nearest
+     * bundled *reference* photograph. Callers must clearly label it an
+     * approximation rather than silently claim it is the exact stage.
+     */
+    fun referenceFor(code: String?): Pair<Int, String>? {
+        if (code.isNullOrBlank()) return null // No recorded stage: no fabricated reference.
+        byCode[code]?.let { return it to code }
+        val value = code.removePrefix("EL").toDoubleOrNull() ?: return null
+        val nearest = byCode.keys.minWithOrNull(compareBy<String>(
+            { kotlin.math.abs((it.removePrefix("EL").toDoubleOrNull() ?: Double.POSITIVE_INFINITY) - value) },
+            { it.removePrefix("EL").toDoubleOrNull() ?: Double.POSITIVE_INFINITY },
+        )) ?: return null
+        return byCode.getValue(nearest) to nearest
+    }
+
+    /** True when this E-L code has an exact bundled photo (custom uploads are separate). */
     fun hasBundled(code: String?): Boolean = resFor(code) != null
 }
