@@ -99,10 +99,13 @@ object YieldSampleGenerator {
         paddocks: List<Paddock>,
         remainingYieldMultiplierProvider: (String) -> Double = { 1.0 },
     ): List<BlockYieldEstimate> {
+        // Panel Count evidence uses a different physical denominator. Never
+        // infer 0 bunches/vine from a panel-only reading.
+        if (session.isPanelCount) return emptyList()
         val selected = paddocks.filter { session.isPaddockSelected(it.id) }
         return selected.map { paddock ->
             val sitesInPaddock = session.sitesIn(paddock.id)
-            val recorded = sitesInPaddock.filter { it.isRecorded }
+            val recorded = sitesInPaddock.filter { it.bunchCountEntry != null }
             val remainingYieldMultiplier = remainingYieldMultiplierProvider(paddock.id)
             val totalVines = session.vineCount(paddock)
             val blockWeight = session.bunchWeightKg(paddock.id)
