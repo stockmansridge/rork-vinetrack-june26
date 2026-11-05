@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data.model
 
+import com.rork.vinetrack.data.YieldSiteSetSource
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -139,6 +140,7 @@ data class YieldEstimationSession(
     val blockVineCounts: Map<String, Int> = emptyMap(),
     val countMethod: String? = null,
     val quadrantSectionLengthCm: Double? = null,
+    val siteSetVersions: Map<String, YieldSiteSetSource> = emptyMap(),
 ) {
     val isQuadrantCount: Boolean get() = countMethod == "quadrant" || sampleSites.any { it.bunchCountEntry?.quadrant != null }
     val countMethodName: String get() = if (isQuadrantCount) "Quadrant Count" else "Bunches Per Vine Count"
