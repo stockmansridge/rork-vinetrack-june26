@@ -77,7 +77,7 @@ nonisolated enum CurrentYieldEstimate {
     static func block(session: YieldEstimationSession, paddock: Paddock,
                       weights: [String: YieldMasterWeight], remaining: Double = 1) -> Block {
         let sites = session.sampleSites.filter { $0.paddockId == paddock.id }
-        let counts = sites.compactMap(\.bunchCountEntry).map(\.bunchesPerVine)
+        let counts = session.isPanelCount ? [] : sites.compactMap(\.bunchCountEntry).map(\.bunchesPerVine)
         let average: Double? = counts.isEmpty || counts.contains(where: { !$0.isFinite || $0 < 0 })
             ? nil : counts.reduce(0, +) / Double(counts.count)
         let plantings = plantings(paddock)
@@ -107,6 +107,6 @@ nonisolated enum CurrentYieldEstimate {
         // Never present a partial sum as the whole trip when one contributing weight is missing.
         let total: Double? = sampled.isEmpty || sampled.contains { $0.displayTonnes == nil }
             ? nil : sampled.reduce(0) { $0 + ($1.displayTonnes ?? 0) }
-        return Trip(blocks: blocks, sampledAreaHa: sampled.reduce(0) { $0 + $1.sampledAreaHa }, totalTonnes: total, countMethod: session.isQuadrantCount ? session.countMethodName : nil)
+        return Trip(blocks: blocks, sampledAreaHa: sampled.reduce(0) { $0 + $1.sampledAreaHa }, totalTonnes: total, countMethod: (session.isQuadrantCount || session.isPanelCount) ? session.countMethodName : nil)
     }
 }
