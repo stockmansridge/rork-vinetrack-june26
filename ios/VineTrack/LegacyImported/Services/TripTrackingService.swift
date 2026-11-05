@@ -949,11 +949,28 @@ final class TripTrackingService {
             }
         }
 
-        // The ONLY legitimate blockers are unfinished records that ending
-        // would corrupt: an open tank session or a running fill timer. Both
-        // are clearable by the operator from the tank bar, and the outcome
-        // carries the exact action required.
-        if case let .blocked(blocker) = TripEndGate.evaluate(trip: gateTrip) {
+        // End Trip is one operator action. End the final active tank first,
+        // durably, before persisting the Trip end. An open fill timer or
+        // inconsistent tank evidence remains blocked with no invented data.
+        var readyTrip = gateTrip
+        let finalTankTime = Date()
+        let tankRow = readyTrip.trackingPattern == .freeDrive
+            ? currentRowNumber : currentRowNumber ?? readyTrip.currentRowNumber
+        let tankClosed = TankSessionLifecycle.endRunningTankBeforeTripEnd(
+            trip: readyTrip, at: finalTankTime, currentRow: tankRow
+        )
+        if tankClosed != readyTrip {
+            do {
+                try store?.updateTripOrThrow(tankClosed)
+                readyTrip = tankClosed
+                breadcrumb("End Trip saved final tank first")
+            } catch {
+                let detail = (error as NSError).localizedDescription
+                errorMessage = TripEndOutcome.persistenceFailed(detail).operatorMessage
+                return .persistenceFailed(detail)
+            }
+        }
+        if case let .blocked(blocker) = TripEndGate.evaluate(trip: readyTrip) {
             errorMessage = blocker.message
             return .blocked(blocker)
         }
@@ -2608,13 +2625,29 @@ final class TripTrackingService {
 
     private func endOccurrenceTrip(_ current: Trip) -> TripEndOutcome {
         guard current.coverageBasis == .occurrence, let store else { return .persistenceFailed(TripOccurrenceCoverage.Failure.updateRequired.localizedDescription) }
-        if case let .blocked(blocker) = TripEndGate.evaluate(trip: current) { errorMessage = blocker.message; return .blocked(blocker) }
+        var readyTrip = current
+        let tankRow = current.trackingPattern == .freeDrive
+            ? currentRowNumber : currentRowNumber ?? current.currentRowNumber
+        let endedTank = TankSessionLifecycle.endRunningTankBeforeTripEnd(
+            trip: current, at: Date(), currentRow: tankRow
+        )
+        if endedTank != current {
+            do {
+                try store.updateTripOrThrow(endedTank)
+                readyTrip = endedTank
+                breadcrumb("End occurrence Trip saved final tank first")
+            } catch {
+                errorMessage = error.localizedDescription
+                return .persistenceFailed(error.localizedDescription)
+            }
+        }
+        if case let .blocked(blocker) = TripEndGate.evaluate(trip: readyTrip) { errorMessage = blocker.message; return .blocked(blocker) }
         do {
-            let journal = try occurrenceJournal(for: current)
-            let ended = try prepareTrackedSprayEnd(current, store: store)
+            let journal = try occurrenceJournal(for: readyTrip)
+            let ended = try prepareTrackedSprayEnd(readyTrip, store: store)
             var metadata: [String: TripOccurrenceCoverage.JSON] = ["endTime": .string(ISO8601DateFormatter().string(from: ended))]
-            if let hours = current.endEngineHours { metadata["endEngineHours"] = .number(hours) }
-            if let notes = current.completionNotes { metadata["completionNotes"] = .string(notes) }
+            if let hours = readyTrip.endEngineHours { metadata["endEngineHours"] = .number(hours) }
+            if let notes = readyTrip.completionNotes { metadata["completionNotes"] = .string(notes) }
             if let original = try journal.load()?.history.last(where: { $0.action[occurrence: "kind"]?.occurrenceString == "finalize" }) {
                 // The Trip cache may have failed after the original finalisation
                 // reached disk. Reuse it, never append a replacement operation.
@@ -2625,7 +2658,7 @@ final class TripTrackingService {
                 try journal.finalize(.object(metadata))
             }
             guard let state = try journal.load() else { throw TripOccurrenceCoverage.Failure.missing }
-            var local = try current.withOccurrenceProjection(state.projected)
+            var local = try readyTrip.withOccurrenceProjection(state.projected)
             local.isActive = false; local.isPaused = false; local.endTime = ended
             try store.updateTripOrThrow(local)
             store.releaseDeviceTripAfterLocalEnd(local)
