@@ -13,13 +13,14 @@ nonisolated struct SampleSite: Codable, Identifiable, Sendable, Hashable {
     var longitude: Double
     var siteIndex: Int
     var bunchCountEntry: BunchCountEntry?
+    var panelCountEntry: PanelCountEntry?
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
     var isRecorded: Bool {
-        bunchCountEntry != nil
+        bunchCountEntry != nil || panelCountEntry != nil
     }
 
     init(
@@ -32,7 +33,8 @@ nonisolated struct SampleSite: Codable, Identifiable, Sendable, Hashable {
         siteIndex: Int,
         bunchCountEntry: BunchCountEntry? = nil,
         yieldRowReference: String? = nil,
-        yieldPanelReference: String? = nil
+        yieldPanelReference: String? = nil,
+        panelCountEntry: PanelCountEntry? = nil
     ) {
         self.id = id
         self.paddockId = paddockId
@@ -44,6 +46,7 @@ nonisolated struct SampleSite: Codable, Identifiable, Sendable, Hashable {
         self.longitude = longitude
         self.siteIndex = siteIndex
         self.bunchCountEntry = bunchCountEntry
+        self.panelCountEntry = panelCountEntry
     }
 }
 
@@ -76,6 +79,18 @@ nonisolated struct PanelCountMeasurement: Codable, Sendable, Hashable {
                     fruitingVines: fruitingVines, missingPositions: missingPositions,
                     nonproductiveVines: nonproductiveVines,
                     panelLengthMetres: panelLengthMetres, calculationVersion: 1)
+    }
+}
+
+nonisolated struct PanelCountEntry: Codable, Sendable, Hashable {
+    var measurement: PanelCountMeasurement
+    var recordedAt: Date
+    var recordedBy: String
+
+    init(measurement: PanelCountMeasurement, recordedAt: Date = Date(), recordedBy: String = "") {
+        self.measurement = measurement
+        self.recordedAt = recordedAt
+        self.recordedBy = recordedBy
     }
 }
 
@@ -116,7 +131,10 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
     var countMethod: String?
     var quadrantSectionLengthCm: Double?
     var isQuadrantCount: Bool { countMethod == "quadrant" || sampleSites.contains { $0.bunchCountEntry?.quadrant != nil } }
-    var countMethodName: String { isQuadrantCount ? "Quadrant Count" : "Bunches Per Vine Count" }
+    var isPanelCount: Bool { countMethod == "panel" || sampleSites.contains { $0.panelCountEntry != nil } }
+    var countMethodName: String {
+        isPanelCount ? "Panel Count" : (isQuadrantCount ? "Quadrant Count" : "Bunches Per Vine Count")
+    }
 
     func vineCount(for paddock: Paddock) -> Int {
         guard isCompleted else { return paddock.authoritativeVineCount }
