@@ -45,6 +45,41 @@ nonisolated enum TankPathAttribution {
         return result
     }
 
+    /// A server-authored End Tank is a confirmed lifecycle fact, but it is NOT
+    /// acknowledgement of the device's route, chemical Actual Use or pending
+    /// upload. Adopt ONLY the ended timestamp on the original matching session.
+    /// Keep every local GPS point, path attribution and other tank detail intact.
+    /// A conflicting identity, time or duplicate session fails closed.
+    static func adoptingServerTankEnds(local: Trip, remote: Trip) -> Trip? {
+        guard local.id == remote.id, local.vineyardId == remote.vineyardId,
+              Set(local.tankSessions.map(\.id)).count == local.tankSessions.count,
+              Set(remote.tankSessions.map(\.id)).count == remote.tankSessions.count else { return nil }
+        let remoteById = Dictionary(uniqueKeysWithValues: remote.tankSessions.map { ($0.id, $0) })
+        var result = local
+        for index in result.tankSessions.indices {
+            let original = result.tankSessions[index]
+            guard let server = remoteById[original.id], let serverEnd = server.endTime else { continue }
+            // Never reinterpret a different session as the same tank.
+            guard original.tankNumber == server.tankNumber,
+                  TankSessionReceiptMatch.sameTime(original.startTime, server.startTime),
+                  serverEnd >= original.startTime,
+                  (remote.endTime == nil || serverEnd <= remote.endTime!) else { return nil }
+            if let localEnd = original.endTime {
+                guard TankSessionReceiptMatch.sameTime(localEnd, serverEnd) else { return nil }
+            } else {
+                result.tankSessions[index].endTime = serverEnd
+            }
+        }
+        // A remote End Tank clears the active-tank pointer only when that same
+        // original tank is now verifiably ended and the server has no active tank.
+        if let number = result.activeTankNumber, remote.activeTankNumber == nil,
+           result.tankSessions.contains(where: { $0.tankNumber == number && $0.endTime != nil }),
+           !result.tankSessions.contains(where: { $0.tankNumber == number && $0.endTime == nil }) {
+            result.activeTankNumber = nil
+        }
+        return result
+    }
+
     /// Legacy numeric evidence is admitted only when it identifies one planned path in one block.
     /// Repeated/cross-block coverage uses the occurrence journal's exact session IDs instead.
     static func recordCompletion(_ path: Double, in trip: inout Trip, at timestamp: Date = Date()) {
