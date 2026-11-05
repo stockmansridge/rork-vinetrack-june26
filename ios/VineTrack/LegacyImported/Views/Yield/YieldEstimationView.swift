@@ -15,6 +15,7 @@ struct YieldEstimationView: View {
     private let siteSetsRepository = SupabaseYieldSamplingSitesRepository()
     @Environment(\.accessControl) private var accessControl
     @Environment(NetworkMonitor.self) private var network
+    @Environment(YieldEstimationSessionSyncService.self) private var yieldSync
     @State private var viewModel = YieldEstimationViewModel()
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var showBunchCountSheet: Bool = false
@@ -25,6 +26,11 @@ struct YieldEstimationView: View {
     @State private var samplesPerHaText: String = ""
     @State private var showSampling: Bool = false
     @State private var showDeleteEstimationConfirm: Bool = false
+    @State private var showHomeDraftDeleteConfirm = false
+    @State private var homeDraftDeleteTarget: YieldEstimationSession?
+    @State private var hardDeleteBusy = false
+    @State private var hardDeleteError: String?
+    private let hardDeleteRepo = SupabaseYieldEstimationHardDeleteRepository()
     /// Whether a trip (draft or completed history view) is open. False shows
     /// the Bunch Count Trip home (start / resume / history).
     @State private var tripStarted: Bool = false
@@ -86,6 +92,24 @@ struct YieldEstimationView: View {
             if !tripStarted || !viewModel.isGenerated { await loadConfirmedSamplingSites() }
         }
         .task { if refreshSharedDefaults { await syncSamplingDefault() } }
+        .alert("Hard Delete Draft?", isPresented: $showHomeDraftDeleteConfirm) {
+            Button("Hard Delete", role: .destructive) {
+                if let target = homeDraftDeleteTarget {
+                    Task { await hardDeleteSession(target) }
+                }
+            }
+            Button("Cancel", role: .cancel) { homeDraftDeleteTarget = nil }
+        } message: {
+            Text("This permanently removes the draft and all its recorded observations for everyone. It cannot be undone.")
+        }
+        .alert("Hard delete not confirmed", isPresented: Binding(
+            get: { hardDeleteError != nil },
+            set: { if !$0 { hardDeleteError = nil } }
+        )) {
+            Button("OK", role: .cancel) { hardDeleteError = nil }
+        } message: {
+            Text(hardDeleteError ?? "Check the network and your vineyard permissions.")
+        }
         .modifier(YieldMasterRefresh(enabled: refreshSharedDefaults))
         .alert("Trip not saved", isPresented: $saveFailed) {
             Button("OK", role: .cancel) {}
@@ -195,7 +219,14 @@ struct YieldEstimationView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("yield.draft.recorded.open")
-                }
+                    Button(role: .destructive) {
+                        homeDraftDeleteTarget = draft
+                        showHomeDraftDeleteConfirm = true
+                    } label: {
+                        Label("Hard Delete Draft", systemImage: "trash")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .accessibilityIdentifier("yield.draft.hardDelete")
 
 
                 if paddocks.isEmpty {
@@ -377,12 +408,12 @@ struct YieldEstimationView: View {
             })
         }
         .alert("Delete Trip?", isPresented: $showDeleteEstimationConfirm) {
-            Button("Delete", role: .destructive) {
-                deleteCurrentEstimation()
+            Button("Hard Delete", role: .destructive) {
+                Task { await hardDeleteCurrentEstimation() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Delete this yield estimate trip? This removes its route, bunch counts and estimate. If it is the latest trip, the previous trip becomes the current estimate. This cannot be undone.")
+            Text("Permanently delete this yield estimate trip and its recorded observations for all vineyard devices? This cannot be undone. Confirmed records require Supervisor, Manager or Owner permission.")
         }
         .onAppear {
             fitMap()
@@ -954,7 +985,7 @@ struct YieldEstimationView: View {
     }
 
     private var canDeleteTrip: Bool {
-        (accessControl?.canDelete ?? false) && hasExistingSession
+        hasExistingSession && (!viewModel.isCompleted || (accessControl?.canDelete ?? false))
     }
 
     private var showsTripMenu: Bool {
@@ -979,7 +1010,7 @@ struct YieldEstimationView: View {
                 Button(role: .destructive) {
                     showDeleteEstimationConfirm = true
                 } label: {
-                    Label("Delete Trip", systemImage: "trash")
+                    Label(viewModel.isCompleted ? "Hard Delete Confirmed Trip" : "Hard Delete Draft", systemImage: "trash")
                 }
             }
         } label: {
@@ -987,18 +1018,45 @@ struct YieldEstimationView: View {
         }
     }
 
-    /// Deletes ONLY the open trip — other trips (drafts or history) are never
-    /// touched. If the deleted trip was the latest completed one, the previous
-    /// trip becomes the current estimate again.
-    private func deleteCurrentEstimation() {
-        if let sid = viewModel.sessionId,
-           let existing = store.yieldSessions.first(where: { $0.id == sid }) {
-            store.deleteYieldSession(existing)
+    /// Server-first physical removal: a local record is never hidden if the
+    /// role/state check or the deletion receipt cannot be verified.
+    private func hardDeleteSession(_ target: YieldEstimationSession) async {
+        guard !hardDeleteBusy else { return }
+        guard let vineyardId = store.selectedVineyardId,
+              target.vineyardId == vineyardId,
+              !target.isCompleted || (accessControl?.canDelete ?? false) else {
+            hardDeleteError = "Only Supervisors, Managers and Owners can hard-delete a confirmed yield observation."
+            return
         }
-        withAnimation(.smooth(duration: 0.3)) {
-            viewModel.resetForNewEstimation()
-            tripStarted = false
+        hardDeleteBusy = true
+        defer { hardDeleteBusy = false }
+        do {
+            try await hardDeleteRepo.hardDelete(target)
+            if store.yieldSessions.contains(where: { $0.id == target.id }) {
+                store.deleteYieldSession(target)
+                yieldSync.acknowledgeHardDeletedSession(target.id)
+            }
+            homeDraftDeleteTarget = nil
+            if viewModel.sessionId == target.id {
+                withAnimation(.smooth(duration: 0.3)) {
+                    viewModel.resetForNewEstimation()
+                    tripStarted = false
+                    showSampling = false
+                }
+            }
+            hardDeleteError = nil
+        } catch {
+            hardDeleteError = "Could not confirm permanent deletion: \(error.localizedDescription)"
         }
+    }
+
+    private func hardDeleteCurrentEstimation() async {
+        guard let id = viewModel.sessionId,
+              let target = store.yieldSessions.first(where: { $0.id == id }) else {
+            hardDeleteError = "This yield session could not be found locally. Reload before deleting."
+            return
+        }
+        await hardDeleteSession(target)
     }
 
     // MARK: - Generate Button (setup phase)
