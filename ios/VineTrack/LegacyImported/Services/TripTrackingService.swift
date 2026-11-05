@@ -1785,6 +1785,8 @@ final class TripTrackingService {
 
     /// Processes one GPS fix through the same persistence and row-guidance path used by live tracking.
     func processLocation(_ location: CLLocation, force: Bool = false) {
+        let timing = PerformanceCapture.shared.begin("Active Trip GPS fix on main actor")
+        defer { PerformanceCapture.shared.end(timing) }
         guard let store, var trip = store.deviceOwnedTrip, !trip.isPaused else { return }
         guard store.operationalWriteAuthority.canWrite(vineyardId: trip.vineyardId.uuidString) else { return }
         #if DEBUG
@@ -1812,7 +1814,9 @@ final class TripTrackingService {
             rowsCoveredCount = trip.completedPaths.count
         }
 
+        let diskTiming = PerformanceCapture.shared.begin("Active Trip GPS Trip persistence")
         store.updateDeviceOwnedTrip(trip)
+        PerformanceCapture.shared.end(diskTiming)
         currentDistance = trip.totalDistance
         updateSmoothedSpeed(from: location)
         currentSpeed = smoothedSpeed > 0 ? smoothedSpeed : nil
