@@ -1,4 +1,5 @@
 """Read-only source provenance; does not sync Git or touch customer data."""
+import argparse
 import datetime
 import hashlib
 import json
@@ -8,8 +9,12 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = 'https://api.github.com/repos/stockmansridge/rork-vinetrack-june26/'
-REQUESTED = 'e2c68db21d1cbbd049ee06fea2a28b74b92628a3'
-OUT = ROOT / 'docs/reviews/evidence/ios-build223-performance/source-validation.json'
+parser = argparse.ArgumentParser()
+parser.add_argument('--base', default='e2c68db21d1cbbd049ee06fea2a28b74b92628a3')
+parser.add_argument('--output', default='docs/reviews/evidence/ios-build223-performance/source-validation.json')
+args = parser.parse_args()
+REQUESTED = args.base
+OUT = ROOT / args.output
 
 
 def api(path):

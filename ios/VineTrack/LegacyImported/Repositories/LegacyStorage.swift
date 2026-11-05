@@ -40,6 +40,7 @@ final class PersistenceStore {
 
     private let directory: URL
     private let encoder: JSONEncoder
+    private let tripEncoder: JSONEncoder
     private let decoder: JSONDecoder
     private let logger = Logger(subsystem: "com.rork.vinetrack", category: "PersistenceStore")
     private struct DecodedSnapshot {
@@ -53,6 +54,8 @@ final class PersistenceStore {
     private var pinEncodingMemo: PinEncodingMemo?
     #if DEBUG
     var onPersistenceMeasurementForTesting: ((PersistenceMeasurement) -> Void)?
+    /// Paired baseline/candidate profiling only; never controls receipt encoding.
+    var compactTripEncodingForTesting: Bool?
     #endif
 
     private func canMemoize<T>(_ type: T.Type, key: String) -> Bool {
@@ -147,6 +150,9 @@ final class PersistenceStore {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         self.encoder = encoder
+        let tripEncoder = JSONEncoder()
+        tripEncoder.dateEncodingStrategy = .iso8601
+        self.tripEncoder = tripEncoder
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder
@@ -260,7 +266,21 @@ final class PersistenceStore {
                 data = memo.bytes
                 measurement.reusedEncode = true
             } else {
-                data = try encoder.encode(value)
+                // Whole-history Trip saves do not require presentation
+                // whitespace or per-coordinate key sorting. The Codable schema,
+                // ISO8601 dates and synchronous atomic write remain identical.
+                var compactTrip = true
+                #if DEBUG
+                compactTrip = compactTripEncodingForTesting ?? compactTrip
+                #endif
+                // Only the audited Trip array may use the compact encoder.
+                // All other keys, journals, request hashes and receipts retain
+                // their established encoder and exact-byte contracts.
+                if compactTrip && key == TripRepository.storageKey && T.self == [Trip].self {
+                    data = try tripEncoder.encode(value)
+                } else {
+                    data = try encoder.encode(value)
+                }
                 if key == "vinetrack_pins", let pins = value as? [VinePin] {
                     // Single bounded immutable result; failed writes never turn
                     // this into evidence that anything was persisted.
@@ -302,7 +322,7 @@ final class PersistenceStore {
         // successful atomic write we have the EXACT bytes and value, so retain
         // them for the next load. loadOutcome still reads and compares disk
         // bytes, rejecting this memo whenever another writer changed the file.
-        // Keep the original bytes and durable write/ACK contract unchanged.
+        // Keep exact saved-byte validation and the durable write/ACK contract.
         decodedSnapshots.removeValue(forKey: key)
         if key == TripRepository.storageKey {
             // The value was just encoded FROM the in-memory Trip array:

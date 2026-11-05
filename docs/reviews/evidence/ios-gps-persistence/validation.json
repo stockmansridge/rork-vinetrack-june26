@@ -1,0 +1,93 @@
+{
+  "incident": "Issue #57 / iOS build 223 Active Trip stalls and termination",
+  "dateUTC": "2026-11-05",
+  "status": "PARTIAL IMPROVEMENT ONLY. P0 and release approval remain open. No TestFlight upload.",
+  "source": {
+    "requestedAndLatestObservedGitHubMain": "bb5ff4b02efd5749caa1b68a1201d824043af1d2",
+    "initialParity": "All 2640 compared iOS/workflow/Android/protected files identical to requested main; source-before.json",
+    "visibleProbeManifestSHA256": "509a52032401e30a3640bd57bd34976ce31cc4c038034a8f599bf0bf494cf3cf",
+    "finalManifestSHA256": "e11f0660ad9344ea731b28d974dfd4d177637542008ddf21a7d0c6365bf066f3",
+    "finalDelta": "3 existing iOS files modified; 4 iOS DEBUG/test files added. Full per-file hashes retained in source-final.json.",
+    "visibleVsFinal": "After the successful visible run, only the two DEBUG fixture files changed: stop ordinary location/tracking loops at the 120s boundary before verification, suppressing automatic-pause measurement. Final focused native and UI tests reran successfully. The screenshot metrics belong to source-visible-probe.json, not a final-source physical-device acceptance.",
+    "productionEncodingAndGPSInstrumentation": "Same production source in the visible probe, 298-test regression and final focused tests.",
+    "provenanceLimit": "This is observed main plus the listed workspace delta, not an attestation that the final delta is already a GitHub commit or signed Release binary. Rork manages subsequent synchronization."
+  },
+  "productionChange": {
+    "scope": "Only the vinetrack_trips key with exact [Trip] value type uses compact unsorted JSON encoding. All other keys and payload types retain their previous encoder.",
+    "removedWork": "Presentation whitespace and repeated object-key sorting for the complete point collection.",
+    "preserved": ["Same Codable fields and ISO8601 date strategy", "All GPS identities, coordinate Double precision and point order", "Same synchronous atomic saves; no batching, suspension, fire-and-forget writes or save coalescing", "Exact actual-file-byte memo validation, external writer and corrupt-file detection", "Unchanged metadata writes, journals, receipt encoders, CAS/RLS and acknowledgement fences"],
+    "remainingScalingProblem": "GPS still synchronously loads/merges/encodes/writes the complete Trip collection. This remains O(total retained history), with 65ms main-actor occupancy at 60k in the visible comparison. It is not a solution for indefinitely growing history."
+  },
+  "measurementDefinition": {
+    "gps": "Production processLocation forced accepted GPS entry point, with real MigratedDataStore/TripRepository/PersistenceStore and the real TripSyncService.configure dirty hook.",
+    "fixture": "Explicitly seeded maintenance Trip, synthetic 200 physical rows with row guidance enabled, 500 retained unknown queue IDs plus the active Trip. Isolated directories, identity and write authority. Not Start Trip/tank lifecycle acceptance or a claim of customer data volume.",
+    "phaseMeanings": "Append includes point allocation/distance/COW; guidance includes row matching; persistence includes Trip repository load/merge/encode/atomic write/dirty hook; publish/speed times synchronous setters and smoothing, NOT deferred SwiftUI rendering.",
+    "quantiles": "Bounded samples sorted and indexed at floor((n-1)*fraction). At n=7 the displayed p95 is not a statistically strong tail estimate. Phase medians are independent and need not sum to the total median.",
+    "baseline": "Legacy encoder selected only through a DEBUG instance override; paired against compact encoder using separate matched-size fixtures. Visible summary includes one warm-up plus six following GPS fixes per encoder. Native performance assertion compares the six post-warm-up fixes.",
+    "transport": "Explicit fake repository returns an empty simulated preflight, then awaits and throws an offline upload error. Production sync admission/retry/dirty logic runs, but there is no live HTTP or successful server acknowledgement. Native delay 120ms; visible/UI stress delay 8000ms."
+  },
+  "visible60kComparison": {
+    "runUTC": "2026-11-05T15:38:53.009Z",
+    "environment": "Separate billed iPhone simulator, not the Android preview or a physical iPhone",
+    "toolResult": "3 of 3 screenshot-visible criteria verified; retained in conversation and .rork/simulator-use/runs.json",
+    "legacy": {"samples": 7, "gpsMedianMS": 81.05, "gpsP95MS": 84.85, "appendMedianMS": 0.13, "guidanceMedianMS": 0.10, "publicationAndSpeedMedianMS": 0.02, "tripReadMedianMS": 1.18, "tripEncodeMedianMS": 75.02, "tripWriteMedianMS": 3.05, "dirtyMetadataMedianMS": 0.88, "lastTripFileBytes": 8152264},
+    "compact": {"samples": 7, "gpsMedianMS": 65.11, "gpsP95MS": 67.50, "appendMedianMS": 0.11, "guidanceMedianMS": 0.09, "publicationAndSpeedMedianMS": 0.01, "tripReadMedianMS": 0.63, "tripEncodeMedianMS": 60.57, "tripWriteMedianMS": 2.73, "dirtyMetadataMedianMS": 0.70, "lastTripFileBytes": 5331681},
+    "interpretation": "About 19.7% lower median GPS main-actor occupancy and 34.6% fewer Trip file bytes in this simulator fixture. Not an old TestFlight binary vs signed Release or matched physical-device benchmark. Compact route coordinates include the same schema/precision; point UUID content differs between separate fixtures."
+  },
+  "visibleSustainedRecording": {
+    "elapsedSeconds": 120.1,
+    "initialRoutePoints": 0,
+    "requestedInjectionIntervalMS": 100,
+    "cadenceLimit": "Processing time, automation pause, permission sheets and scheduling are added to the interval; not a claimed exact 10Hz feed.",
+    "explicitAcceptedFixes": 933,
+    "allAcceptedRoutePoints": 1033,
+    "ordinaryTrackingAdditions": 100,
+    "explicitFixesOverlappingAwaitedSync": 832,
+    "offlineUploadAttempts": 14,
+    "gpsSamples": 1033,
+    "gpsMedianMS": 3.35,
+    "gpsP95MS": 7.92,
+    "appendMedianMS": 0.01,
+    "guidanceMedianMS": 0.12,
+    "publicationAndSpeedMedianMS": 0.03,
+    "tripReadMedianMS": 0.23,
+    "tripEncodeMedianMS": 0.94,
+    "tripWriteMedianMS": 0.90,
+    "dirtyMetadataMedianMS": 1.04,
+    "lastMeasuredTripFileBytes": 92289,
+    "rssMBAtStartThenApproximatelyEvery10sAndEnd": [411.4, 547.3, 551.6, 551.2, 552.1, 552.0, 553.3, 553.4, 553.7, 553.4, 553.4, 553.7, 553.6],
+    "memoryConclusion": "Initial increase 142.2MB including starting the Active Trip UI/map/ordinary location pipeline after initial measurement. Late samples are approximately 551-554MB. Allocation stacks are unavailable, so the increase is not attributed to MapKit or claimed fixed. Two minutes and a growing route do not establish a leak-free plateau, device memory safety or the original jetsam cause.",
+    "integrity": "Verifier loads through a new PersistenceStore, requires complete route IDs/order/coordinate precision equal to live route, every explicit injected ID present once, Trip equality at existing ISO8601 date precision, and at least 501 retained pending IDs. No process restart in this probe.",
+    "pauseServiceMS": 13.68,
+    "resumeServiceMS": 3.50,
+    "bothControlsSyncInFlight": 1,
+    "gpsSamplesBeforeBothControls": 137,
+    "buttonLimit": "Real production Pause/Resume controls were tapped and labels changed. The numerical measurements span synchronous service action, not physical touch-to-render. XCTest tap-to-label roundtrips include automation and are attachments not exposed numerically by the runner. All normal controls, Home/Sync and large-history button latency remain unaccepted."
+  },
+  "nativeExecution": {
+    "initialPairedAndIntegritySelection": {"passed": 2, "failed": 0, "seconds": 165},
+    "correctedOfflineOverlapSelection": {"passed": 1, "failed": 0, "seconds": 90},
+    "relevantRegression": {
+      "passed": 298, "failed": 0, "seconds": 220,
+      "selectors": ["VineTrackTests/GPSPersistencePerformanceTests", "VineTrackTests/ActiveTripHistoryPerformanceTests", "VineTrackTests/PersistencePerformanceTests", "VineTrackTests/DeviceTripOwnershipTests", "VineTrackTests/StartTankCommitCoordinatorTests", "VineTrackTests/TankSessionLifecycleTests", "VineTrackTests/SprayInitialTankAmountsTests", "VineTrackTests/SprayTankActualTests", "VineTrackTests/TripEndGateTests", "VineTrackTests/TripLocalEndAntiResurrectionTests", "VineTrackTests/TrackedSprayCompletionSyncTests", "VineTrackTests/TripQueuedUploadScopeTests", "VineTrackTests/TripSyncStageFailureTests", "VineTrackTests/TripOccurrenceJournalTests", "VineTrackTests/SprayPlanningDraftTransitionTests", "VineTrackTests/SprayCalculationParityTests", "VineTrackTests/SprayCalculationContractTests", "VineTrackTests/SprayCarrierProductBasisTests", "VineTrackTests/SprayTankMixChemistryParityTests", "VineTrackTripTests/TripStabilisationTests"],
+      "newSustainedTest": "Starts empty, accepts >1000 points over >=120 actual seconds, waits 50ms plus processing per fix; requires overlap with awaited offline uploads, exact route readback and exactly 501 retained queue IDs. Numeric stdout/attachments are not exposed; no invented native counts/timings."
+    },
+    "focusedUIAfterHarnessStartFix": {"passed": 1, "failed": 0, "seconds": 342},
+    "finalSourceFocusedNativeAndUI": {"passed": 2, "failed": 0, "seconds": 281, "selectors": ["VineTrackTests/GPSPersistencePerformanceTests/testOfflineUploadActuallyOverlapsGPSAndRetainsQueue", "VineTrackUITests/GPSPersistenceUITests/testPauseResumeDuringPointByPointRecordingAndOfflineSync"]},
+    "countLimits": "Selections overlap; do not add as unique tests. Runner does not expose skipped count or successful per-test discovery listing. All runners used sequentially.",
+    "earlierFailures": ["First sustained test failed overlap assertion: the fake preflight threw immediately and aborted the sweep Task before awaited upload. Fixed only the fixture: simulated preflight returns empty; expected upload failures are caught per sweep. Short overlap test passed before the successful broader rerun.", "First focused UI runner returned BUILD INTERRUPTED with 0 tests executed. Not counted as a test pass.", "First visible probe remained Ready because production ActiveTripView.resumeIfNeeded appended before the empty-route precondition. Fixed DEBUG harness to mount the real screen only after recording starts, show precondition errors rather than silently returning, and use content-sized diagnostic text. Subsequent focused UI and visible probe passed."]
+  },
+  "buildValidation": "Final runChecks(ios) PASS: simulator build only, after final focused tests. Two existing unrelated asset-URL advisories unchanged. No signed device/Release archive validation.",
+  "crashEvidenceRefreshed": {
+    "build223AppleID": "bbadf6e2-0825-4b1b-8569-cfd606b2dfb2",
+    "testflightCrashSubmissions": 0,
+    "diagnosticSignatures": "ASC resource unavailable, exit 4: /v1/builds/{id}/diagnosticSignatures",
+    "hangMemoryTerminationMetrics": "ASC resource unavailable, exit 4: /v1/builds/{id}/perfPowerMetrics",
+    "runtimeLogs": "Initial current-turn error query returned no runtime logs. Later unfiltered query returned older Android logs, not iOS crash evidence.",
+    "coreLocationWarning": "No locationServicesEnabled call found in iOS sources. Apple documentation explains the synchronous cross-process warning, but no original call stack establishes its source here. Do not claim resolved.",
+    "terminationCause": "Still unknown; no exception/watchdog/jetsam or original physical-device profiling evidence."
+  },
+  "remainingGates": ["Eliminate the O(total-history) GPS save hot path with a separately reviewed durable storage design; 65ms still occupies main", "Customer-scale retained multi-Trip/queue data, long-duration RSS/allocation investigation and all normal controls including Home/Sync", "Physical iPhone crash evidence and sustained field acceptance", "Authorised isolated live HTTP sync/RLS/CAS and original incident server readback", "Signed Release archive-only capability and exact final remote SHA/binary provenance before approval"],
+  "issue57": "User confirms the earlier Issue #57 update is complete externally. This new GPS evidence is retained locally; no new issue comment was posted or claimed.",
+  "preservation": "Final source audit confirms Android, Config.swift and pinned SQL unchanged from bb5ff4b. No original-app uninstall, customer reset, queue purge, bulk acknowledgement, manual Git mutation or upload. Operation 2be68a70-9582-4981-8a87-e727f113cdf6 remains held without exact outcome proof."
+}

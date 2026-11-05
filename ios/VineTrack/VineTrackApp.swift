@@ -118,7 +118,9 @@ struct VineTrackApp: App {
             Group {
                 if isKeyboardValidationEnabled {
                     #if DEBUG
-                    if SprayLifecycleSandbox.runID != nil {
+                    if SprayLifecycleSandbox.runID != nil && CommandLine.arguments.contains("--gps-performance-validation") {
+                        GPSPersistenceValidationView()
+                    } else if SprayLifecycleSandbox.runID != nil {
                         SprayLifecycleValidationView()
                     } else if CommandLine.arguments.contains("--synthetic-switch-performance") {
                         SyntheticSwitchPerformanceView()

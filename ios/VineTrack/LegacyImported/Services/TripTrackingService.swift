@@ -907,6 +907,9 @@ final class TripTrackingService {
     // MARK: - Pause / Resume
 
     func pauseTrip() {
+        #if DEBUG
+        let controlStart = ProcessInfo.processInfo.systemUptime
+        #endif
         guard admitTripChange(activeTrip) else { return }
         guard var trip = activeTrip, !trip.isPaused else { return }
         trip.isPaused = true
@@ -914,9 +917,15 @@ final class TripTrackingService {
         store?.updateTrip(trip)
         isPaused = true
         stopTrackingLoops(stopLocation: false)
+        #if DEBUG
+        onControlMeasurementForTesting?("Pause", (ProcessInfo.processInfo.systemUptime - controlStart) * 1000)
+        #endif
     }
 
     func resumeTrip() {
+        #if DEBUG
+        let controlStart = ProcessInfo.processInfo.systemUptime
+        #endif
         guard admitTripChange(activeTrip) else { return }
         guard var trip = activeTrip, trip.isPaused else { return }
         trip.isPaused = false
@@ -924,6 +933,9 @@ final class TripTrackingService {
         store?.updateTrip(trip)
         isPaused = false
         beginTracking()
+        #if DEBUG
+        onControlMeasurementForTesting?("Resume", (ProcessInfo.processInfo.systemUptime - controlStart) * 1000)
+        #endif
     }
 
     // MARK: - End
@@ -1783,6 +1795,13 @@ final class TripTrackingService {
         processLocation(location, force: false)
     }
 
+    #if DEBUG
+    /// Opt-in, bounded numeric diagnostics. Publication measures setters, not
+    /// deferred SwiftUI rendering. No locations or identities leave this hook.
+    var onGPSMeasurementForTesting: ((GPSFixMeasurement) -> Void)?
+    var onControlMeasurementForTesting: ((String, Double) -> Void)?
+    #endif
+
     /// Processes one GPS fix through the same persistence and row-guidance path used by live tracking.
     func processLocation(_ location: CLLocation, force: Bool = false) {
         let timing = PerformanceCapture.shared.begin("Active Trip GPS fix on main actor")
@@ -1793,6 +1812,10 @@ final class TripTrackingService {
         diagLocationUpdateCount += 1
         #endif
 
+        #if DEBUG
+        let measureGPS = onGPSMeasurementForTesting != nil
+        let gpsStart = measureGPS ? ProcessInfo.processInfo.systemUptime : 0
+        #endif
         let newPoint = CoordinatePoint(coordinate: location.coordinate)
         if let last = trip.pathPoints.last {
             let lastLocation = CLLocation(latitude: last.latitude, longitude: last.longitude)
@@ -1804,6 +1827,9 @@ final class TripTrackingService {
             trip.pathPoints.append(newPoint)
         }
 
+        #if DEBUG
+        let appendEnd = measureGPS ? ProcessInfo.processInfo.systemUptime : 0
+        #endif
         let rowTrackingEnabled = store.settings.rowTrackingEnabled
         if rowTrackingEnabled && trip.vineyardId == store.selectedVineyardId {
             updateRowGuidance(for: location, trip: &trip, store: store)
@@ -1814,14 +1840,31 @@ final class TripTrackingService {
             rowsCoveredCount = trip.completedPaths.count
         }
 
+        #if DEBUG
+        let guidanceEnd = measureGPS ? ProcessInfo.processInfo.systemUptime : 0
+        #endif
         let diskTiming = PerformanceCapture.shared.begin("Active Trip GPS Trip persistence")
         store.updateDeviceOwnedTrip(trip)
         PerformanceCapture.shared.end(diskTiming)
+        #if DEBUG
+        let persistenceEnd = measureGPS ? ProcessInfo.processInfo.systemUptime : 0
+        #endif
         currentDistance = trip.totalDistance
         updateSmoothedSpeed(from: location)
         currentSpeed = smoothedSpeed > 0 ? smoothedSpeed : nil
         lastObservedLocation = location
         rawCLLocationSpeed = max(0, location.speed)
+        #if DEBUG
+        if measureGPS {
+            let end = ProcessInfo.processInfo.systemUptime
+            onGPSMeasurementForTesting?(GPSFixMeasurement(
+                appendMS: (appendEnd - gpsStart) * 1000,
+                guidanceMS: (guidanceEnd - appendEnd) * 1000,
+                persistenceAndDirtyMS: (persistenceEnd - guidanceEnd) * 1000,
+                publicationAndSpeedMS: (end - persistenceEnd) * 1000,
+                totalMS: (end - gpsStart) * 1000))
+        }
+        #endif
     }
 
     /// Compute ground speed from distance/time across a rolling window of
