@@ -181,6 +181,7 @@ struct GrowthStageRecordsListView: View {
                 ForEach(presentation.rows, id: \.block.id) { row in
                     let block = row.block
                     let stage = row.currentEL
+                    let stageThumbnail = store.resolvedGrowthStageThumbnail(for: stage)
                     NavigationLink {
                         // The destination may be built after the row was drawn.
                         // Resolve its stage and instant cutoff from the live feed.
@@ -202,16 +203,25 @@ struct GrowthStageRecordsListView: View {
                             Color(.tertiarySystemGroupedBackground)
                                 .frame(width: 50, height: 50)
                                 .overlay {
-                                    if let stage,
-                                       let growthStage = GrowthStage.allStages.first(where: { Double($0.code.dropFirst(2)) == stage }),
-                                       let image = store.resolvedELStageImage(for: growthStage) {
-                                        Image(uiImage: image)
+                                    if let thumbnail = stageThumbnail {
+                                        Image(uiImage: thumbnail.image)
                                             .resizable()
                                             .scaledToFill()
                                             .allowsHitTesting(false)
+                                            .accessibilityLabel(thumbnail.approximate ? "Nearby E-L stage reference photograph" : "Current E-L stage photograph")
+                                            .overlay(alignment: .bottomTrailing) {
+                                                if thumbnail.approximate {
+                                                    Text("Ref.")
+                                                        .font(.system(size: 9, weight: .semibold))
+                                                        .padding(2)
+                                                        .background(.ultraThinMaterial)
+                                                }
+                                            }
                                     } else {
-                                        Image(systemName: "leaf.fill")
+                                        // No recorded E-L stage must never look like EL1.
+                                        Image(systemName: "questionmark")
                                             .foregroundStyle(.secondary)
+                                            .accessibilityLabel("No current Growth Stage recorded")
                                     }
                                 }
                                 .clipShape(.rect(cornerRadius: 10))

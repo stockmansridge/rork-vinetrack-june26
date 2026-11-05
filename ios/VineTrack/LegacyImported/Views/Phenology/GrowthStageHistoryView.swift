@@ -14,17 +14,20 @@ struct GrowthStageHistoryView: View {
                 ForEach(records.sorted { $0.observedAt < $1.observedAt }) { record in
                     let code = "EL\(record.stageCode.filter(\.isNumber))"
                     let stage = GrowthStage.allStages.first { $0.code == code }
+                    let numericEL = Double(record.stageCode.filter(\.isNumber))
+                    let stageThumbnail = store.resolvedGrowthStageThumbnail(for: numericEL)
                     HStack(alignment: .top, spacing: 14) {
                         Color(.tertiarySystemGroupedBackground)
                             .frame(width: 58, height: 58)
                             .overlay {
-                                if let stage, let image = store.resolvedELStageImage(for: stage) {
-                                    Image(uiImage: image)
+                                if let thumbnail = stageThumbnail {
+                                    Image(uiImage: thumbnail.image)
                                         .resizable()
                                         .scaledToFill()
                                         .allowsHitTesting(false)
+                                        .accessibilityLabel(thumbnail.approximate ? "Nearby E-L stage reference photograph" : "Recorded E-L stage photograph")
                                 } else {
-                                    Image(systemName: "leaf.fill")
+                                    Image(systemName: "questionmark")
                                         .foregroundStyle(.secondary)
                                 }
                             }

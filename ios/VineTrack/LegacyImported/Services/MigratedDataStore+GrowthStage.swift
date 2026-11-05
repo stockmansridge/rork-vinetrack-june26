@@ -112,6 +112,26 @@ extension MigratedDataStore {
         onCustomELStageImageDeleted?(vineyardId, code)
     }
 
+    /// The recorded E-L value stays authoritative. When its exact reference
+    /// image is unavailable, show the nearest bundled photograph and label
+    /// it as a reference, rather than a generic leaf that hides the stage.
+    /// No stage recorded => no photograph is inferred.
+    func resolvedGrowthStageThumbnail(for numericEL: Double?) -> (image: UIImage, approximate: Bool)? {
+        guard let numericEL, numericEL.isFinite else { return nil }
+        if let exact = GrowthStage.allStages.first(where: { Double($0.code.dropFirst(2)) == numericEL }),
+           let image = resolvedELStageImage(for: exact) {
+            return (image, false)
+        }
+        let available = GrowthStage.allStages.compactMap { stage -> (stage: GrowthStage, value: Double)? in
+            guard stage.imageName != nil, let value = Double(stage.code.dropFirst(2)) else { return nil }
+            return (stage, value)
+        }
+        guard let closest = available.min(by: { abs($0.value - numericEL) < abs($1.value - numericEL) }),
+              let name = closest.stage.imageName,
+              let image = UIImage(named: name) else { return nil }
+        return (image, closest.value != numericEL)
+    }
+
     func resolvedELStageImage(for stage: GrowthStage) -> UIImage? {
         if let url = resolvedCustomELImageURL(for: stage.code),
            let data = try? Data(contentsOf: url),
