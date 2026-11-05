@@ -50,11 +50,12 @@ struct ActiveTripView: View {
 
     /// Display-only trail segments. Recomputed on a 1Hz throttled timer rather
     /// than every GPS tick or every SwiftUI body invocation.
-    @State private var displayTrailSegments: [TrailSegment] = []
+    @State private var trailPreparation = ActiveTripTrailPreparation()
     @State private var trailUpdateTimer: Timer?
-    @State private var lastTrailUpdate: Date?
-    @State private var trailDiagFullCount: Int = 0
-    @State private var trailDiagDisplayCount: Int = 0
+    private var displayTrailSegments: [TrailSegment] { trailPreparation.segments }
+    private var lastTrailUpdate: Date? { trailPreparation.updatedAt }
+    private var trailDiagFullCount: Int { trailPreparation.fullCount }
+    private var trailDiagDisplayCount: Int { displayTrailSegments.reduce(0) { $0 + $1.coordinates.count } }
 
     /// Last accepted (non-spike) speed in km/h. Held across GPS spikes so the
     /// pill keeps showing a sensible value rather than flashing 95 km/h.
@@ -678,6 +679,7 @@ struct ActiveTripView: View {
             ticker = nil
             trailUpdateTimer?.invalidate()
             trailUpdateTimer = nil
+            trailPreparation.stop()
             ScreenAwakeManager.shared.release("ActiveTripView")
         }
         .onMapCameraChange { _ in
@@ -1627,32 +1629,19 @@ struct ActiveTripView: View {
     /// `trip.pathPoints` array is left untouched so trip history, export and
     /// sync still see every recorded point.
     private func refreshDisplayTrail() {
-        let measurement = PerformanceCapture.shared.beginComputation()
-        defer {
-            PerformanceCapture.shared.endComputation(
-                measurement, label: "Active Trip GPS trail preparation",
-                records: trailDiagFullCount
-            )
-        }
         let live = tracking.activeTrip ?? trip
-        let points = live.pathPoints
-        let segments = TrailDisplayProcessor.makeDisplayTrailSegments(
-            points: points,
-            maxDisplayPoints: Self.maxDisplayTrailPoints,
-            maxColourBuckets: Self.maxTrailBuckets
-        )
-        displayTrailSegments = segments
-        lastTrailUpdate = Date()
-        trailDiagFullCount = points.count
-        trailDiagDisplayCount = segments.reduce(0) { $0 + $1.coordinates.count }
+        let scheduled = trailPreparation.request(tripID: live.id, points: live.pathPoints)
 
         // Update the locked travel bearing on the same throttle so the
         // left/right row labels respond to direction without flicker.
         updateTravelBearing(from: locationService.location)
 
         #if DEBUG
-        print("[Trail] full=\(trailDiagFullCount) display=\(trailDiagDisplayCount) " +
-              "polylines=\(segments.count) interval=\(Self.trailUpdateInterval)s mode=bucketed")
+        if scheduled {
+            print("[Trail] full=\(trailDiagFullCount) display=\(trailDiagDisplayCount) " +
+                  "polylines=\(displayTrailSegments.count) interval=\(Self.trailUpdateInterval)s mode=off-main-bucketed " +
+                  "workerMs=\(trailPreparation.lastWorkerMilliseconds) publicationMainMs=\(trailPreparation.lastPublicationMilliseconds)")
+        }
         let path = pathForLabels
         let lower = Int(floor(path))
         let upper = lower + 1
@@ -1897,6 +1886,8 @@ struct ActiveTripView: View {
             }
             .buttonStyle(.bordered)
             .tint(trip.isPaused ? .green : .orange)
+            .accessibilityLabel(trip.isPaused ? "Resume Trip" : "Pause Trip")
+            .accessibilityIdentifier("trip.pauseResume")
             .sensoryFeedback(.impact, trigger: trip.isPaused)
 
             Button {

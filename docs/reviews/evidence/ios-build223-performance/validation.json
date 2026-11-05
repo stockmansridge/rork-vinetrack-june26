@@ -1,0 +1,78 @@
+{
+  "incident": "GitHub Issue #57: build 223 Active Trip stalls and crash",
+  "recordedDateUTC": "2026-11-05",
+  "releaseStatus": "BLOCKED; source candidate only; no new upload or signed Release archive",
+  "sourceAudit": "source-validation.json",
+  "crashEvidence": {
+    "build": "3.2.0 (223)",
+    "appleBuildID": "bbadf6e2-0825-4b1b-8569-cfd606b2dfb2",
+    "appleProcessingStateObserved": "VALID",
+    "testflightCrashSubmissions": 0,
+    "diagnosticsAndMetrics": "Apple resources unavailable for this build (exit 4). Not evidence of no crash.",
+    "runtimeLogsAtInitialInvestigation": "No runtime logs found for this project",
+    "terminationCause": "UNKNOWN; no original-device watchdog/jetsam/exception stack retrieved",
+    "laterUIRunnerWarning": "A combined two-test run reported a Core Location main-thread responsiveness runtime issue without a stack. Both subsequent individually selected tests passed after a separate fixture count-format correction. This warning was not diagnosed or claimed fixed."
+  },
+  "implemented": [
+    "Display-only full-route sampling moved to a detached utility worker with immutable Sendable coordinate values; colour/MapKit publication remains on MainActor.",
+    "Skip unchanged append-only active routes by Trip identity/count/endpoints; one tracked request, no work queue per GPS fix.",
+    "Cancel/invalidate publication on disappearance or Trip switch; full recorded history remains unchanged.",
+    "Tank 2 now shares Review's complete decimal-input parser; UI reproduced rejection of dot decimals on the comma-decimal simulator before this correction.",
+    "Pause/Resume has a stable accessibility label and identifier.",
+    "DEBUG-only isolated sized-history/GPS probe reports GPS, old map algorithm, worker, publication and process resident memory. No production data or live sync."
+  ],
+  "visibleSimulatorMeasurement": {
+    "environment": "Separate billed iPhone simulator; Single Row/Free Drive; simulated identity/server; real production ActiveTripView and processLocation; three measured calls after prepopulating history",
+    "toolOutcome": "2 of 2 screenshot-visible criteria verified",
+    "pointsBefore": 60000,
+    "pointsAfter": 60004,
+    "injectedGPSSamples": 3,
+    "additionalPoint": "An ordinary simulator tracking tick may append alongside the three explicit samples; integrity checks preserve and verify all of them.",
+    "gpsMainMilliseconds": [78.4, 79.8, 88.8],
+    "oldMapAlgorithmMainMilliseconds": [31.5, 31.5, 32.4],
+    "newSamplingWorkerMilliseconds": [33.7, 34.2, 32.6],
+    "newBoundedPublicationMainMilliseconds": [0.0, 0.1, 0.0],
+    "residentMemoryMBBefore": 507.3,
+    "residentMemoryMBAfter": 565.7,
+    "interpretation": "Same-route algorithm comparison inside the current DEBUG app, not a physical-device build223-versus-Release benchmark. Rounded publication values of 0.0 are not zero work. RSS includes prepopulation, encoding, route snapshots and map activity; no stable plateau or leak/jetsam conclusion. GPS persistence remains synchronous and whole-history.",
+    "otherSizes": "100, 2000 and 10000 executed by each successful native UI test, with per-size text/screenshot XCTest attachments authored. Their numeric attachment output was not exposed by this runner; no values invented."
+  },
+  "tests": {
+    "focusedWorkerPersistenceTrail": {"passed": 28, "failed": 0, "seconds": 95},
+    "relevantNativeRegression": {
+      "passed": 300, "failed": 0, "seconds": 118,
+      "selectors": ["VineTrackTests/ActiveTripHistoryPerformanceTests", "VineTrackTests/TrailDisplayProcessorTests", "VineTrackTests/PersistencePerformanceTests", "VineTrackTests/DeviceTripOwnershipTests", "VineTrackTests/StartTankCommitCoordinatorTests", "VineTrackTests/TankSessionLifecycleTests", "VineTrackTests/SprayInitialTankAmountsTests", "VineTrackTests/SprayTankActualTests", "VineTrackTests/TripEndGateTests", "VineTrackTests/TripLocalEndAntiResurrectionTests", "VineTrackTests/TrackedSprayCompletionSyncTests", "VineTrackTests/TripQueuedUploadScopeTests", "VineTrackTests/TripSyncStageFailureTests", "VineTrackTests/TripOccurrenceJournalTests", "VineTrackTests/SprayPlanningDraftTransitionTests", "VineTrackTests/SprayCalculationParityTests", "VineTrackTests/SprayCalculationContractTests", "VineTrackTests/SprayCarrierProductBasisTests", "VineTrackTests/SprayTankMixChemistryParityTests", "VineTrackTripTests/TripStabilisationTests"]
+    },
+    "latestSingleRowUI": {"passed": 1, "failed": 0, "seconds": 178},
+    "latestTwoRowUI": {"passed": 1, "failed": 0, "seconds": 134},
+    "skipped": "Managed tool did not expose a skipped-test count; aggregate passes do not attest discovery of every selected suite.",
+    "countsOverlap": "Focused and broader native selections overlap; do not add their counts as unique coverage.",
+    "earlierFailures": [
+      "New baseline equality test initially used a fractional current Date; fixed fixture to an integral timestamp matching existing ISO8601 persistence precision.",
+      "Initial probe assumed exactly three total route additions; real tracking also appends. Corrected probe to require three distinct explicitly accepted points, no lost history, and exact durable/live equality while retaining ordinary ticks.",
+      "UI reproduced later-tank decimal rejection; fixed shared parsing and reran successfully.",
+      "New final route-count assertion parsed a localized Text number as an integer. Made the DEBUG machine-readable count verbatim; both final individual tests passed.",
+      "One combined run also reported the undiagnosed Core Location runtime warning described above."
+    ]
+  },
+  "uiCoverage": [
+    "Actual Calculator to Review to Free Drive to foreground production Active Trip; manual 800 L / 500 L tank fixture in Single Row and 2 Row modes.",
+    "Initial water and chemical edited twice through focus/typing; exact text assertions reject concatenation. Later Tank 2 water and chemical likewise replaced twice with decimal precision.",
+    "Four sized histories (100/2000/10000/60000) with real production GPS processing and disk equality checks while Active Trip is shown.",
+    "Pause/Resume, End Tank 1, Start Tank 2 with confirmed actuals, more GPS in Tank 2, End Trip closing Tank 2 before Trip end.",
+    "Simulated linked Spray finalisation; actual process termination/relaunch retains same Trip ID, both closed tanks, two actual records and at least 60006 route points.",
+    "After End Trip and again after restart: Tank 2 water 300.12345 L and chemical display amount 0.12345 verified exactly.",
+    "Calculated two-decimal formatting and unrounded editable/model quantities covered by selected native tests."
+  ],
+  "buttonLatency": "Pause/Resume XCTest tap-to-query roundtrips retained as text attachments, including automation overhead. Other controls checked with bounded state waits. Sub-one-second physical touch-to-visible latency for all buttons has NOT been measured or accepted.",
+  "validation": "Final runChecks(ios) PASS: simulator build only; no signed device/Release verification. Two unrelated existing storage-URL advisories were not changed.",
+  "unverified": [
+    "Original iPhone stall/crash reproduction, symbolication and physical-device acceptance",
+    "True point-by-point 60000-fix recording soak and sustained-memory plateau",
+    "Home/Sync UI responsiveness and full retained multi-Trip history under customer data volume",
+    "Live Supabase HTTP, production RLS/CAS outcomes and original incident server readback",
+    "Signed archive-only Release validation and approval-ready artifact"
+  ],
+  "issue57": {"updated": false, "reason": "Public GitHub read access works; no exposed authenticated issue-write integration or installed gh CLI. Local evidence is not a posted issue comment."},
+  "preservation": "Android, Config.swift and pinned SQL verified unchanged from requested main by source audit. No customer data reset, purge, queue acknowledgement, original-app uninstall, manual Git mutation or upload. Operation 2be68a70-9582-4981-8a87-e727f113cdf6 remains held."
+}

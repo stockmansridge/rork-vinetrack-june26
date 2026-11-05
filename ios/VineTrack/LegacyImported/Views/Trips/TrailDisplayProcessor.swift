@@ -83,14 +83,14 @@ enum TrailDisplayProcessor {
 
     /// Complete-route display points before visual colour bucketing. Exposed
     /// internally so the rendering contract can be tested without MapKit.
-    static func makeDisplayPoints(
+    nonisolated static func makeDisplayPoints(
         points: [CoordinatePoint],
         maxDisplayPoints: Int = 500
     ) -> [CoordinatePoint] {
         sampledPoints(points, maxCount: maxDisplayPoints)
     }
 
-    private static func sampledPoints(
+    nonisolated private static func sampledPoints(
         _ points: [CoordinatePoint],
         maxCount: Int
     ) -> [CoordinatePoint] {
@@ -129,7 +129,7 @@ enum TrailDisplayProcessor {
         return selected.sorted().map { points[$0] }
     }
 
-    private static func largestTriangleThreeBucketsIndices(
+    nonisolated private static func largestTriangleThreeBucketsIndices(
         _ points: [CoordinatePoint],
         threshold: Int
     ) -> Set<Int> {
@@ -175,7 +175,7 @@ enum TrailDisplayProcessor {
         return selected
     }
 
-    private static func evenlySpacedMandatoryIndices(
+    nonisolated private static func evenlySpacedMandatoryIndices(
         _ indices: [Int],
         maxCount: Int
     ) -> [Int] {

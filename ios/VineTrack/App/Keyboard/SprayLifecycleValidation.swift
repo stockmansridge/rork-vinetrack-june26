@@ -2,6 +2,8 @@
 import Foundation
 import SwiftUI
 import CryptoKit
+import CoreLocation
+import Darwin
 
 /// Explicit opt-in, process-wide sandbox. Release builds contain none of this code.
 /// A run UUID preserves this sandbox across terminate/relaunch without deleting any data.
@@ -123,6 +125,9 @@ struct SprayLifecycleValidationView: View {
     @State private var canopy = CanopyReferenceImageRepository(baseDirectory: SprayLifecycleSandbox.directory!.appendingPathComponent("canopy"), remote: LifecycleCanopyImages())
     @State private var showsCalculator = false
     @State private var ready = false
+    @State private var probing = false
+    @State private var performanceReport = "No history probe run"
+    private var performanceEnabled: Bool { CommandLine.arguments.contains("--lifecycle-history-performance") }
 
     init() {
         let store = MigratedDataStore()
@@ -150,6 +155,18 @@ struct SprayLifecycleValidationView: View {
                 if let trip = tracking.activeTrip {
                     Text("Active Trip • Tank \(trip.activeTankNumber ?? 0) • ended \(trip.tankSessions.filter { $0.endTime != nil }.count)")
                         .accessibilityIdentifier("lifecycle.active")
+                    if performanceEnabled {
+                        HStack {
+                            ForEach([100, 2_000, 10_000, 60_000], id: \.self) { count in
+                                Button("\(count)") { Task { await probeHistory(count: count) } }
+                                    .accessibilityIdentifier("lifecycle.history.\(count)")
+                            }
+                            Button("GPS +3") { Task { await probeHistory(count: trip.pathPoints.count) } }
+                                .accessibilityIdentifier("lifecycle.history.append")
+                        }.buttonStyle(.bordered).disabled(probing)
+                        Text(performanceReport).font(.system(size: 10, design: .monospaced))
+                            .accessibilityIdentifier("lifecycle.performance")
+                    }
                     ActiveTripView(trip: trip)
                 } else if let trip = store.trips.first, !trip.isActive, trip.endTime != nil {
                     List {
@@ -158,6 +175,13 @@ struct SprayLifecycleValidationView: View {
                             .accessibilityIdentifier("lifecycle.tanks")
                         Text("Actual records: \(SprayTankActualStore.shared.records.filter { $0.tripId == trip.id }.count)")
                             .accessibilityIdentifier("lifecycle.actuals")
+                        Text(verbatim: String(trip.pathPoints.count)).accessibilityIdentifier("lifecycle.routeCount")
+                        if let second = SprayTankActualStore.shared.records.first(where: { $0.tripId == trip.id && $0.tankNumber == 2 }) {
+                            Text("Tank 2 water L: \(second.waterVolumeL.map(String.init(describing:)) ?? "missing")")
+                                .accessibilityIdentifier("lifecycle.actualWater2")
+                            Text("Tank 2 chemical display: \(second.chemicals.first.map { String(describing: $0.displayAmount) } ?? "missing")")
+                                .accessibilityIdentifier("lifecycle.actualChemical2")
+                        }
                         Text(store.sprayRecords.first?.endTime == trip.endTime ? "Linked Spray finalised" : "Linked Spray pending")
                             .accessibilityIdentifier("lifecycle.spray")
                         Text("Simulated readbacks: \(server.load().tripReads) Trip; \(server.load().sprayReads) Spray")
@@ -200,6 +224,75 @@ struct SprayLifecycleValidationView: View {
             tracking.configure(store: store, locationService: location, accessControl: access, auth: auth)
             ready = true
         }
+    }
+
+    /// Sized-history probe, NOT a 60,000-fix real-time recording soak. The Trip,
+    /// tanks and Review are started through real UI before this opt-in is reachable.
+    private func probeHistory(count: Int) async {
+        guard performanceEnabled, !probing, var trip = tracking.activeTrip,
+              trip.vineyardId == SprayLifecycleSandbox.vineyard else { return }
+        probing = true
+        defer { probing = false }
+        performanceReport = "Running points=\(count)"
+        do {
+            let beforeRSS = Self.residentMegabytes()
+            if trip.pathPoints.count < count {
+                let additional = count - trip.pathPoints.count
+                trip.pathPoints += (0..<additional).map {
+                    CoordinatePoint(latitude: -35 + sin(Double($0) / 30) * 0.001,
+                        longitude: 149 + Double($0) * 0.00000001)
+                }
+                try store.updateTripOrThrow(trip)
+            }
+            let originalCount = trip.pathPoints.count
+            var injectedPoints: [CoordinatePoint] = []
+            var gpsMS: [Double] = []
+            var baselineMS: [Double] = []
+            var workerMS: [Double] = []
+            var publicationMS: [Double] = []
+            let preparation = ActiveTripTrailPreparation()
+            for step in 0..<3 {
+                // Let the real screen render between accepted production GPS calls.
+                try await Task.sleep(for: .milliseconds(150))
+                let gpsStart = ProcessInfo.processInfo.systemUptime
+                tracking.processLocation(CLLocation(latitude: -35 + Double(step) * 0.00003, longitude: 149.001), force: true)
+                gpsMS.append((ProcessInfo.processInfo.systemUptime - gpsStart) * 1000)
+                guard let current = tracking.activeTrip, let accepted = current.pathPoints.last else { throw URLError(.cancelled) }
+                injectedPoints.append(accepted)
+                let baselineStart = ProcessInfo.processInfo.systemUptime
+                _ = TrailDisplayProcessor.makeDisplayTrailSegments(points: current.pathPoints)
+                baselineMS.append((ProcessInfo.processInfo.systemUptime - baselineStart) * 1000)
+                preparation.request(tripID: current.id, points: current.pathPoints)
+                await preparation.waitForPreparation()
+                guard preparation.lastWorkerWasOffMain else { throw URLError(.cannotDecodeContentData) }
+                workerMS.append(preparation.lastWorkerMilliseconds)
+                publicationMS.append(preparation.lastPublicationMilliseconds)
+            }
+            guard let current = tracking.activeTrip,
+                  let disk = TripRepository().loadAll().first(where: { $0.id == current.id }),
+                  disk.pathPoints == current.pathPoints, disk.pathPoints.count >= originalCount + 3,
+                  Set(injectedPoints.map(\.id)).count == 3,
+                  injectedPoints.allSatisfy({ disk.pathPoints.contains($0) }) else {
+                let live = tracking.activeTrip?.pathPoints ?? []
+                let saved = TripRepository().loadAll().first(where: { $0.id == trip.id })?.pathPoints ?? []
+                throw NSError(domain: "HistoryProbe", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                    "Route integrity: initial=\(originalCount) live=\(live.count) disk=\(saved.count) exact=\(live == saved) injectedUnique=\(Set(injectedPoints.map(\.id)).count)"])
+            }
+            func values(_ times: [Double]) -> String { times.map { String(format: "%.1f", $0) }.joined(separator: ",") }
+            performanceReport = "points=\(originalCount)→\(disk.pathPoints.count); samples=3\nGPS main ms=[\(values(gpsMS))]\nold map main ms=[\(values(baselineMS))]\nnew worker ms=[\(values(workerMS))]\nnew publish main ms=[\(values(publicationMS))]\nRSS MB=\(beforeRSS)→\(Self.residentMegabytes()); disk route verified"
+        } catch { performanceReport = "Probe FAILED: \(error.localizedDescription)" }
+    }
+
+    private static func residentMegabytes() -> String {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<integer_t>.size)
+        let status = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        guard status == KERN_SUCCESS else { return "unavailable" }
+        return String(format: "%.1f", Double(info.resident_size) / 1_048_576)
     }
 }
 

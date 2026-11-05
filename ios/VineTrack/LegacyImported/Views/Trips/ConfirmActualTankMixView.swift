@@ -169,12 +169,10 @@ struct ConfirmActualTankMixView: View {
     }
 
     private func parsed(_ text: String) -> Double? {
-        let formatter = NumberFormatter()
-        formatter.locale = .current
-        formatter.numberStyle = .decimal
-        formatter.isLenient = false
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return formatter.number(from: text)?.doubleValue
+        // Use the same complete decimal-input contract as the initial Review.
+        // NumberFormatter alone rejects a dot decimal on comma-decimal devices,
+        // despite this exact text being accepted by Review and the shared editor.
+        SprayEditingNumber.completeValue(text)
     }
 
     private static func input(_ value: Double) -> String {
