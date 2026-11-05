@@ -38,6 +38,47 @@ struct YieldPermanentSamplingLocationsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                blockPickerSection
+                locationMapSection
+                permanentSamplingSection
+                statusSections
+            }
+            .navigationTitle("Permanent Yield Locations")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .overlay { if busy { ProgressView("Checking server…").padding().background(.regularMaterial, in: .rect(cornerRadius: 14)) } }
+            .task {
+                if selectedBlockId == nil { selectedBlockId = paddocks.first?.id }
+                // Request permission on this map so the native blue location
+                // annotation can appear without starting a Trip.
+                if locationService.authorizationStatus == .notDetermined {
+                    locationService.requestPermission()
+                }
+                locationService.startUpdating()
+                await reload()
+            }
+            .onChange(of: selectedBlockId) { _, _ in
+                sets = []; draftSites = []; confirmedSites = []
+                zoomToBlock()
+                Task { await reload() }
+            }
+            .sheet(isPresented: $showEditor) { editorSheet }
+            .confirmationDialog("Confirm these permanent locations for this block?", isPresented: $showConfirm,
+                titleVisibility: .visible) {
+                Button("Confirm Locations") { Task { await confirmDraft() } }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("After confirmation these coordinates are immutable. Changes require a new revision. Other vineyard devices see only confirmed sets.")
+            }
+        }
+    }
+
+    // Keep the large map, site editor, and per-block status in independent
+    // ViewBuilder expressions to avoid exponential SwiftUI type-check costs.
+    private var blockPickerSection: some View {
                 Section {
                     Picker("Block", selection: $selectedBlockId) {
                         ForEach(paddocks) { block in
@@ -47,6 +88,9 @@ struct YieldPermanentSamplingLocationsView: View {
                     Text("Saved locations are assigned to a specific block and can be revisited for future vintages. They are not general Permanent Items.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+    }
+
+    private var locationMapSection: some View {
                 Section("Location map") {
                     if let block = selectedBlock {
                         MapReader { proxy in
@@ -92,6 +136,9 @@ struct YieldPermanentSamplingLocationsView: View {
                         Text("Choose a mapped block.").foregroundStyle(.secondary)
                     }
                 }
+    }
+
+    private var permanentSamplingSection: some View {
                 Section("Permanent sampling locations") {
                     if let confirmed {
                         Label("Confirmed version \(confirmed.version) · \(confirmedSites.count) sites", systemImage: "checkmark.seal.fill")
@@ -119,11 +166,11 @@ struct YieldPermanentSamplingLocationsView: View {
                                   systemImage: "location.fill")
                         }
                         .disabled(busy || fieldLocating)
+                        .accessibilityIdentifier("yield.sites.placeGPS")
                         if let fieldLocationMessage {
                             Text(fieldLocationMessage).font(.caption)
                                 .foregroundStyle(fieldLocating ? .secondary : .red)
                         }
-                        .accessibilityIdentifier("yield.sites.placeGPS")
                         ForEach(draftSites.sorted(by: { $0.siteNumber < $1.siteNumber })) { site in
                             HStack {
                                 Button {
@@ -162,6 +209,10 @@ struct YieldPermanentSamplingLocationsView: View {
                         }
                     }
                 }
+    }
+
+    @ViewBuilder
+    private var statusSections: some View {
                 if let statusText {
                     Section { Label(statusText, systemImage: "info.circle").foregroundStyle(.secondary) }
                 }
@@ -169,38 +220,6 @@ struct YieldPermanentSamplingLocationsView: View {
                     Section { Label(errorText, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.red) }
                 }
-            }
-            .navigationTitle("Permanent Yield Locations")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .overlay { if busy { ProgressView("Checking server…").padding().background(.regularMaterial, in: .rect(cornerRadius: 14)) } }
-            .task {
-                if selectedBlockId == nil { selectedBlockId = paddocks.first?.id }
-                // Request permission on this map so the native blue location
-                // annotation can appear without starting a Trip.
-                if locationService.authorizationStatus == .notDetermined {
-                    locationService.requestPermission()
-                }
-                locationService.startUpdating()
-                await reload()
-            }
-            .onChange(of: selectedBlockId) { _, _ in
-                sets = []; draftSites = []; confirmedSites = []
-                zoomToBlock()
-                Task { await reload() }
-            }
-            .sheet(isPresented: $showEditor) { editorSheet }
-            .confirmationDialog("Confirm these permanent locations for this block?", isPresented: $showConfirm,
-                titleVisibility: .visible) {
-                Button("Confirm Locations") { Task { await confirmDraft() } }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("After confirmation these coordinates are immutable. Changes require a new revision. Other vineyard devices see only confirmed sets.")
-            }
-        }
     }
 
     private var editorSheet: some View {
@@ -396,7 +415,7 @@ struct YieldPermanentSamplingLocationsView: View {
         busy = true
         defer { busy = false }
         do {
-            try await repository.removeDraftSite(site, set: draft)
+            try await repository.hardDeleteSite(site, set: draft)
             draftSites = try await repository.listSites(draft)
             statusText = "Draft site removed. Historical confirmed locations are unchanged."
             errorText = nil
