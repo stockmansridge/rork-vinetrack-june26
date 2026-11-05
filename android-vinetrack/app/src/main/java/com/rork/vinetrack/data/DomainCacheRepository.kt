@@ -204,6 +204,16 @@ class DomainCacheRepository(context: Context) {
 
     // MARK: - Yield estimation sessions by vineyard
 
+    fun deletedYieldSessionIds(userId: String?, vineyardId: String): Set<String> {
+        check(ownerMatches(userId)) { "Yield cache belongs to another account." }
+        return store.deletedYieldSessionIds(vineyardId)
+    }
+
+    fun retainYieldDeletionReceipts(userId: String?, vineyardId: String, ids: Set<String>): Boolean {
+        if (!ownerMatches(userId)) return false
+        return store.retainYieldDeletionReceipts(vineyardId, ids)
+    }
+
     fun saveYieldSessions(userId: String?, vineyardId: String, sessions: List<YieldEstimationSession>): Boolean {
         if (!ownerMatches(userId)) return false
         return store.saveYieldSessions(vineyardId, sessions, System.currentTimeMillis())

@@ -5,6 +5,20 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/issue54-yield-native-validation.yml'
+      - 'supabase/migrations/*issue54*.sql'
+      - 'scripts/issue54_security_*'
+      - 'ios/VineTrack/Backend/Repositories/SupabaseYieldEstimationHardDeleteRepository.swift'
+      - 'ios/VineTrack/Backend/Sync/OperationsSyncServices.swift'
+      - 'ios/VineTrack/LegacyImported/Repositories/YieldRepository.swift'
+      - 'ios/VineTrack/LegacyImported/Services/MigratedDataStore+Operations.swift'
+      - 'ios/VineTrackTests/YieldCompletionPersistenceTests.swift'
+      - 'ios/VineTrackTests/YieldVintageReportTests.swift'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/YieldEstimationSessionRepository.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/YieldSession*Sync.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/DomainCache*.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/YieldCompletionPersistenceTest.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/YieldVintageReportTest.kt'
       - 'ios/VineTrack/Backend/Repositories/SupabaseYieldSamplingSitesRepository.swift'
       - 'ios/VineTrack/LegacyImported/Views/Yield/YieldPermanentSamplingLocationsView.swift'
       - 'ios/VineTrack/LegacyImported/Views/Yield/YieldEstimationView.swift'
@@ -43,6 +57,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  security:
+    name: Isolated PostgreSQL deletion roles and replay safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install local PostgreSQL (no production connection)
+        run: sudo apt-get update -qq && sudo apt-get install -y postgresql
+      - name: Run exact-source security and concurrency tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          echo "${{ github.sha }}" > "$RUNNER_TEMP/issue54-security-sha.txt"
+          python3 scripts/issue54_security_validation.py 2>&1 | tee "$RUNNER_TEMP/issue54-security.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue54-isolated-postgres-security
+          path: |
+            ${{ runner.temp }}/issue54-security-sha.txt
+            ${{ runner.temp }}/issue54-security.log
+          retention-days: 14
+
   ios:
     name: iOS simulator compile and yield contract tests
     runs-on: macos-15
@@ -83,6 +124,13 @@ jobs:
             -only-testing:VineTrackTests/YieldPanelCountObservationTests \
             -only-testing:VineTrackTests/QuadrantCountNativeTests \
             -only-testing:VineTrackTests/YieldCompletionPersistenceTests \
+            -only-testing:VineTrackTests/YieldVintageReportTests \
+            -only-testing:VineTrackTests/TripQueuedUploadScopeTests \
+            -only-testing:VineTrackTests/TripEndGateTests \
+            -only-testing:VineTrackTests/TripClosureStatusTests \
+            -only-testing:VineTrackTests/GuidedSyncRepairEngineTests \
+            -only-testing:VineTrackTests/TankSessionTimestampEncodingTests \
+            -only-testing:VineTrackTests/TripSyncStageFailureTests \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/issue54-ios.log"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -138,7 +186,9 @@ jobs:
             --tests "com.rork.vinetrack.data.YieldPermanentSiteContractTest" \
             --tests "com.rork.vinetrack.data.YieldPanelCountObservationTest" \
             --tests "com.rork.vinetrack.data.YieldCompletionPersistenceTest" \
-            --tests "com.rork.vinetrack.data.YieldVintageReportTest"
+            --tests "com.rork.vinetrack.data.YieldVintageReportTest" \
+            --tests "com.rork.vinetrack.data.*Trip*Test" \
+            --tests "com.rork.vinetrack.data.*Sync*Test"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

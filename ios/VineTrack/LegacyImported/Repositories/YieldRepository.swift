@@ -30,7 +30,8 @@ final class YieldRepository {
     nonisolated struct SessionsState: Codable, Sendable {
         var sessions: [YieldEstimationSession] = []
         var pending: [UUID: SaveIntent] = [:]
-        enum CodingKeys: String, CodingKey { case sessions, pending }
+        var hardDeleted: Set<UUID> = []
+        enum CodingKeys: String, CodingKey { case sessions, pending, hardDeleted }
         init() {}
         init(from decoder: Decoder) throws {
             if let legacy = try? decoder.singleValueContainer().decode([YieldEstimationSession].self) {
@@ -40,6 +41,7 @@ final class YieldRepository {
                 let c = try decoder.container(keyedBy: CodingKeys.self)
                 sessions = try c.decode([YieldEstimationSession].self, forKey: .sessions)
                 pending = try c.decodeIfPresent([UUID: SaveIntent].self, forKey: .pending) ?? [:]
+                hardDeleted = try c.decodeIfPresent(Set<UUID>.self, forKey: .hardDeleted) ?? []
             }
         }
     }
@@ -57,6 +59,8 @@ final class YieldRepository {
         (try? sessionsState().sessions) ?? []
     }
 
+    func isHardDeletedSession(_ id: UUID) -> Bool { (try? sessionsState().hardDeleted.contains(id)) ?? false }
+
     func pendingSessionIntents() -> [UUID: SaveIntent] { (try? sessionsState().pending) ?? [:] }
     func pendingSessionSaves() -> [UUID: Date] { pendingSessionIntents().mapValues(\.timestamp) }
 
@@ -65,6 +69,7 @@ final class YieldRepository {
             throw CocoaError(.coderInvalidValue)
         }
         var state = try sessionsState()
+        guard !state.hardDeleted.contains(session.id) else { throw CocoaError(.fileWriteNoPermission) }
         state.sessions.removeAll { $0.id == session.id }
         state.sessions.append(session)
         state.pending[session.id] = SaveIntent(token: UUID(), timestamp: timestamp)
@@ -81,6 +86,20 @@ final class YieldRepository {
         try persistence.saveOrThrow(state, key: Self.sessionsKey)
     }
 
+    /// Only authenticated, scoped server deletion receipts may reach here.
+    /// Persist cancellation and tombstones atomically before changing visible state.
+    func applyHardDeletionReceipts(_ ids: Set<UUID>, vineyardId: UUID) throws {
+        guard !ids.isEmpty else { return }
+        var state = try sessionsState()
+        guard !state.sessions.contains(where: { ids.contains($0.id) && $0.vineyardId != vineyardId }) else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        state.sessions.removeAll { ids.contains($0.id) && $0.vineyardId == vineyardId }
+        for id in ids { state.pending.removeValue(forKey: id) }
+        state.hardDeleted.formUnion(ids)
+        try persistence.saveOrThrow(state, key: Self.sessionsKey)
+    }
+
     func loadSessions(for vineyardId: UUID) -> [YieldEstimationSession] {
         loadAllSessions().filter { $0.vineyardId == vineyardId }
     }
@@ -88,7 +107,7 @@ final class YieldRepository {
     func saveSessionsSlice(_ items: [YieldEstimationSession], for vineyardId: UUID) {
         guard var state = try? sessionsState() else { return }
         state.sessions.removeAll { $0.vineyardId == vineyardId }
-        state.sessions.append(contentsOf: items)
+        state.sessions.append(contentsOf: items.filter { !state.hardDeleted.contains($0.id) })
         // A local explicit delete must not leave a save intent to resurrect it.
         let retained = Set(state.sessions.map(\.id))
         state.pending = state.pending.filter { retained.contains($0.key) }
@@ -100,14 +119,14 @@ final class YieldRepository {
         let pending = state.sessions.filter { state.pending[$0.id] != nil }
         let pendingIds = Set(pending.map(\.id))
         state.sessions.removeAll { $0.vineyardId == vineyardId && !pendingIds.contains($0.id) }
-        state.sessions.append(contentsOf: remote.filter { !pendingIds.contains($0.id) })
+        state.sessions.append(contentsOf: remote.filter { !pendingIds.contains($0.id) && !state.hardDeleted.contains($0.id) })
         try? persistence.saveOrThrow(state, key: Self.sessionsKey)
     }
 
     func mergeSessions(_ remote: [YieldEstimationSession], for vineyardId: UUID) -> [YieldEstimationSession] {
         guard var state = try? sessionsState() else { return loadSessions(for: vineyardId) }
         for item in remote {
-            if !state.sessions.contains(where: { $0.id == item.id }) {
+            if !state.hardDeleted.contains(item.id) && !state.sessions.contains(where: { $0.id == item.id }) {
                 state.sessions.append(item)
             }
         }

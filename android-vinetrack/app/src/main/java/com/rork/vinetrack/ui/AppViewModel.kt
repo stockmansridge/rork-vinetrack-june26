@@ -5442,8 +5442,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (session.accessToken == null || !_ui.value.isOnline) return
         val originalAccount = session.accountAccess() ?: return
         launchReplayStage("yield-session") {
-            yieldSessionSaveSync.replayAll(retainConfirmed = { saved ->
-                if (!session.isAccountAccessCurrent(originalAccount)) false else {
+            val vineyard = _ui.value.selectedVineyardId ?: return@launchReplayStage
+            // Fail closed if receipts cannot be fetched; do not replay stale saves.
+            val deleted = yieldSessionRepo.deletedIds(vineyard)
+            if (!session.isAccountAccessCurrent(originalAccount) || _ui.value.selectedVineyardId != vineyard) return@launchReplayStage
+            retainYieldDeletionReceipts(originalAccount.userId, vineyard, deleted)
+            yieldSessionSaveSync.replayAll(vineyardId = vineyard, retainConfirmed = { saved ->
+                if (!session.isAccountAccessCurrent(originalAccount) ||
+                    saved.id.lowercase() in domainCache.deletedYieldSessionIds(originalAccount.userId, saved.vineyardId)) false else {
                     val cached = domainCache.loadYieldSessions(originalAccount.userId, saved.vineyardId).orEmpty()
                     domainCache.saveYieldSessions(originalAccount.userId, saved.vineyardId,
                         cached.filterNot { it.id == saved.id } + saved)
@@ -5458,7 +5464,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
-            yieldSessionDeleteSync.replayAll { sessionId ->
+            yieldSessionDeleteSync.replayAll(vineyardId = vineyard) { sessionId ->
                 _ui.update { st ->
                     st.copy(yieldSessions = st.yieldSessions.filterNot { it.id == sessionId })
                 }
@@ -18226,6 +18232,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Write-ahead for BOTH online and offline saves. Never close the
         // completion screen on optimistic memory alone or send before this commit.
         try {
+            check(scoped.id.lowercase() !in domainCache.deletedYieldSessionIds(this.session.userId, vineyardId)) {
+                "This yield observation was permanently deleted. Start a new count."
+            }
             yieldSessionSaveSync.enqueue(scoped, clientUpdatedAt)
         } catch (e: Exception) {
             _ui.update { it.copy(yieldSessionError = "Trip could not be saved on this device. Please retry.") }
@@ -18248,37 +18257,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingYieldSessions()
     }
 
-    /**
-     * Soft-delete a yield-estimation session (owner/manager/supervisor only via
-     * RLS). Offline-aware: optimistic hide, then either the soft-delete RPC
-     * online or a queued YIELD_SESSION / DELETE marker. The delete enqueue also
-     * cancels any still-pending save for the same session.
+    /** Called only after an authenticated deletion receipt AND absence readback.
+     * Persist the removed snapshot before consuming same-session outbox entries.
+     * No second soft-delete request and no optimistic/offline success.
      */
-    fun deleteYieldSession(id: String, onResult: (Boolean) -> Unit = {}) {
-        val previous = _ui.value.yieldSessions
-        _ui.update { st -> st.copy(yieldSessions = st.yieldSessions.filterNot { it.id == id }, yieldSessionError = null) }
+    fun acknowledgeHardDeletedYieldSession(target: YieldEstimationSession) {
+        val owner = session.accountAccess() ?: error("Sign in again before retaining the deletion receipt.")
+        check(_ui.value.selectedVineyardId.equals(target.vineyardId, true)) { "Vineyard changed; reload before applying deletion." }
+        retainYieldDeletionReceipts(owner.userId, target.vineyardId, setOf(target.id.lowercase()))
+    }
 
-        if (!_ui.value.isOnline) {
-            yieldSessionDeleteSync.enqueue(id)
-            _ui.update { it.copy(yieldSessionError = "Estimation deleted offline — will sync when connection is available.") }
-            onResult(true)
-            return
+    private fun retainYieldDeletionReceipts(owner: String, vineyard: String, deleted: Set<String>) {
+        if (deleted.isEmpty()) return
+        check(domainCache.retainYieldDeletionReceipts(owner, vineyard, deleted)) {
+            "Deletion receipt could not be retained on this device."
         }
-
-        viewModelScope.launch {
-            try {
-                yieldSessionRepo.softDeleteSession(id)
-                onResult(true)
-            } catch (e: BackendError.Unauthorized) {
-                onUnauthorized("deleteYieldSession"); onResult(false)
-            } catch (e: BackendError.Server) {
-                _ui.update { it.copy(yieldSessions = previous, yieldSessionError = friendlyWriteError(e.code)) }
-                onResult(false)
-            } catch (e: Exception) {
-                yieldSessionDeleteSync.enqueue(id)
-                _ui.update { it.copy(yieldSessionError = "Estimation deleted offline — will sync when connection is available.") }
-                onResult(true)
-            }
+        yieldSessionSaveSync.applyDeletionReceipts(vineyard, deleted)
+        pendingWrites.list().filter { write ->
+            write.entityType == PendingEntityType.YIELD_SESSION && write.opType == PendingOpType.DELETE && write.clientId?.lowercase() in deleted
+        }.forEach { pendingWrites.removeIfCurrent(it) }
+        _ui.update { st ->
+            if (!st.selectedVineyardId.equals(vineyard, true)) st else
+                st.copy(yieldSessions = st.yieldSessions.filterNot { it.id.lowercase() in deleted }, yieldSessionError = null)
         }
     }
 
@@ -19172,7 +19172,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // existing state, then the server-snapshot cache.
         var yieldSessionsFromServer = false
         val yieldSessions = try {
-            yieldSessionRepo.listSessions(vineyardId).also { yieldSessionsFromServer = true }
+            val deleted = yieldSessionRepo.deletedIds(vineyardId)
+            if (!isCurrentLoad()) return
+            retainYieldDeletionReceipts(userId, vineyardId, deleted)
+            yieldSessionRepo.listSessions(vineyardId).filterNot { it.id.lowercase() in deleted }
+                .also { yieldSessionsFromServer = true }
         } catch (e: Exception) {
             _ui.value.yieldSessions.ifEmpty {
                 domainCache.loadYieldSessions(userId, vineyardId) ?: emptyList()

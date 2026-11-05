@@ -6,6 +6,8 @@ import CoreLocation
 /// Online-first editing never says "Confirmed" until the server readback does.
 struct YieldPermanentSamplingLocationsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessControl) private var accessControl
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(LocationService.self) private var locationService
     let vineyardId: UUID
     let paddocks: [Paddock]
@@ -20,6 +22,8 @@ struct YieldPermanentSamplingLocationsView: View {
     @State private var statusText: String?
     @State private var showEditor = false
     @State private var showConfirm = false
+    @State private var deleteTarget: YieldSamplingSiteRow?
+    @State private var showDeleteConfirm = false
     @State private var fieldLocating = false
     @State private var fieldLocationMessage: String?
     @State private var editingSite: YieldSamplingSiteRow?
@@ -60,12 +64,26 @@ struct YieldPermanentSamplingLocationsView: View {
                 locationService.startUpdating()
                 await reload()
             }
+            .refreshable { await reload() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await reload() } }
+            }
             .onChange(of: selectedBlockId) { _, _ in
+                deleteTarget = nil; showDeleteConfirm = false
+                showEditor = false; statusText = nil
                 sets = []; draftSites = []; confirmedSites = []
                 zoomToBlock()
                 Task { await reload() }
             }
             .sheet(isPresented: $showEditor) { editorSheet }
+            .alert("Hard Delete Sampling Location?", isPresented: $showDeleteConfirm) {
+                Button("Hard Delete", role: .destructive) {
+                    if let target = deleteTarget { Task { await delete(target) } }
+                }
+                Button("Cancel", role: .cancel) { deleteTarget = nil }
+            } message: {
+                Text("Permanently remove \(deleteTarget?.name ?? "this location") from this block for everyone? Confirmed deletion also removes draft copies. Historical count observations retain their recorded GPS, row and panel. This cannot be undone.")
+            }
             .confirmationDialog("Confirm these permanent locations for this block?", isPresented: $showConfirm,
                 titleVisibility: .visible) {
                 Button("Confirm Locations") { Task { await confirmDraft() } }
@@ -157,7 +175,7 @@ struct YieldPermanentSamplingLocationsView: View {
                             Label(confirmed == nil ? "Create Draft Locations" : "Revise Confirmed Locations",
                                   systemImage: "plus.circle")
                         }
-                        .disabled(busy || selectedBlock == nil)
+                        .disabled(busy || selectedBlock == nil || accessControl?.canEditRecords != true)
                     } else {
                         Button {
                             Task { await captureFieldLocation() }
@@ -186,9 +204,10 @@ struct YieldPermanentSamplingLocationsView: View {
                                 .buttonStyle(.plain)
                                 Spacer()
                                 Button(role: .destructive) {
-                                    Task { await delete(site) }
+                                    deleteTarget = site; showDeleteConfirm = true
                                 } label: { Image(systemName: "trash") }
-                                    .disabled(busy)
+                                    .disabled(busy || accessControl?.canEditRecords != true)
+                                    .accessibilityLabel("Hard Delete Draft \(site.name)")
                             }
                         }
                         Button {
@@ -196,15 +215,23 @@ struct YieldPermanentSamplingLocationsView: View {
                         } label: {
                             Label("Review and Confirm Block Locations", systemImage: "checkmark.seal")
                         }
-                        .disabled(busy || draftSites.isEmpty)
+                        .disabled(busy || draftSites.isEmpty || accessControl?.canDelete != true)
                     }
-                    if draft == nil {
+                    if confirmed != nil {
+                        Text("Confirmed locations").font(.headline)
                         ForEach(confirmedSites.sorted(by: { $0.siteNumber < $1.siteNumber })) { site in
                             HStack {
                                 Text("\(site.siteNumber). \(site.name)")
                                 Spacer()
                                 Text("Row \(site.rowNumber ?? "—")")
                                     .font(.caption).foregroundStyle(.secondary)
+                                if accessControl?.canDelete == true {
+                                    Button(role: .destructive) {
+                                        deleteTarget = site; showDeleteConfirm = true
+                                    } label: { Image(systemName: "trash") }
+                                        .disabled(busy)
+                                        .accessibilityLabel("Hard Delete Confirmed \(site.name)")
+                                }
                             }
                         }
                     }
@@ -318,7 +345,7 @@ struct YieldPermanentSamplingLocationsView: View {
     }
 
     private func editExisting(_ site: YieldSamplingSiteRow) {
-        guard draft != nil else { return }
+        guard draft != nil, accessControl?.canEditRecords == true else { return }
         editingSite = site
         editCoordinate = CLLocationCoordinate2D(latitude: site.latitude, longitude: site.longitude)
         nameText = site.name
@@ -342,7 +369,11 @@ struct YieldPermanentSamplingLocationsView: View {
     private func reload() async {
         guard let block = selectedBlock, !busy else { return }
         busy = true
-        defer { busy = false }
+        defer {
+            busy = false
+            // A block switch during a network wait must schedule its own read.
+            if selectedBlockId != block.id { Task { await reload() } }
+        }
         do {
             let rows = try await repository.listSets(vineyardId: vineyardId, paddockId: block.id)
             let draftRow = rows.first { $0.status == "draft" }
@@ -357,36 +388,46 @@ struct YieldPermanentSamplingLocationsView: View {
             confirmedSites = confirmedValues
             errorText = nil
         } catch {
+            guard selectedBlockId == block.id else { return }
             errorText = "Could not read sampling locations from the server: \(error.localizedDescription)"
         }
     }
 
     private func beginDraft() async {
-        guard let block = selectedBlock, !busy else { return }
+        guard let block = selectedBlock, !busy, accessControl?.canEditRecords == true else { return }
         busy = true
-        defer { busy = false }
+        defer {
+            busy = false
+            if selectedBlockId != block.id { Task { await reload() } }
+        }
         do {
             let draft = try await repository.beginDraft(vineyardId: vineyardId, paddockId: block.id)
             let values = try await repository.listSites(draft)
+            let rows = try await repository.listSets(vineyardId: vineyardId, paddockId: block.id)
             guard selectedBlockId == block.id else { return }
-            sets = try await repository.listSets(vineyardId: vineyardId, paddockId: block.id)
+            sets = rows
             draftSites = values
             statusText = "Draft saved on server. Confirm it when all locations have been reviewed."
             errorText = nil
         } catch {
+            guard selectedBlockId == block.id else { return }
             errorText = "Could not create or read back the draft. Previous confirmed sites are unchanged. \(error.localizedDescription)"
         }
     }
 
     private func saveEditor() async {
-        guard let draft, let block = selectedBlock, let coordinate = editCoordinate, !busy else { return }
+        guard let draft, let block = selectedBlock, let coordinate = editCoordinate, !busy,
+              accessControl?.canEditRecords == true else { return }
         guard YieldSamplingSiteGeometry.contains(coordinate, polygon: block.polygonPoints) else {
             errorText = "The selected location is outside the block."
             showEditor = false
             return
         }
         busy = true
-        defer { busy = false }
+        defer {
+            busy = false
+            if selectedBlockId != block.id { Task { await reload() } }
+        }
         let row = YieldSamplingSiteRow(
             id: editingSite?.id ?? UUID(),
             siteSetId: draft.id, vineyardId: vineyardId, paddockId: block.id,
@@ -406,26 +447,42 @@ struct YieldPermanentSamplingLocationsView: View {
             statusText = "Saved draft site to server. Still awaiting block confirmation."
             errorText = nil
         } catch {
+            guard selectedBlockId == block.id else { return }
             errorText = "Site was not confirmed saved: \(error.localizedDescription)"
         }
     }
 
     private func delete(_ site: YieldSamplingSiteRow) async {
-        guard let draft, !busy else { return }
+        guard !busy, site.vineyardId == vineyardId, site.paddockId == selectedBlockId,
+              let set = sets.first(where: { $0.id == site.siteSetId }),
+              (set.isConfirmed ? accessControl?.canDelete : accessControl?.canEditRecords) == true else { return }
         busy = true
-        defer { busy = false }
+        defer {
+            busy = false; deleteTarget = nil
+            if selectedBlockId != site.paddockId { Task { await reload() } }
+        }
         do {
-            try await repository.hardDeleteSite(site, set: draft)
-            draftSites = try await repository.listSites(draft)
-            statusText = "Draft site removed. Historical confirmed locations are unchanged."
+            try await repository.hardDeleteSite(site, set: set)
+            // Refresh both collections: confirmed deletion removes draft copies.
+            let rows = try await repository.listSets(vineyardId: vineyardId, paddockId: site.paddockId)
+            let pending = rows.first { $0.status == "draft" }
+            let ready = rows.first(where: \.isConfirmed)
+            let pendingValues: [YieldSamplingSiteRow]
+            if let pending { pendingValues = try await repository.listSites(pending) } else { pendingValues = [] }
+            let readyValues: [YieldSamplingSiteRow]
+            if let ready { readyValues = try await repository.listSites(ready) } else { readyValues = [] }
+            guard selectedBlockId == site.paddockId else { return }
+            sets = rows; draftSites = pendingValues; confirmedSites = readyValues
+            statusText = "Hard Delete verified by server receipt and absence. Historical observations are unchanged."
             errorText = nil
         } catch {
-            errorText = "Could not remove draft site: \(error.localizedDescription)"
+            guard selectedBlockId == site.paddockId else { return }
+            errorText = "Hard Delete not confirmed. Reload and retry: \(error.localizedDescription)"
         }
     }
 
     private func confirmDraft() async {
-        guard let draft, let block = selectedBlock, !busy else { return }
+        guard let draft, let block = selectedBlock, !busy, accessControl?.canDelete == true else { return }
         guard !draftSites.isEmpty,
               draftSites.allSatisfy({
                 YieldSamplingSiteGeometry.contains(CLLocationCoordinate2D(latitude: $0.latitude,
@@ -435,15 +492,22 @@ struct YieldPermanentSamplingLocationsView: View {
             return
         }
         busy = true
-        defer { busy = false }
+        defer {
+            busy = false
+            if selectedBlockId != block.id { Task { await reload() } }
+        }
         do {
             let verified = try await repository.confirm(draft)
-            sets = try await repository.listSets(vineyardId: vineyardId, paddockId: block.id)
-            confirmedSites = try await repository.listSites(verified)
+            let rows = try await repository.listSets(vineyardId: vineyardId, paddockId: block.id)
+            let values = try await repository.listSites(verified)
+            guard selectedBlockId == block.id else { return }
+            sets = rows
+            confirmedSites = values
             draftSites = []
             statusText = "Confirmed version \(verified.version) with \(confirmedSites.count) sites. Server readback verified."
             errorText = nil
         } catch {
+            guard selectedBlockId == block.id else { return }
             errorText = "Confirmation or readback failed. Reload and check the server before retrying. \(error.localizedDescription)"
         }
     }

@@ -122,7 +122,8 @@ class YieldSamplingSiteRepository(private val session: SessionStore) {
     suspend fun confirmed(vineyard: String, paddock: String): ConfirmedYieldSites? {
         val set = listSets(vineyard, paddock).firstOrNull { it.isConfirmed } ?: return null
         val sites = listSites(set)
-        check(sites.isNotEmpty() && sites.all { it.siteNumber > 0 }) { "Confirmed set had no valid site readback." }
+        if (sites.isEmpty()) return null // Last confirmed site was hard-deleted.
+        check(sites.all { it.siteNumber > 0 }) { "Confirmed set had invalid site readback." }
         return ConfirmedYieldSites(set, sites)
     }
 
@@ -228,14 +229,37 @@ class YieldSamplingSiteRepository(private val session: SessionStore) {
         saved
     }
 
-    suspend fun deleteDraftSite(set: YieldSiteSet, site: YieldFixedSite) = withContext(Dispatchers.IO) {
-        require(set.status == "draft" && site.siteSetId.equals(set.id, true))
+    @Serializable
+    private data class SiteDeleteArgs(
+        val p_id: String, val p_set_id: String, val p_vineyard_id: String, val p_expected_status: String,
+    )
+    @Serializable
+    private data class SiteDeletionReceipt(
+        val deleted_row_id: String, val site_set_id: String, val vineyard_id: String,
+        val paddock_id: String, val site_id: String, val was_confirmed: Boolean,
+    )
+
+    suspend fun hardDeleteSite(set: YieldSiteSet, site: YieldFixedSite) = withContext(Dispatchers.IO) {
+        require(set.status in listOf("draft", "confirmed") && site.siteSetId.equals(set.id, true)
+            && site.vineyardId.equals(set.vineyardId, true) && site.paddockId.equals(set.paddockId, true))
         val t = token()
-        val response = SupabaseClient.http.delete(SupabaseClient.restUrl(
-            "yield_sample_sites?id=eq.${site.id}&site_set_id=eq.${set.id}"
-        )) { auth(t) }
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("hard_delete_yield_sample_site")) {
+            auth(t); contentType(ContentType.Application.Json)
+            setBody(SiteDeleteArgs(site.id, set.id, set.vineyardId, set.status))
+        }
         if (!response.status.isSuccess()) fail(response.status.value, response.bodyAsText())
-        check(listSites(set).none { it.id.equals(site.id, true) }) { "Site delete receipt could not be confirmed." }
+        check(response.body<Boolean>()) { "Site deletion was not acknowledged." }
+        val result = SupabaseClient.http.get(SupabaseClient.restUrl(
+            "yield_sample_site_deletion_receipts?select=deleted_row_id,site_set_id,vineyard_id,paddock_id,site_id,was_confirmed" +
+                "&deleted_row_id=eq.${site.id}&site_set_id=eq.${set.id}&vineyard_id=eq.${set.vineyardId}"
+        )) { auth(t) }
+        if (!result.status.isSuccess()) fail(result.status.value, result.bodyAsText())
+        val receipt = result.body<List<SiteDeletionReceipt>>().singleOrNull()
+        check(receipt != null && receipt.deleted_row_id.equals(site.id, true)
+            && receipt.site_set_id.equals(set.id, true) && receipt.vineyard_id.equals(set.vineyardId, true)
+            && receipt.paddock_id.equals(site.paddockId, true) && receipt.site_id.equals(site.siteId, true)
+            && receipt.was_confirmed == set.isConfirmed
+            && listSites(set).none { it.id.equals(site.id, true) }) { "Site receipt or absence could not be confirmed. Reload before retrying." }
     }
 
     suspend fun confirm(set: YieldSiteSet): ConfirmedYieldSites = withContext(Dispatchers.IO) {

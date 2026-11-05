@@ -116,7 +116,10 @@ final class SupabaseYieldSamplingSitesRepository {
         let sets = try await listSets(vineyardId: vineyardId, paddockId: paddockId)
         guard let set = sets.first(where: \.isConfirmed) else { return nil }
         let sites = try await listSites(set)
-        guard !sites.isEmpty, sites.allSatisfy({ $0.siteNumber > 0 }) else {
+        // The final confirmed site can be physically deleted. An empty set is
+        // no longer a usable sampling source, not a corrupt server response.
+        guard !sites.isEmpty else { return nil }
+        guard sites.allSatisfy({ $0.siteNumber > 0 }) else {
             throw CocoaError(.fileReadCorruptFile)
         }
         return (set, sites)
@@ -224,6 +227,16 @@ final class SupabaseYieldSamplingSitesRepository {
         let deleted_row_id: UUID
         let site_set_id: UUID
         let vineyard_id: UUID
+        let paddock_id: UUID
+        let site_id: UUID
+        let was_confirmed: Bool
+    }
+
+    private nonisolated struct SiteDeleteArgs: Encodable, Sendable {
+        let p_id: UUID
+        let p_set_id: UUID
+        let p_vineyard_id: UUID
+        let p_expected_status: String
     }
 
     /// Real DELETE, including confirmed locations for vineyard leadership.
@@ -234,15 +247,13 @@ final class SupabaseYieldSamplingSitesRepository {
               site.paddockId == set.paddockId else {
             throw CocoaError(.fileWriteNoPermission)
         }
-        let _: [SmallSiteId] = try await provider.client
-            .from("yield_sample_sites").delete()
-            .eq("id", value: site.id.uuidString)
-            .eq("site_set_id", value: set.id.uuidString)
-            .eq("vineyard_id", value: set.vineyardId.uuidString)
-            .select("id").execute().value
+        let acknowledged: Bool = try await provider.client.rpc("hard_delete_yield_sample_site",
+            params: SiteDeleteArgs(p_id: site.id, p_set_id: set.id,
+                p_vineyard_id: set.vineyardId, p_expected_status: set.status)).execute().value
+        guard acknowledged else { throw CocoaError(.fileWriteUnknown) }
         let receipts: [SiteDeletionReceipt] = try await provider.client
             .from("yield_sample_site_deletion_receipts")
-            .select("deleted_row_id,site_set_id,vineyard_id")
+            .select("deleted_row_id,site_set_id,vineyard_id,paddock_id,site_id,was_confirmed")
             .eq("deleted_row_id", value: site.id.uuidString)
             .eq("site_set_id", value: set.id.uuidString)
             .execute().value
@@ -250,6 +261,9 @@ final class SupabaseYieldSamplingSitesRepository {
               receipts[0].deleted_row_id == site.id,
               receipts[0].site_set_id == set.id,
               receipts[0].vineyard_id == set.vineyardId,
+              receipts[0].paddock_id == site.paddockId,
+              receipts[0].site_id == site.siteId,
+              receipts[0].was_confirmed == set.isConfirmed,
               !(try await listSites(set)).contains(where: { $0.id == site.id }) else {
             throw CocoaError(.fileWriteUnknown)
         }

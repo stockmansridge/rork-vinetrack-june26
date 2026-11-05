@@ -70,7 +70,7 @@ class YieldSessionDeleteSync(
         )
     }
 
-    suspend fun replayAll(onSynced: (String) -> Unit) {
+    suspend fun replayAll(vineyardId: String? = null, onSynced: (String) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
@@ -88,18 +88,13 @@ class YieldSessionDeleteSync(
                     continue
                 }
                 try {
-                    sessionRepo.hardDeleteSessionById(payload.id)
+                    sessionRepo.hardDeleteSessionById(payload.id, vineyardId)
                     pending.remove(write.id)
                     onSynced(payload.id)
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to sync this delete.")
                 } catch (e: BackendError.Server) {
                     when {
-                        // Already gone — idempotent success.
-                        e.code == 404 -> {
-                            pending.remove(write.id)
-                            onSynced(payload.id)
-                        }
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
                         else -> pending.updateStatus(
                             write.id,

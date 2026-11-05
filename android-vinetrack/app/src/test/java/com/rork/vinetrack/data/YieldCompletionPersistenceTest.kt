@@ -25,6 +25,39 @@ class YieldCompletionPersistenceTest {
         }
     }
 
+    @Test fun deletionReceiptCancelsOnlyExactVineyardSavedIntent() {
+        val disk = InMemoryPendingWriteStore()
+        val queue = PendingWriteRepository(disk)
+        val sync = YieldSessionSaveSync(Server(), queue)
+        sync.enqueue(trip, stamp)
+        sync.enqueue(trip.copy(id = "other-trip"), stamp)
+        sync.enqueue(trip.copy(id = "foreign-trip", vineyardId = "foreign-vineyard"), stamp)
+        sync.applyDeletionReceipts(trip.vineyardId, setOf(trip.id, "foreign-trip"))
+        val retained = PendingWriteRepository(disk).list().map { it.clientId }.toSet()
+        assertEquals(setOf("other-trip", "foreign-trip"), retained)
+    }
+
+    @Test fun receiptArrivingDuringUploadSuppressesStaleAcknowledgement() = runBlocking {
+        val queue = PendingWriteRepository(InMemoryPendingWriteStore())
+        val server = Server()
+        val sync = YieldSessionSaveSync(server, queue)
+        sync.enqueue(trip, stamp)
+        server.action = { sync.applyDeletionReceipts(trip.vineyardId, setOf(trip.id)) }
+        sync.replayAll { fail("A stale upload response must not resurrect a receipted deletion") }
+        assertTrue(queue.list().isEmpty())
+    }
+
+    @Test fun replayForSelectedVineyardLeavesForeignIntentUntouched() = runBlocking {
+        val queue = PendingWriteRepository(InMemoryPendingWriteStore())
+        val server = Server()
+        val sync = YieldSessionSaveSync(server, queue)
+        sync.enqueue(trip, stamp)
+        sync.enqueue(trip.copy(id = "foreign-trip", vineyardId = "foreign-vineyard"), stamp)
+        sync.replayAll(vineyardId = trip.vineyardId) { assertEquals(trip.id, it.id) }
+        assertEquals(listOf(trip.id), server.sent.map { it.first })
+        assertEquals("foreign-trip", queue.list().single().clientId)
+    }
+
     @Test fun completionAndTimestampSurviveQueueRestart() {
         val disk = InMemoryPendingWriteStore()
         val server = Server()

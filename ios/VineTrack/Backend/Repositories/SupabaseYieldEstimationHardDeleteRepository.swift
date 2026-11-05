@@ -34,28 +34,21 @@ final class SupabaseYieldEstimationHardDeleteRepository {
                 p_expected_completed: session.isCompleted
             )
         ).execute().value
-        if !acknowledged {
-            guard !session.isCompleted else { throw CocoaError(.fileWriteNoPermission) }
-            // A locally created draft might never have reached the server.
-            // Read back server absence before allowing the local outbox to
-            // cancel its pending save; never claim a completed record was gone.
-            let existing: [SmallId] = try await provider.client
-                .from("yield_estimation_sessions")
-                .select("id")
-                .eq("id", value: session.id.uuidString)
-                .eq("vineyard_id", value: session.vineyardId.uuidString)
-                .execute().value
-            guard existing.isEmpty else { throw CocoaError(.fileWriteNoPermission) }
-            return
-        }
+        // Unknown absence is not success: even a never-uploaded draft needs
+        // a durable server receipt to block an in-flight or stale upload.
+        guard acknowledged else { throw CocoaError(.fileWriteNoPermission) }
         let rows: [DeletionReceipt] = try await provider.client
             .from("yield_estimation_session_deletion_receipts")
             .select("session_id,vineyard_id,was_completed")
             .eq("session_id", value: session.id.uuidString)
             .eq("vineyard_id", value: session.vineyardId.uuidString)
             .execute().value
+        let existing: [SmallId] = try await provider.client.from("yield_estimation_sessions")
+            .select("id").eq("id", value: session.id.uuidString)
+            .eq("vineyard_id", value: session.vineyardId.uuidString).execute().value
         guard rows.count == 1, rows[0].session_id == session.id,
-              rows[0].vineyard_id == session.vineyardId else {
+              rows[0].vineyard_id == session.vineyardId,
+              rows[0].was_completed == session.isCompleted, existing.isEmpty else {
             throw CocoaError(.fileWriteUnknown)
         }
     }

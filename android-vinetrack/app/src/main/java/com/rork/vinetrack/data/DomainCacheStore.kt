@@ -255,14 +255,35 @@ class DomainCacheStore(context: Context) {
 
     // MARK: - Yield estimation sessions by vineyard (Stage Q — working-session cache)
 
-    fun loadYieldSessions(vineyardId: String): List<YieldEstimationSession> =
-        decode(prefs.getString(keyYieldSession(vineyardId), null), yieldSessionSerializer)
+    @Synchronized
+    fun deletedYieldSessionIds(vineyardId: String): Set<String> =
+        prefs.getStringSet("yield_hard_deleted_${vineyardId.lowercase()}", emptySet()).orEmpty().toSet()
 
-    fun saveYieldSessions(vineyardId: String, sessions: List<YieldEstimationSession>, syncedAt: Long): Boolean =
-        prefs.edit()
-            .putString(keyYieldSession(vineyardId), encode(yieldSessionSerializer, sessions))
+    @Synchronized
+    fun loadYieldSessions(vineyardId: String): List<YieldEstimationSession> {
+        val deleted = deletedYieldSessionIds(vineyardId)
+        return decode(prefs.getString(keyYieldSession(vineyardId), null), yieldSessionSerializer)
+            .filterNot { it.id.lowercase() in deleted }
+    }
+
+    @Synchronized
+    fun retainYieldDeletionReceipts(vineyardId: String, ids: Set<String>): Boolean {
+        val deleted = deletedYieldSessionIds(vineyardId) + ids.map { it.lowercase() }
+        val retained = loadYieldSessions(vineyardId).filterNot { it.id.lowercase() in deleted }
+        return prefs.edit()
+            .putStringSet("yield_hard_deleted_${vineyardId.lowercase()}", deleted)
+            .putString(keyYieldSession(vineyardId), encode(yieldSessionSerializer, retained))
+            .putLong(keyYieldSessionAt(vineyardId), System.currentTimeMillis()).commit()
+    }
+
+    @Synchronized
+    fun saveYieldSessions(vineyardId: String, sessions: List<YieldEstimationSession>, syncedAt: Long): Boolean {
+        val deleted = deletedYieldSessionIds(vineyardId)
+        return prefs.edit()
+            .putString(keyYieldSession(vineyardId), encode(yieldSessionSerializer, sessions.filterNot { it.id.lowercase() in deleted }))
             .putLong(keyYieldSessionAt(vineyardId), syncedAt)
             .commit()
+    }
 
     fun yieldSessionsSyncedAt(vineyardId: String): Long? = readTimestamp(keyYieldSessionAt(vineyardId))
 

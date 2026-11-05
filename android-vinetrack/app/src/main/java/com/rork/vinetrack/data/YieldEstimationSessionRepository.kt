@@ -20,7 +20,7 @@ import java.time.Instant
 /**
  * Write/read path for yield-estimation working sessions, mirroring the iOS
  * `YieldEstimationSessionSyncService` contract (the `yield_estimation_sessions`
- * table + `soft_delete_yield_estimation_session` RPC).
+ * table + server-authorised hard-delete RPC and receipt readback).
  *
  * The whole session is stored in the JSONB `payload` column (selected blocks,
  * generated sample sites with inline bunch counts, per-block bunch weights, path
@@ -29,8 +29,8 @@ import java.time.Instant
  * filtering and round-trip with iOS / the web portal unchanged.
  *
  * RLS scopes everything to the signed-in user's vineyard role: owner / manager /
- * supervisor / operator may insert and update; only owner / manager / supervisor
- * may soft-delete. Upsert is keyed on `id` (merge-duplicates) so a retried save
+ * supervisor / operator may insert, update and delete drafts; only owner / manager /
+ * supervisor may delete completed observations. Upsert is keyed on `id` (merge-duplicates) so a retried save
  * is idempotent and last-write-wins via `client_updated_at`.
  */
 interface YieldSessionWriting {
@@ -86,6 +86,7 @@ class YieldEstimationSessionRepository(private val session: SessionStore) : Yiel
     private data class HardDeleteReceipt(
         @SerialName("session_id") val sessionId: String,
         @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("was_completed") val wasCompleted: Boolean,
     )
 
     private fun nowIso(): String = Instant.now().toString()
@@ -167,35 +168,26 @@ class YieldEstimationSessionRepository(private val session: SessionStore) : Yiel
         }
         when {
             response.status.isSuccess() -> {
-                if (!response.body<Boolean>()) {
-                    // A locally created draft can be deleted before its
-                    // first upload. Verify no server row exists, then let
-                    // the local delete coordinator cancel its pending save.
-                    if (source.isCompleted) {
-                        error("Completed yield observation does not exist or cannot be deleted.")
-                    }
-                    val check = SupabaseClient.http.get(SupabaseClient.restUrl(
-                        "yield_estimation_sessions?select=id" +
-                            "&id=eq.${source.id}&vineyard_id=eq.${source.vineyardId}"
-                    )) { authHeaders(token) }
-                    if (!check.status.isSuccess()) {
-                        throw BackendError.Server(check.status.value, check.bodyAsText())
-                    }
-                    check(check.body<List<kotlinx.serialization.json.JsonObject>>().isEmpty()) {
-                        "The draft exists on the server but hard deletion was rejected."
-                    }
-                    return@withContext
+                check(response.body<Boolean>()) {
+                    "Hard deletion was not acknowledged. A durable server receipt is required, including for a local draft."
                 }
             }
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }
         val receipt = SupabaseClient.http.get(SupabaseClient.restUrl(
-            "yield_estimation_session_deletion_receipts?select=session_id,vineyard_id" +
+            "yield_estimation_session_deletion_receipts?select=session_id,vineyard_id,was_completed" +
                 "&session_id=eq.${source.id}&vineyard_id=eq.${source.vineyardId}"
         )) { authHeaders(token) }
         if (!receipt.status.isSuccess()) throw BackendError.Server(receipt.status.value, receipt.bodyAsText())
-        check(receipt.body<List<HardDeleteReceipt>>().singleOrNull()?.sessionId.equals(source.id, true)) {
+        val deleted = receipt.body<List<HardDeleteReceipt>>().singleOrNull()
+        val absence = SupabaseClient.http.get(SupabaseClient.restUrl(
+            "yield_estimation_sessions?select=id&id=eq.${source.id}&vineyard_id=eq.${source.vineyardId}"
+        )) { authHeaders(token) }
+        if (!absence.status.isSuccess()) throw BackendError.Server(absence.status.value, absence.bodyAsText())
+        check(deleted != null && deleted.sessionId.equals(source.id, true)
+            && deleted.vineyardId.equals(source.vineyardId, true) && deleted.wasCompleted == source.isCompleted
+            && absence.body<List<kotlinx.serialization.json.JsonObject>>().isEmpty()) {
             "Hard delete receipt is unavailable; reload the server before retrying."
         }
     }
@@ -203,24 +195,22 @@ class YieldEstimationSessionRepository(private val session: SessionStore) : Yiel
     /** Existing offline DELETE intents contain only an ID. Resolve exact
      * vineyard and completion status on the server under RLS at replay time.
      */
-    suspend fun hardDeleteSessionById(id: String) = withContext(Dispatchers.IO) {
+    suspend fun hardDeleteSessionById(id: String, vineyardId: String? = null) = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.post(
-            SupabaseClient.rpcUrl("hard_delete_yield_estimation_session_by_id")
-        ) {
-            authHeaders(token)
-            contentType(ContentType.Application.Json)
-            setBody(SoftDeleteArgs(id))
-        }
-        when {
-            response.status.isSuccess() -> {
-                if (!response.body<Boolean>()) {
-                    throw BackendError.Server(404, "Session missing or not accessible for hard deletion.")
-                }
-            }
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        require(!vineyardId.isNullOrBlank()) { "A selected vineyard is required; unscoped deletion stays held." }
+        run {
+            val scope = SupabaseClient.http.get(SupabaseClient.restUrl(
+                "yield_estimation_sessions?select=*&id=eq.$id&vineyard_id=eq.$vineyardId"
+            )) { authHeaders(token) }
+            if (!scope.status.isSuccess()) throw BackendError.Server(scope.status.value, scope.bodyAsText())
+            val rows = scope.body<List<SessionRow>>()
+            val row = rows.singleOrNull()?.toSession()
+            if (row != null) { hardDeleteSession(row); return@withContext }
+            check(rows.isEmpty()) { "Session absence was not verified; retained for review." }
+            val deleted = deletedIds(vineyardId)
+            check(id.lowercase() in deleted) { "No deletion receipt in the selected vineyard; retained for review." }
+            return@withContext
         }
     }
 
@@ -228,7 +218,7 @@ class YieldEstimationSessionRepository(private val session: SessionStore) : Yiel
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.get(SupabaseClient.restUrl(
-            "yield_estimation_session_deletion_receipts?select=session_id,vineyard_id" +
+            "yield_estimation_session_deletion_receipts?select=session_id,vineyard_id,was_completed" +
                 "&vineyard_id=eq.$vineyardId"
         )) { authHeaders(token) }
         if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())

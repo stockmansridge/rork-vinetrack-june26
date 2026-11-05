@@ -1031,11 +1031,11 @@ struct YieldEstimationView: View {
         hardDeleteBusy = true
         defer { hardDeleteBusy = false }
         do {
+            let isCurrent = store.remoteApplicationCurrentCheck()
             try await hardDeleteRepo.hardDelete(target)
-            if store.yieldSessions.contains(where: { $0.id == target.id }) {
-                store.deleteYieldSession(target)
-                yieldSync.acknowledgeHardDeletedSession(target.id)
-            }
+            guard isCurrent() else { throw CancellationError() }
+            try store.applyYieldHardDeletionReceipts([target.id], vineyardId: target.vineyardId)
+            yieldSync.acknowledgeHardDeletedSession(target.id)
             homeDraftDeleteTarget = nil
             if viewModel.sessionId == target.id {
                 withAnimation(.smooth(duration: 0.3)) {

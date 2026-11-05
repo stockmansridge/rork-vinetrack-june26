@@ -310,6 +310,7 @@ extension MigratedDataStore {
     // MARK: - Yield Estimation Sessions
 
     func applyRemoteYieldSessionUpsert(_ session: YieldEstimationSession) {
+        guard !yieldRepo.isHardDeletedSession(session.id) else { return }
         if selectedVineyardId == session.vineyardId {
             if let idx = yieldSessions.firstIndex(where: { $0.id == session.id }) {
                 yieldSessions[idx] = session
@@ -326,6 +327,11 @@ extension MigratedDataStore {
             }
             yieldRepo.replaceSessions(all.filter { $0.vineyardId == session.vineyardId }, for: session.vineyardId)
         }
+    }
+
+    func applyYieldHardDeletionReceipts(_ ids: Set<UUID>, vineyardId: UUID) throws {
+        try yieldRepo.applyHardDeletionReceipts(ids, vineyardId: vineyardId)
+        if selectedVineyardId == vineyardId { yieldSessions.removeAll { ids.contains($0.id) } }
     }
 
     func applyRemoteYieldSessionDelete(_ id: UUID) {

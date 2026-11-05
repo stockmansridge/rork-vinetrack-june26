@@ -160,6 +160,59 @@ struct YieldCompletionPersistenceTests {
         #expect(row.toYieldEstimationSession()?.isCompleted == true)
     }
 
+    @Test func hardDeleteReceiptSurvivesRestartAndBlocksStaleSavesAndPulls() throws {
+        let disk = try storage()
+        let repo = YieldRepository(persistence: disk)
+        let trip = YieldEstimationSession(vineyardId: UUID())
+        try repo.saveLocalSession(trip, at: Date())
+        try repo.applyHardDeletionReceipts([trip.id], vineyardId: trip.vineyardId)
+        let restarted = YieldRepository(persistence: disk)
+        #expect(restarted.loadAllSessions().isEmpty)
+        #expect(restarted.pendingSessionSaves().isEmpty)
+        #expect(throws: (any Error).self) { try restarted.saveLocalSession(trip, at: Date()) }
+        restarted.replaceSessions([trip], for: trip.vineyardId)
+        restarted.saveSessionsSlice([trip], for: trip.vineyardId)
+        #expect(restarted.mergeSessions([trip], for: trip.vineyardId).isEmpty)
+        #expect(restarted.isHardDeletedSession(trip.id))
+    }
+
+    @Test func failedReceiptCommitRetainsDraftAndReplayIntent() throws {
+        let disk = try storage()
+        let repo = YieldRepository(persistence: disk)
+        let trip = YieldEstimationSession(vineyardId: UUID())
+        try repo.saveLocalSession(trip, at: Date())
+        disk.durableSaveFailureForTesting = { _ in CocoaError(.fileWriteOutOfSpace) }
+        #expect(throws: (any Error).self) { try repo.applyHardDeletionReceipts([trip.id], vineyardId: trip.vineyardId) }
+        #expect(repo.loadAllSessions().first?.id == trip.id)
+        #expect(repo.pendingSessionSaves()[trip.id] != nil)
+        #expect(!repo.isHardDeletedSession(trip.id))
+    }
+
+    @Test func deletionReceiptsPreserveOtherVineyardAndIndependentHistory() throws {
+        let repo = YieldRepository(persistence: try storage())
+        let vineyard = UUID(), physical = UUID(), block = UUID()
+        let removed = YieldEstimationSession(vineyardId: vineyard)
+        let history = YieldEstimationSession(vineyardId: vineyard, sampleSites: [
+            SampleSite(id: physical, paddockId: block, rowNumber: 12, latitude: -34, longitude: 149, siteIndex: 1)
+        ], isCompleted: true, completedAt: Date())
+        let foreign = YieldEstimationSession(vineyardId: UUID())
+        for trip in [removed, history, foreign] { try repo.saveLocalSession(trip, at: Date()) }
+        try repo.applyHardDeletionReceipts([removed.id], vineyardId: vineyard)
+        #expect(repo.loadAllSessions().count == 2)
+        #expect(repo.loadSessions(for: vineyard).first?.sampleSites.first?.id == physical)
+        #expect(repo.pendingSessionSaves()[foreign.id] != nil)
+        #expect(throws: (any Error).self) { try repo.applyHardDeletionReceipts([foreign.id], vineyardId: vineyard) }
+        #expect(repo.loadSessions(for: foreign.vineyardId).count == 1)
+    }
+
+    @Test func neverUploadedDeletionReceiptBlocksLaterCreation() throws {
+        let repo = YieldRepository(persistence: try storage())
+        let trip = YieldEstimationSession(vineyardId: UUID())
+        try repo.applyHardDeletionReceipts([trip.id], vineyardId: trip.vineyardId)
+        #expect(throws: (any Error).self) { try repo.saveLocalSession(trip, at: Date()) }
+        #expect(repo.loadAllSessions().isEmpty)
+    }
+
     @Test func encodedCompletionMatchesTopLevelAndPayload() throws {
         let trip = YieldEstimationSession(vineyardId: UUID(), isCompleted: true, completedAt: Date(timeIntervalSince1970: 100))
         let encoded = try JSONEncoder().encode(BackendYieldEstimationSession.upsert(from: trip, createdBy: nil, clientUpdatedAt: Date()))

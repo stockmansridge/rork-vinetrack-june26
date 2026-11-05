@@ -1649,17 +1649,18 @@ final class YieldEstimationSessionSyncService {
             // Hard-deleted observations have a metadata-only receipt. Read it
             // before initial seeding or replay to prevent old device state
             // resurrecting another user's deliberate deletion.
+            guard let store, store.selectedVineyardId == vineyardId else { throw CancellationError() }
+            let isCurrent = store.remoteApplicationCurrentCheck()
             let deleted = try await SupabaseYieldEstimationHardDeleteRepository()
                 .deletedIds(vineyardId: vineyardId)
-            if let store {
-                for existing in store.yieldSessions
-                    where existing.vineyardId == vineyardId && deleted.contains(existing.id) {
-                    store.applyRemoteYieldSessionDelete(existing.id)
-                    acknowledgeHardDeletedSession(existing.id)
-                }
-            }
+            guard isCurrent() else { throw CancellationError() }
+            try store.applyYieldHardDeletionReceipts(deleted, vineyardId: vineyardId)
+            for id in deleted { acknowledgeHardDeletedSession(id) }
+            guard isCurrent() else { throw CancellationError() }
             try await push(vineyardId: vineyardId)
+            guard isCurrent() else { throw CancellationError() }
             try await pull(vineyardId: vineyardId)
+            guard isCurrent() else { throw CancellationError() }
             metadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()
             syncStatus = .success
@@ -1670,7 +1671,8 @@ final class YieldEstimationSessionSyncService {
     }
 
     private func push(vineyardId: UUID) async throws {
-        guard let store else { return }
+        guard let store, store.selectedVineyardId == vineyardId else { throw CancellationError() }
+        let isCurrent = store.remoteApplicationCurrentCheck()
         let createdBy = auth?.userId
         let metadataSnapshot = metadata.pendingUpserts
         let intentSnapshot = store.yieldRepo.pendingSessionIntents()
@@ -1679,18 +1681,14 @@ final class YieldEstimationSessionSyncService {
             let byId = Dictionary(store.yieldRepo.loadAllSessions().map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendYieldEstimationSessionUpsert] = []
             var pushed: [UUID] = []
-            var orphans: [UUID] = []
             for (id, ts) in dirty {
-                // Reclaim queue entries whose local record no longer exists — they
-                // can never upload and used to wedge the queue forever. Records from
-                // another vineyard are still uploaded: the payload carries its own
-                // vineyard id.
-                guard let item = byId[id] else { orphans.append(id); continue }
+                // Unknown and foreign-vineyard intent remains retained. Only a
+                // verified deletion receipt may cancel an obsolete saved intent.
+                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
                 payloads.append(BackendYieldEstimationSession.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
                 pushed.append(id)
             }
-            metadata.clearDirty(orphans)
-            SyncIssueCenter.shared.clearIssues(orphans)
+            guard isCurrent() else { throw CancellationError() }
             let result = await SyncQueuePush.run(
                 entity: "Yield Estimates",
                 ids: pushed,
@@ -1698,7 +1696,7 @@ final class YieldEstimationSessionSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertMany($0) }
-            guard auth?.userId == createdBy else { throw CancellationError() }
+            guard isCurrent(), auth?.userId == createdBy else { throw CancellationError() }
             let acknowledged = Dictionary(uniqueKeysWithValues: result.uploaded.compactMap { id in intentSnapshot[id].map { (id, $0.token) } })
             try store.yieldRepo.acknowledgeSessionSaves(acknowledged)
             metadata.clearDirty(result.uploaded.filter { metadata.pendingUpserts[$0] == metadataSnapshot[$0] })
@@ -1706,16 +1704,21 @@ final class YieldEstimationSessionSyncService {
             SyncIssueCenter.shared.notePending(entity: "Yield Estimates", count: pendingUpsertCount)
             if let error = result.firstRetryableError { throw error }
         }
+        let sessions = Dictionary(store.yieldRepo.loadAllSessions().map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         for (id, _) in metadata.pendingDeletes {
+            guard isCurrent() else { throw CancellationError() }
+            // Legacy ID-only intent with no trustworthy local scope stays held.
+            // Receipted absence was already reconciled before push began.
+            guard let source = sessions[id], source.vineyardId == vineyardId else { continue }
             do {
-                try await repository.softDelete(id: id)
-                metadata.clearDeleted([id])
+                try await SupabaseYieldEstimationHardDeleteRepository().hardDelete(source)
+                guard isCurrent() else { throw CancellationError() }
+                try store.applyYieldHardDeletionReceipts([id], vineyardId: vineyardId)
+                acknowledgeHardDeletedSession(id)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
-                if isOperationsMissingRowError(error) {
-                    metadata.clearDeleted([id])
-                } else {
-                    metadata.markDeletesFailed([id])
-                }
+                metadata.markDeletesFailed([id])
             }
         }
     }

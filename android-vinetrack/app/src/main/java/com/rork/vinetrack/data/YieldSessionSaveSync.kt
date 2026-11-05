@@ -77,6 +77,7 @@ class YieldSessionSaveSync(
      */
     suspend fun replayAll(
         retainConfirmed: (YieldEstimationSession) -> Boolean = { true },
+        vineyardId: String? = null,
         onSynced: (YieldEstimationSession) -> Unit,
     ) {
         if (!replayLock.tryLock()) return
@@ -87,6 +88,10 @@ class YieldSessionSaveSync(
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
             }
             for (write in candidates) {
+                if (vineyardId != null) {
+                    val scoped = runCatching { json.decodeFromString(Payload.serializer(), write.payloadJson) }.getOrNull()
+                    if (scoped == null || !scoped.session.vineyardId.equals(vineyardId, true)) continue
+                }
                 // Defer if a delete for the same session is still queued — the
                 // delete pass cancels saves, so never resurrect a deleted session.
                 val hasDelete = pending.list().any {
@@ -135,6 +140,19 @@ class YieldSessionSaveSync(
             }
         } finally {
             replayLock.unlock()
+        }
+    }
+
+    /** Only exact authenticated receipts may cancel saved intent. Foreign scope
+     * payloads and malformed evidence are retained for review, never bulk-cleared. */
+    fun applyDeletionReceipts(vineyardId: String, deletedIds: Set<String>) {
+        val deleted = deletedIds.map { it.lowercase() }.toSet()
+        for (write in pending.list()) {
+            if (write.entityType != PendingEntityType.YIELD_SESSION || write.opType != PendingOpType.UPDATE) continue
+            val payload = runCatching { json.decodeFromString(Payload.serializer(), write.payloadJson) }.getOrNull() ?: continue
+            if (payload.session.vineyardId.equals(vineyardId, true) && payload.session.id.lowercase() in deleted) {
+                pending.removeIfCurrent(write)
+            }
         }
     }
 

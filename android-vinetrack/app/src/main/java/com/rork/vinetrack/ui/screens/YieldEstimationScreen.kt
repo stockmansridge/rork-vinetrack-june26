@@ -221,7 +221,7 @@ fun YieldEstimationScreen(
             deletionBusy = true
             try {
                 deletionRepo.hardDeleteSession(target)
-                vm.deleteYieldSession(target.id)
+                vm.acknowledgeHardDeletedYieldSession(target)
                 deletionError = null
                 afterSuccess()
             } catch (e: Exception) {

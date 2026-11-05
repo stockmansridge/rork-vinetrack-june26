@@ -41,6 +41,14 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,6 +100,8 @@ import java.util.UUID
 fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
     val vineyardId = state.selectedVineyardId ?: ""
     val user = state.currentUserId
+    val canEditSites = state.currentRole in setOf("owner", "manager", "supervisor", "operator")
+    val canDeleteConfirmed = state.currentRole in setOf("owner", "manager", "supervisor")
     val blocks = remember(state.paddocks) { state.paddocks.filter { it.hasGeometry } }
     val context = LocalContext.current
     val repo = remember(context) { YieldSamplingSiteRepository(SessionStore(context)) }
@@ -114,6 +124,16 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
     var errorText by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var showConfirm by remember { mutableStateOf(false) }
+    var deleteTarget by remember(vineyardId, user, block?.id) { mutableStateOf<Pair<YieldSiteSet, YieldFixedSite>?>(null) }
+    val currentScope by rememberUpdatedState(Triple(vineyardId, user, block?.id))
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) revision++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     var mapGestureActive by remember { mutableStateOf(false) }
     var hasLocationPerm by remember { mutableStateOf(hasDeviceLocationPermission(context)) }
     var locatingField by remember { mutableStateOf(false) }
@@ -207,8 +227,11 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
             val confirmedRow = rows.firstOrNull { it.isConfirmed }
             val pending = draftRow?.let { repo.listSites(it) }.orEmpty()
             val ready = confirmedRow?.let { repo.listSites(it) }.orEmpty()
+            currentCoroutineContext().ensureActive()
             sets = rows; draftSites = pending; confirmedSites = ready
             errorText = null
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             errorText = "Could not read sites from server: ${e.message ?: "Check connection and permissions."}"
         } finally {
@@ -254,6 +277,7 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                     }
                 }
             }
+            OutlinedButton(onClick = { revision++ }, enabled = !busy) { Text("Refresh from Server") }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (block != null) {
                 Box(Modifier.fillMaxWidth().height(350.dp).mapGestureOwnership { mapGestureActive = it }) {
@@ -325,7 +349,7 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                     if (draft == null) {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = block != null && !busy && user != null && vineyardId.isNotEmpty(),
+                            enabled = block != null && !busy && user != null && vineyardId.isNotEmpty() && canEditSites,
                             onClick = {
                                 val currentBlock = block ?: return@OutlinedButton
                                 scope.launch {
@@ -371,33 +395,33 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                                     Text("Row ${site.rowNumber ?: "—"} · Panel ${site.panelNumber ?: "—"}",
                                         color = vine.textSecondary)
                                 }
-                                IconButton(onClick = {
-                                    scope.launch {
-                                        busy = true
-                                        try {
-                                            repo.deleteDraftSite(draft, site)
-                                            message = "Draft site removed. Confirmed history is unchanged."
-                                            revision++
-                                        } catch (e: Exception) { errorText = "Could not remove draft site: ${e.message}" }
-                                        finally { busy = false }
-                                    }
+                                if (canEditSites) IconButton(onClick = {
+                                    deleteTarget = draft to site
                                 }, enabled = !busy) {
-                                    Icon(Icons.Filled.Delete, contentDescription = "Delete draft site", tint = VineColors.Destructive)
+                                    Icon(Icons.Filled.Delete, contentDescription = "Hard Delete Draft ${site.name}", tint = VineColors.Destructive)
                                 }
                             }
                         }
                         Button(
                             onClick = { showConfirm = true },
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = !busy && draftSites.isNotEmpty(),
+                            enabled = !busy && draftSites.isNotEmpty() && canDeleteConfirmed,
                             colors = ButtonDefaults.buttonColors(containerColor = VineColors.Info),
                         ) { Icon(Icons.Filled.CheckCircle, contentDescription = null)
                             Spacer(Modifier.width(6.dp)); Text("Review & Confirm Block Locations") }
                     }
-                    if (draft == null) {
+                    if (confirmed != null) {
+                        Text("Confirmed locations", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                         confirmedSites.sortedBy { it.siteNumber }.forEach { site ->
-                            Text("${site.siteNumber}. ${site.name} · Row ${site.rowNumber ?: "—"}",
-                                color = vine.textPrimary)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("${site.siteNumber}. ${site.name} · Row ${site.rowNumber ?: "—"}",
+                                    color = vine.textPrimary, modifier = Modifier.weight(1f))
+                                if (canDeleteConfirmed) IconButton(onClick = {
+                                    deleteTarget = confirmed to site
+                                }, enabled = !busy) {
+                                    Icon(Icons.Filled.Delete, contentDescription = "Hard Delete Confirmed ${site.name}", tint = VineColors.Destructive)
+                                }
+                            }
                         }
                     }
                 }
@@ -406,6 +430,35 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
             if (errorText != null) Text(errorText!!, color = VineColors.Destructive)
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    deleteTarget?.let { (targetSet, targetSite) ->
+        AlertDialog(
+            onDismissRequest = { if (!busy) deleteTarget = null },
+            title = { Text("Hard Delete Sampling Location?") },
+            text = { Text("Permanently remove ${targetSite.name} for everyone in this block? Confirmed deletion also removes draft copies. Historical count observations keep their recorded GPS, row and panel. This cannot be undone.") },
+            confirmButton = {
+                TextButton(enabled = !busy, onClick = {
+                    val operationScope = currentScope
+                    scope.launch {
+                        busy = true
+                        try {
+                            check(if (targetSet.isConfirmed) canDeleteConfirmed else canEditSites)
+                            repo.hardDeleteSite(targetSet, targetSite)
+                            if (currentScope == operationScope) {
+                                message = "Hard Delete verified by server receipt and absence. Historical observations are unchanged."
+                                errorText = null
+                                revision++
+                            }
+                        } catch (e: CancellationException) { throw e }
+                        catch (e: Exception) {
+                            if (currentScope == operationScope) errorText = "Hard Delete not confirmed. Refresh and retry: ${e.message}"
+                        } finally { busy = false; deleteTarget = null }
+                    }
+                }) { Text("Hard Delete", color = VineColors.Destructive) }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { deleteTarget = null }) { Text("Cancel") } },
+        )
     }
 
     if (showEditor && block != null && draft != null && pendingCoordinate != null) {
