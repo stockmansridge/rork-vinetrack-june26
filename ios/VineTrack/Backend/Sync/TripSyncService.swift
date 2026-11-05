@@ -798,6 +798,56 @@ final class TripSyncService {
         }
     }
 
+    /// A device-owned Trip may still be recording while the user views another
+    /// vineyard. Its server completion is checked by its exact original UUID,
+    /// vineyard and authenticated account, not by the selected-vineyard slice.
+    /// This is read-only on the server and never acknowledges a queued upload.
+    private func reconcileOwnedTripCompletionAcrossVineyards() async {
+        guard let store, let auth, auth.isSignedIn,
+              let account = auth.userId,
+              store.currentUserIdProvider?() == account,
+              let owned = store.deviceOwnedTrip,
+              owned.vineyardId != store.selectedVineyardId else { return }
+        let current = store.remoteApplicationCurrentCheck()
+        do {
+            let server = try await repository.fetchAllTrips(vineyardId: owned.vineyardId)
+            guard current(), self.store === store,
+                  store.currentUserIdProvider?() == account,
+                  store.deviceActiveTripId == owned.id,
+                  let remote = server.first(where: {
+                      $0.id == owned.id && $0.vineyardId == owned.vineyardId &&
+                      $0.deletedAt == nil && $0.endTime != nil && $0.isActive == false
+                  }), let endedAt = remote.endTime else { return }
+            let remoteTrip = remote.toTrip()
+            var local = owned
+            local.isActive = false
+            local.isPaused = false
+            local.endTime = endedAt
+            local.activeTankNumber = nil
+            local.isFillingTank = false
+            local.fillingTankNumber = nil
+            if let updatedTanks = TankPathAttribution.adoptingServerTankEnds(
+                local: owned, remote: remoteTrip
+            ) {
+                local.tankSessions = updatedTanks.tankSessions
+            } else {
+                receiptReconciliationHolds[owned.id] = "REMOTE_END_TANK_IDENTITY_HELD"
+            }
+            // Save the owned GPS and tank evidence in its ORIGINAL vineyard
+            // slice. A server end releases this installation's active claim
+            // without selecting that vineyard or replaying any local write.
+            store.applyRemoteTripUpsert(local)
+            if metadata.pendingUpserts[owned.id] != nil {
+                metadata.markUpsertsFailed([owned.id])
+                receiptReconciliationHolds[owned.id] =
+                    receiptReconciliationHolds[owned.id] ?? "REMOTE_TRIP_END_ORIGINAL_UPLOAD_UNACKNOWLEDGED"
+            }
+        } catch {
+            // A network failure or inaccessible vineyard is NOT proof the Trip
+            // ended. Leave the owned Trip and its original queue untouched.
+        }
+    }
+
     // MARK: - Public sync entry points
 
     func syncTripsForSelectedVineyard() async {
@@ -822,6 +872,7 @@ final class TripSyncService {
         }
         let current = store?.remoteApplicationCurrentCheck() ?? { true }
         do {
+            await reconcileOwnedTripCompletionAcrossVineyards()
             try await pushLocalTrips(vineyardId: vineyardId)
             await TripLabourSnapshotJournal.shared.replay(trips: store?.trips ?? [])
             try await pullRemoteTrips(vineyardId: vineyardId)
