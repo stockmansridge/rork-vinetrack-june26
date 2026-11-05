@@ -175,7 +175,11 @@ struct YieldEstimationView: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("yield.resume")
                     Text("Draft")
-                    CurrentYieldEstimateSummary(estimate: currentEstimate(draft), detailed: false)
+                    if draft.isPanelCount {
+                        PanelCountSummary(session: draft)
+                    } else {
+                        CurrentYieldEstimateSummary(estimate: currentEstimate(draft), detailed: false)
+                    }
                 }
 
 
@@ -208,7 +212,10 @@ struct YieldEstimationView: View {
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Text(estimate.totalTonnes.map { String(format: "%.3f t", $0) } ?? "Bunch weight required")
+                                    Text(trip.isPanelCount
+                                        ? "\(trip.sampleSites.filter { $0.panelCountEntry != nil }.count) panels"
+                                        : (estimate.totalTonnes.map { String(format: "%.3f t", $0) }
+                                           ?? "Bunch weight required"))
                                         .font(.subheadline.weight(.bold))
                                         .foregroundStyle(VineyardTheme.leafGreen)
                                     Image(systemName: "chevron.right")
@@ -254,7 +261,8 @@ struct YieldEstimationView: View {
             selectedPaddockIds: Array(viewModel.selectedPaddockIds), sampleSites: viewModel.sampleSites,
             blockBunchWeightsKg: viewModel.blockBunchWeightsKg, isCompleted: viewModel.isCompleted,
             completedAt: viewModel.completedAt, applyDamage: viewModel.applyDamage,
-            countMethod: viewModel.countMethod, quadrantSectionLengthCm: viewModel.isQuadrantCount ? viewModel.quadrantSectionLengthCm : nil)
+            countMethod: viewModel.countMethod, quadrantSectionLengthCm: viewModel.isQuadrantCount ? viewModel.quadrantSectionLengthCm : nil,
+            siteSetVersions: viewModel.siteSetVersions)
     }
 
     private func startTrip() {
@@ -463,7 +471,11 @@ struct YieldEstimationView: View {
                 }
 
                 if viewModel.isCompleted {
-                    CurrentYieldEstimateSummary(estimate: currentEstimate(observation), current: isCurrent(observation))
+                    if viewModel.isPanelCount {
+                        PanelCountSummary(session: observation)
+                    } else {
+                        CurrentYieldEstimateSummary(estimate: currentEstimate(observation), current: isCurrent(observation))
+                    }
                     startNewTripButton
                 }
             }
