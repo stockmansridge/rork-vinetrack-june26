@@ -279,26 +279,7 @@ struct NewMainTabView: View {
                 Task { await appNoticeService.refresh() }
             }
         }
-        // Selected-vineyard restore can land after TripTrackingService.configure;
-        // the owned trip is only resolvable once its vineyard is selected.
-        .onChange(of: store.selectedVineyardId) { _, _ in
-            tripTracking.resumeIfNeeded()
-        }
-        // Upload a Trip start or a durably saved Trip end straight away rather
-        // than waiting up to three minutes for the periodic sweep.
-        .onChange(of: store.deviceActiveTripId) { old, new in
-            guard old != new, network.isOnline, scenePhase == .active else { return }
-            if new != nil {
-                // Start: Trip rows only. A full sweep (pins, blocks, chemicals,
-                // images…) here would compete with the first GPS fixes.
-                Task { await tripSync.syncTripsForSelectedVineyard() }
-            } else {
-                // End: full sweep keeps the dependency order (tank actuals
-                // before the final ended state) and coalesces with any sweep
-                // already running. The operator is no longer driving.
-                Task { await runFullSweep(alertRefresh: .none) }
-            }
-        }
+        .modifier(TripLifecycleSyncTriggers(onTripEnded: { await runFullSweep(alertRefresh: .none) }))
         // Retry queued pushes the moment the network comes back.
         .onChange(of: network.isOnline) { _, online in
             guard online else {
@@ -1983,5 +1964,40 @@ private struct HomeVintageSummarySection: View {
                 .font(.body.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+/// Trip start/end triggers, kept out of NewMainTabView's long modifier chain
+/// (adding them inline exceeded the Swift type-checker's time limit).
+private struct TripLifecycleSyncTriggers: ViewModifier {
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(TripTrackingService.self) private var tripTracking
+    @Environment(TripSyncService.self) private var tripSync
+    @Environment(NetworkMonitor.self) private var network
+    @Environment(\.scenePhase) private var scenePhase
+    let onTripEnded: () async -> Void
+
+    func body(content: Content) -> some View {
+        content
+            // Selected-vineyard restore can land after TripTrackingService.configure;
+            // the owned trip is only resolvable once its vineyard is selected.
+            .onChange(of: store.selectedVineyardId) { _, _ in
+                tripTracking.resumeIfNeeded()
+            }
+            // Upload a Trip start or a durably saved Trip end straight away
+            // rather than waiting up to three minutes for the periodic sweep.
+            .onChange(of: store.deviceActiveTripId) { old, new in
+                guard old != new, network.isOnline, scenePhase == .active else { return }
+                if new != nil {
+                    // Start: Trip rows only. A full sweep (pins, blocks,
+                    // chemicals, images…) would compete with the first GPS fixes.
+                    Task { await tripSync.syncTripsForSelectedVineyard() }
+                } else {
+                    // End: the full sweep keeps the dependency order (tank
+                    // actuals before the final ended state) and coalesces with
+                    // any sweep already running. The operator is no longer driving.
+                    Task { await onTripEnded() }
+                }
+            }
     }
 }
