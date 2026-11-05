@@ -800,7 +800,9 @@ struct YieldEstimationView: View {
                 for site in sites.sorted(by: { $0.siteNumber < $1.siteNumber }) {
                     combined.append(SampleSite(id: site.siteId, paddockId: block.id,
                         paddockName: block.name, rowNumber: Int(site.rowNumber ?? "") ?? 0,
-                        latitude: site.latitude, longitude: site.longitude, siteIndex: index))
+                        latitude: site.latitude, longitude: site.longitude, siteIndex: index,
+                        yieldRowReference: site.rowNumber,
+                        yieldPanelReference: site.panelNumber))
                     index += 1
                 }
                 versions[block.id.uuidString.lowercased()] = YieldSamplingSiteSource(
