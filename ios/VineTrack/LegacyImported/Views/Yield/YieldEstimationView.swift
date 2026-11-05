@@ -795,7 +795,8 @@ struct YieldEstimationView: View {
         var versions: [String: YieldSamplingSiteSource] = [:]
         var index = 1
         for block in selectedBlocks {
-            if let (set, sites) = saved[block.id] {
+            if let pair = saved[block.id] {
+                let (set, sites) = pair
                 for site in sites.sorted(by: { $0.siteNumber < $1.siteNumber }) {
                     combined.append(SampleSite(id: site.siteId, paddockId: block.id,
                         paddockName: block.name, rowNumber: Int(site.rowNumber ?? "") ?? 0,
@@ -805,9 +806,10 @@ struct YieldEstimationView: View {
                 versions[block.id.uuidString.lowercased()] = YieldSamplingSiteSource(
                     setKey: set.setKey, siteSetId: set.id, version: set.version)
             } else {
-                for var site in generated.filter({ $0.paddockId == block.id }).sorted(by: {
+                for original in generated.filter({ $0.paddockId == block.id }).sorted(by: {
                     $0.siteIndex < $1.siteIndex
                 }) {
+                    var site = original
                     site.siteIndex = index
                     combined.append(site)
                     index += 1
