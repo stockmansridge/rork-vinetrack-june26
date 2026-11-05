@@ -3137,6 +3137,19 @@ struct SprayCalculatorView: View {
                         .accessibilityIdentifier("spray.startTrip")
                         if let blocker = calculatorOperationalBlocker {
                             Text(blocker).font(.caption).foregroundStyle(.orange)
+                            Button {
+                                // An incomplete draft is corrected at its input
+                                // source; never weaken Start admission or
+                                // silently replace the operator's tank amounts.
+                                pendingMixReview = nil
+                                showStep(selectedPhysicalWork.isEmpty ? .carrier : .blocks)
+                            } label: {
+                                Label(selectedPhysicalWork.isEmpty
+                                    ? "Edit carrier settings" : "Edit selected work area",
+                                    systemImage: "slider.horizontal.3")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .accessibilityIdentifier("spray.startTrip.editBlockedStep")
                         }
 
                         Button("Cancel") {
@@ -4613,6 +4626,17 @@ struct SprayCalculatorView: View {
             return
         }
         if let blocker = flow.firstBlocker { errorMessage = blocker.message; return }
+        // For executable By Area spray plans, do not open the final Tank Mix
+        // confirmation with a known unresolvable pass rate. Review and Start
+        // must agree on this prerequisite. Full Tank remains available for
+        // planning/review only, with Start still explicitly disabled.
+        if operationType == .foliarSpray, planningMethod == .byArea,
+           guidedInputs.planningIntent != nil, flow.planningResolution == nil {
+            errorMessage = calculatorOperationalBlocker
+                ?? "Review the optional pass setup and spray water volume before starting."
+            showStep(.carrier)
+            return
+        }
         guard formIsValid else { return }
         guard !accessControl.isLoading else { return }
         guard accessControl.canCreateOperationalRecords else {
