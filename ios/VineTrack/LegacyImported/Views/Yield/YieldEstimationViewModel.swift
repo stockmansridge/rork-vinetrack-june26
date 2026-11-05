@@ -372,6 +372,9 @@ class YieldEstimationViewModel {
     // MARK: - Yield Calculation
 
     func calculateYieldEstimates(paddocks: [Paddock], remainingYieldMultiplierProvider: ((UUID) -> Double)? = nil) -> [BlockYieldEstimate] {
+        // Raw panel observations are never per-vine counts. Do not turn missing
+        // bunchCountEntry into false zero-tonne projections.
+        guard !isPanelCount else { return [] }
         let selected = paddocks.filter { selectedPaddockIds.contains($0.id) }
         var estimates: [BlockYieldEstimate] = []
 
