@@ -91,6 +91,7 @@ import com.google.maps.android.compose.rememberCameraPositionState
 import com.rork.vinetrack.data.BunchCountTripLogic
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.YieldSamplingSiteRepository
+import com.rork.vinetrack.data.YieldEstimationSessionRepository
 import com.rork.vinetrack.data.YieldSiteSetSource
 import com.rork.vinetrack.data.ConfirmedYieldSites
 import com.rork.vinetrack.data.RowAttachment
@@ -155,6 +156,14 @@ fun YieldEstimationScreen(
     var showCompletion by rememberSaveable { mutableStateOf(false) }
     // Local optimistic draft so typing/taps never wait for state round-trips.
     var localDraft by remember { mutableStateOf<YieldEstimationSession?>(null) }
+    val deletionContext = LocalContext.current
+    val deletionRepo = remember(deletionContext) {
+        YieldEstimationSessionRepository(SessionStore(deletionContext))
+    }
+    val deletionScope = rememberCoroutineScope()
+    var deletionBusy by remember { mutableStateOf(false) }
+    var deletionError by remember { mutableStateOf<String?>(null) }
+    var deleteHomeDraft by remember { mutableStateOf<YieldEstimationSession?>(null) }
 
     val visibleTrips = state.yieldSessions.filter { !it.isQuadrantCount || state.isSystemAdmin }
     val draft = BunchCountTripLogic.activeDraft(visibleTrips, vineyardId)
@@ -202,6 +211,29 @@ fun YieldEstimationScreen(
             confirmButton = { TextButton(onClick = { showCountMethod = false }) { Text("Cancel") } })
     }
 
+    fun hardDelete(target: YieldEstimationSession, afterSuccess: () -> Unit) {
+        if (deletionBusy) return
+        if (target.isCompleted && state.currentRole !in setOf("owner", "manager", "supervisor")) {
+            deletionError = "Only a Vineyard Supervisor, Manager or Owner can permanently delete a confirmed observation."
+            return
+        }
+        deletionScope.launch {
+            deletionBusy = true
+            try {
+                deletionRepo.hardDeleteSession(target)
+                vm.deleteYieldSession(target.id)
+                deletionError = null
+                afterSuccess()
+            } catch (e: Exception) {
+                // A rejected or unverified deletion must never silently
+                // remove the local record.
+                deletionError = "Hard delete was not confirmed: ${e.message ?: "Check connection and role, then retry."}"
+            } finally {
+                deletionBusy = false
+            }
+        }
+    }
+
     fun closeTrip() {
         activeTripId = ""
         localDraft = null
@@ -218,6 +250,29 @@ fun YieldEstimationScreen(
         else -> "home"
     }
 
+    if (deletionError != null) {
+        AlertDialog(onDismissRequest = { deletionError = null },
+            title = { Text("Hard delete not confirmed") },
+            text = { Text(deletionError ?: "") },
+            confirmButton = { TextButton(onClick = { deletionError = null }) { Text("OK") } })
+    }
+    deleteHomeDraft?.let { target ->
+        AlertDialog(onDismissRequest = { if (!deletionBusy) deleteHomeDraft = null },
+            title = { Text("Permanently delete this draft?") },
+            text = { Text("The recorded observations and route will be removed from every device. This cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = { hardDelete(target) { deleteHomeDraft = null; closeTrip() } },
+                    enabled = !deletionBusy,
+                ) { Text("Hard Delete", color = VineColors.Destructive) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteHomeDraft = null }, enabled = !deletionBusy) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
     if (state.yieldSessionError?.startsWith("Trip could not be saved") == true) {
         AlertDialog(onDismissRequest = { vm.clearYieldSessionError() },
             title = { Text("Trip not saved") },
@@ -273,8 +328,7 @@ fun YieldEstimationScreen(
                     onStartSampling = { showSampling = true },
                     onCompleteTrip = { showCompletion = true },
                     onDiscard = {
-                        vm.deleteYieldSession(s.id)
-                        closeTrip()
+                        hardDelete(s) { closeTrip() }
                     },
                     onBack = { closeTrip() },
                 )
@@ -286,7 +340,9 @@ fun YieldEstimationScreen(
                         vm = vm,
                         state = state,
                         session = trip,
-                        onDeleted = { viewingTripId = "" },
+                        onRequestDelete = {
+                            hardDelete(trip) { viewingTripId = "" }
+                        },
                         onBack = { viewingTripId = "" },
                     )
                 } else {
@@ -309,6 +365,7 @@ fun YieldEstimationScreen(
                     showSampling = resumed.sampleSites.isNotEmpty() && !resumed.isCompleted
                 },
                 onOpenTrip = { viewingTripId = it.id },
+                onDeleteDraft = { deleteHomeDraft = it },
                 onBack = onBack,
             )
         }
@@ -365,6 +422,7 @@ private fun BunchCountTripHome(
     onPermanentSites: () -> Unit,
     onResume: (YieldEstimationSession) -> Unit,
     onOpenTrip: (YieldEstimationSession) -> Unit,
+    onDeleteDraft: (YieldEstimationSession) -> Unit,
     onBack: () -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -457,8 +515,17 @@ private fun BunchCountTripHome(
                         .clickable { onResume(draft) }) {
                         if (draft.isPanelCount) PanelCountSummary(draft)
                         else CurrentTripEstimateSummary(state, draft, detailed = false)
-                        Text("Tap to review, correct or delete a recorded sample",
+                        Text("Tap to review or correct a recorded sample",
                             color = VineColors.Info, fontSize = 13.sp)
+                    }
+                    TextButton(
+                        onClick = { onDeleteDraft(draft) },
+                        modifier = Modifier.fillMaxWidth().testTag("yield.draft.hardDelete"),
+                    ) {
+                        Icon(Icons.Filled.Delete, contentDescription = null,
+                            tint = VineColors.Destructive)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Hard Delete Draft", color = VineColors.Destructive)
                     }
                 }
             }
@@ -1167,7 +1234,7 @@ private fun CompletedTripScreen(
     vm: AppViewModel,
     state: AppUiState,
     session: YieldEstimationSession,
-    onDeleted: () -> Unit,
+    onRequestDelete: () -> Unit,
     onBack: () -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -1216,10 +1283,13 @@ private fun CompletedTripScreen(
                 onSiteTap = {},
             )
 
-            TextButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Delete Trip", color = VineColors.Destructive)
+            if (state.currentRole in setOf("owner", "manager", "supervisor")) {
+                TextButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.Delete, contentDescription = null,
+                        tint = VineColors.Destructive, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Hard Delete Confirmed Trip", color = VineColors.Destructive)
+                }
             }
         }
     }
@@ -1228,12 +1298,11 @@ private fun CompletedTripScreen(
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("Delete this trip?") },
-            text = { Text("This removes the trip's bunch counts and estimate for everyone. If it is the latest trip, the previous trip becomes the current estimate. This cannot be undone.") },
+            text = { Text("Hard delete permanently removes the confirmed observations for every user. Any current estimate that uses this trip will need a new source. Only Supervisors, Managers and Owners can do this.") },
             confirmButton = {
                 TextButton(onClick = {
-                    vm.deleteYieldSession(session.id)
                     showDeleteConfirm = false
-                    onDeleted()
+                    onRequestDelete()
                 }) { Text("Delete", color = VineColors.Destructive) }
             },
             dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") } },
