@@ -77,6 +77,84 @@ struct SprayGuidedFlowTests {
         #expect(SprayGuidedFlow(inputs: inputs).blocker(for: .carrier) == .carrierConversionRequired)
     }
 
+    @Test("By Area with an explicit two-row pass starts from the actual manual carrier without canopy or row spacing")
+    func byAreaManualCarrierPassDoesNotBlockSprayStart() throws {
+        var inputs = completeInputs()
+        inputs.blocks = [block(rowLengthMetres: nil, rowSpacing: nil)]
+        inputs.carrierBasis = .manualTotalVolume
+        inputs.manualTotalLitres = 800
+        inputs.litresPerHectare = nil
+        inputs.canopy = .unconfirmed
+        inputs.isCanopyConfirmed = false
+        inputs.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .byArea)
+        let flow = SprayGuidedFlow(inputs: inputs)
+        let resolved = try #require(flow.planningResolution)
+        #expect(flow.isComplete)
+        #expect(flow.operationalBlocker == nil)
+        #expect(resolved.plannedAreaHa == 10)
+        #expect(resolved.intendedLitres == 800)
+        #expect(resolved.litresPerHectare == 80)
+        #expect(resolved.physicalRowLitresPer100m == nil)
+        #expect(resolved.controllerLitresPer100mTravel == nil)
+        #expect(resolved.concentrationFactor == 1)
+        #expect(flow.plan.totalCarrierLitres == 800)
+        let persisted = try #require(flow.snapshot)
+        #expect(persisted.planningResolution == resolved)
+        #expect(SprayRecord(applicationGeometry: persisted).operationalPlanningBlocker == nil)
+        #expect(BackendSprayRecord.upsert(
+            from: SprayRecord(applicationGeometry: persisted),
+            createdBy: nil, clientUpdatedAt: Date()
+        ).operationalPlanningBlocker == nil)
+    }
+
+    @Test("By Area with confirmed canopy derives pass rate from resolved sprayer output, not a stale field")
+    func byAreaCanopyAndPassUseRealCarrier() throws {
+        var inputs = completeInputs()
+        inputs.canopy = .prefilled(type: .vsp, size: .medium, density: .low)
+        inputs.sprayVolumeChoice = .useCustomSprayerRate
+        inputs.customSprayerRate = 600
+        inputs.customSprayerBasis = .litresPerHectare
+        inputs.litresPerHectare = nil
+        inputs.planningIntent = SprayPlanningIntent(configuration: .standardPass, method: .byArea)
+        let flow = SprayGuidedFlow(inputs: inputs)
+        let resolved = try #require(flow.planningResolution)
+        #expect(flow.isComplete)
+        #expect(flow.operationalBlocker == nil)
+        #expect(resolved.litresPerHectare == 600)
+        #expect(resolved.intendedLitres == flow.plan.totalCarrierLitres)
+        #expect(resolved.physicalRowLitresPer100m == 19.2)
+        #expect(resolved.controllerLitresPer100mTravel == 19.2)
+        #expect(SprayRecord(applicationGeometry: try #require(flow.snapshot)).operationalPlanningBlocker == nil)
+    }
+
+    @Test("By Area preserves valid unconfigured Tank Mixing but refuses to invent a per-hectare rate")
+    func byAreaGateRemainsSafeForIncompletePlanning() {
+        var inputs = completeInputs()
+        inputs.planningIntent = nil
+        #expect(SprayGuidedFlow(inputs: inputs).operationalBlocker == nil)
+
+        // Without uniform row spacing a mapped L/100m application has total
+        // litres but no actual L/ha value; pass calculations must not guess it.
+        inputs.blocks = [block(rowSpacing: nil)]
+        inputs.carrierBasis = .litresPer100Metres
+        inputs.litresPerHectare = nil
+        inputs.appliedLitresPer100Metres = 20
+        inputs.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .byArea)
+        let unresolved = SprayGuidedFlow(inputs: inputs)
+        #expect(unresolved.carrier?.totalLitres == 6_250)
+        #expect(unresolved.carrier?.litresPerHectare == nil)
+        #expect(unresolved.planningResolution == nil)
+        #expect(unresolved.operationalBlocker != nil)
+
+        inputs = completeInputs()
+        inputs.planningIntent = SprayPlanningIntent(
+            configuration: .overRow, method: .fullTank,
+            fullTankSpecification: .targetArea, intendedTankLitres: 1_500,
+            targetAreaHa: 3
+        )
+        #expect(SprayGuidedFlow(inputs: inputs).operationalBlocker != nil)
+    }
+
     private let tolerance = 0.0001
 
     // MARK: - Fixtures
