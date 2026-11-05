@@ -13,6 +13,9 @@ final class SupabaseYieldEstimationHardDeleteRepository {
         let p_vineyard_id: UUID
         let p_expected_completed: Bool
     }
+    private nonisolated struct SmallId: Decodable, Sendable {
+        let id: UUID
+    }
     private nonisolated struct DeletionReceipt: Decodable, Sendable {
         let session_id: UUID
         let vineyard_id: UUID
@@ -31,7 +34,20 @@ final class SupabaseYieldEstimationHardDeleteRepository {
                 p_expected_completed: session.isCompleted
             )
         ).execute().value
-        guard acknowledged else { throw CocoaError(.fileWriteNoPermission) }
+        if !acknowledged {
+            guard !session.isCompleted else { throw CocoaError(.fileWriteNoPermission) }
+            // A locally created draft might never have reached the server.
+            // Read back server absence before allowing the local outbox to
+            // cancel its pending save; never claim a completed record was gone.
+            let existing: [SmallId] = try await provider.client
+                .from("yield_estimation_sessions")
+                .select("id")
+                .eq("id", value: session.id.uuidString)
+                .eq("vineyard_id", value: session.vineyardId.uuidString)
+                .execute().value
+            guard existing.isEmpty else { throw CocoaError(.fileWriteNoPermission) }
+            return
+        }
         let rows: [DeletionReceipt] = try await provider.client
             .from("yield_estimation_session_deletion_receipts")
             .select("session_id,vineyard_id,was_completed")
