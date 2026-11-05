@@ -74,8 +74,7 @@ struct YieldEstimationView: View {
             Button("1. Bunches Per Vine Count") { startTrip() }
             Button("2. Quadrant Count") { startQuadrantTrip() }
                 .disabled(!systemAdmin.isSystemAdmin)
-            Button("3. Panel Count (not yet enabled)") { }
-                .disabled(true)
+            Button("3. Panel Count") { startPanelTrip() }
             Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $showPermanentSites) {
@@ -156,7 +155,7 @@ struct YieldEstimationView: View {
                                 .font(.title3)
                                 .foregroundStyle(.blue)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(draft.isQuadrantCount ? "Resume Quadrant Count" : "Resume trip in progress")
+                                Text(draft.isPanelCount ? "Resume Panel Count" : (draft.isQuadrantCount ? "Resume Quadrant Count" : "Resume trip in progress"))
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(.primary)
                                 Text(draft.sampleSites.isEmpty
@@ -264,6 +263,13 @@ struct YieldEstimationView: View {
         fitMap()
     }
 
+    private func startPanelTrip() {
+        viewModel.startNewTrip()
+        viewModel.countMethod = "panel"
+        withAnimation(.smooth(duration: 0.25)) { tripStarted = true }
+        fitMap()
+    }
+
     private func startQuadrantTrip() {
         guard systemAdmin.isSystemAdmin else { return }
         viewModel.startNewTrip()
@@ -301,7 +307,7 @@ struct YieldEstimationView: View {
                 setupContent
             }
         }
-        .navigationTitle(viewModel.isQuadrantCount ? "Quadrant Count" : "Yield Estimate Trip")
+.navigationTitle(viewModel.isPanelCount ? "Panel Count" : (viewModel.isQuadrantCount ? "Quadrant Count" : "Yield Estimate Trip"))
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
@@ -362,7 +368,12 @@ struct YieldEstimationView: View {
 
     @ViewBuilder
     private func countEntrySheet(site: SampleSite) -> some View {
-        if viewModel.isQuadrantCount {
+        if viewModel.isPanelCount {
+            PanelCountEntrySheet(site: site) { measurement, recordedBy in
+                viewModel.savePanelCount(siteId: site.id, measurement: measurement,
+                                         recordedBy: recordedBy, persist: saveSession)
+            }
+        } else if viewModel.isQuadrantCount {
             let block = paddocks.first { $0.id == site.paddockId }
             QuadrantCountEntrySheet(site: site, defaultLengthCm: viewModel.quadrantSectionLengthCm,
                 vineSpacingCm: block.flatMap { $0.vineSpacingIsKnown == false ? nil : $0.vineSpacing * 100 },
