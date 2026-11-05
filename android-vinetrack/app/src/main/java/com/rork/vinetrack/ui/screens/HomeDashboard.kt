@@ -70,7 +70,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -101,6 +105,22 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import com.rork.vinetrack.R
 import com.rork.vinetrack.data.AlertsRepository
+import com.rork.vinetrack.data.CurrentObservationRepository
+import com.rork.vinetrack.data.PersistedRainfallRepository
+import com.rork.vinetrack.data.RainDay
+import com.rork.vinetrack.data.RainForecastRepository
+import com.rork.vinetrack.data.RegionFormatter
+import com.rork.vinetrack.data.VineyardWeatherIntegrationRepository
+import com.rork.vinetrack.data.WeatherIntegrationProvider
+import com.rork.vinetrack.data.WillyWeatherRepository
+import com.rork.vinetrack.data.toRainDay
+import com.rork.vinetrack.ui.regionFormatter
+import kotlinx.coroutines.CancellationException
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import com.rork.vinetrack.data.HomePrefsStore
 import com.rork.vinetrack.data.OperationalToolLayoutResolver
 import com.rork.vinetrack.data.dashboardWorkedBlockIds
@@ -808,7 +828,7 @@ private fun TodaySection(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         SectionHeader("Today")
-        WeatherCard(onClick = onOpenWeather)
+        WeatherCard(state = state, onClick = onOpenWeather)
         if (alerts.isNotEmpty()) {
             HomeAlertsCard(alerts = alerts, onClick = onOpenAlerts)
         }
@@ -881,20 +901,183 @@ private fun alertSeverityIcon(type: AlertType?): ImageVector = when (type) {
 }
 
 /**
- * Today's Rain entry point, mirroring the iOS `HomeRainSummaryCard`. Opens the
- * Rain & Forecast page (rainfall outlook + recent rainfall history from
- * Open-Meteo).
+ * The Home rain card mirrors iOS HomeRainSummaryCard. It observes the selected
+ * vineyard's current readings and configured seven-day forecast, without
+ * changing any rainfall or alert records.
  */
+private data class HomeRainCardState(
+    val todayMm: Double? = null,
+    val source: String? = null,
+    val stale: Boolean = false,
+    val refreshFailed: Boolean = false,
+    val forecast: String = "Loading 7-day rain forecast…",
+    val loading: Boolean = true,
+)
+
 @Composable
-private fun WeatherCard(onClick: () -> Unit) {
+private fun WeatherCard(state: AppUiState, onClick: () -> Unit) {
     val vine = LocalVineColors.current
+    val context = LocalContext.current
+    val session = remember { SessionStore(context) }
+    val currentRepo = remember { CurrentObservationRepository(session) }
+    val persistedRepo = remember { PersistedRainfallRepository(session) }
+    val forecastRepo = remember { RainForecastRepository() }
+    val willyRepo = remember { WillyWeatherRepository(session) }
+    val integrationRepo = remember { VineyardWeatherIntegrationRepository(session) }
+    val fmt = state.regionFormatter
+    val vineyardId = state.selectedVineyardId
+    val userId = state.currentUserId
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val location = remember(vineyardId, state.selectedVineyard, state.paddocks) {
+        val blocks = state.paddocks.filter { it.vineyardId == vineyardId }
+        val latitude = state.selectedVineyard?.latitude ?: blocks.firstNotNullOfOrNull { it.centroid }?.latitude
+        val longitude = state.selectedVineyard?.longitude ?: blocks.firstNotNullOfOrNull { it.centroid }?.longitude
+        if (latitude != null && longitude != null) latitude to longitude else null
+    }
+    var card by remember(vineyardId, userId) { mutableStateOf(HomeRainCardState()) }
+    var resumeCount by remember(vineyardId, userId) { mutableStateOf(0) }
+
+    // Non-blocking refresh on vineyard switch / foreground, as on iOS.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) resumeCount += 1
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(vineyardId, userId, resumeCount, location) {
+        card = HomeRainCardState()
+        if (vineyardId == null) {
+            card = HomeRainCardState(forecast = "Rain forecast unavailable", loading = false)
+            return@LaunchedEffect
+        }
+        val access = session.accountAccess()
+        fun stillSelected() = access != null && session.isAccountAccessCurrent(access) &&
+            session.selectedVineyardId == vineyardId
+        if (!stillSelected()) {
+            card = HomeRainCardState(forecast = "Rain forecast unavailable", loading = false)
+            return@LaunchedEffect
+        }
+
+        var cached = try {
+            currentRepo.current(vineyardId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+        var refreshFailed = false
+        try {
+            currentRepo.refresh(vineyardId)
+            cached = CurrentObservationRepository.retainingLastKnown(currentRepo.current(vineyardId), cached)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            refreshFailed = true
+        }
+        if (!stillSelected()) return@LaunchedEffect
+
+        var today = cached?.takeIf { it.status == "ok" }?.rainTodayMm
+        val stationSource = cached?.source?.takeUnless { it == "none" || it.isBlank() }
+        var source = stationSource?.let { homeRainSource(it, cached?.stationName) }
+        val stale = cached?.isStale == true
+
+        // Live observed value first, then the authoritative persisted daily row.
+        if (today == null) {
+            try {
+                val dayKey = homeRainDayKey(Date(), TimeZone.getDefault())
+                val row = persistedRepo.fetchDailyRainfall(vineyardId, dayKey, dayKey)
+                    .firstOrNull { it.date == dayKey && it.rainfallMm != null }
+                today = row?.rainfallMm
+                if (source == null) {
+                    source = row?.source?.let { homeRainSource(it, row.stationName) }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Keep the weather forecast as an independent fallback.
+            }
+        }
+
+        var days = emptyList<RainDay>()
+        var zone = TimeZone.getDefault()
+        var forecastSource = "Open-Meteo"
+        if (location != null) {
+            // Same provider priority as the Android Rain & Forecast screen.
+            try {
+                val provider = willyRepo.getProviderPreference(vineyardId)
+                val hasWillyLocation = if (provider == "open_meteo") false else
+                    integrationRepo.fetch(vineyardId, WeatherIntegrationProvider.WILLY_WEATHER)
+                        ?.stationId?.isNotEmpty() == true
+                if (provider == "willyweather" || (provider == "auto" && hasWillyLocation)) {
+                    val ww = willyRepo.fetchForecast(vineyardId, days = 7)
+                    days = ww.days.mapNotNull { it.toRainDay(ww.timezone) }
+                    if (days.isNotEmpty()) {
+                        zone = TimeZone.getTimeZone(ww.timezone ?: "UTC")
+                        forecastSource = "WillyWeather"
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // The configured service is unavailable; use Open-Meteo.
+            }
+            if (days.isEmpty()) {
+                try {
+                    val openMeteo = forecastRepo.fetch(location.first, location.second, pastDays = 0, forecastDays = 7)
+                    days = openMeteo.forecast
+                    zone = TimeZone.getTimeZone(openMeteo.timezone)
+                    forecastSource = "Open-Meteo"
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // Missing forecast remains unavailable rather than guessed.
+                }
+            }
+        }
+
+        // A forecast estimate is not an observed reading; identify its source.
+        if (today == null) {
+            val todayKey = homeRainDayKey(Date(), zone)
+            val forecastToday = days.firstOrNull {
+                homeRainDayKey(Date(it.dateEpochMs), zone) == todayKey
+            }
+            if (forecastToday != null) {
+                today = forecastToday.rainMm
+                if (source == null) source = "${forecastSource} forecast (today)"
+            }
+        }
+        if (stillSelected()) {
+            card = HomeRainCardState(
+                todayMm = today,
+                source = source,
+                stale = stale,
+                refreshFailed = refreshFailed && stationSource != null,
+                forecast = homeRainForecastSummary(days, fmt, zone),
+                loading = false,
+            )
+        }
+    }
+
+    val mm = card.todayMm
+    val headline = when {
+        mm == null -> "Rain data unavailable"
+        mm <= 0.0 -> "Today's rain: 0 ${fmt.rainfallUnitAbbreviation}"
+        else -> "Today's rain: ${fmt.formatRainfall(mm)}"
+    }
+    val subtitle = card.source?.let { source ->
+        when {
+            card.refreshFailed -> "$source · could not refresh"
+            card.stale -> "$source · stale"
+            else -> source
+        }
+    }
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 64.dp)
+        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(vine.cardBackground)
-            .clickable { onClick() }
+            .border(BorderStroke(1.dp, VineColors.Info.copy(alpha = 0.18f)), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -906,11 +1089,64 @@ private fun WeatherCard(onClick: () -> Unit) {
         ) {
             Icon(Icons.Filled.Cloud, contentDescription = null, tint = VineColors.Info, modifier = Modifier.size(18.dp))
         }
-        Column(modifier = Modifier.weight(1f)) {
-            Text("Today's Rain", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1)
-            Text("Rainfall & 7-day forecast", fontSize = 12.sp, color = vine.textSecondary, maxLines = 1)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(headline, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle != null) {
+                Text(subtitle, fontSize = 12.sp,
+                    color = if (card.stale || card.refreshFailed) VineColors.Orange else vine.textSecondary,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(card.forecast, fontSize = 12.sp, color = vine.textSecondary, maxLines = 2,
+                overflow = TextOverflow.Ellipsis)
         }
-        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(18.dp))
+        if (card.loading) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        }
+        Icon(Icons.Filled.ChevronRight, contentDescription = null,
+            tint = vine.textSecondary, modifier = Modifier.size(18.dp))
+    }
+}
+
+private fun homeRainSource(raw: String, station: String?): String {
+    val label = when (raw) {
+        "mait_intelliweb" -> "MAIT iNTELLiWeb"
+        "davis_weatherlink" -> "Davis WeatherLink"
+        "wunderground_pws", "wunderground" -> "Weather Underground"
+        "open_meteo" -> "Open-Meteo"
+        "manual" -> "Manual"
+        else -> raw
+    }
+    return station?.takeIf { it.isNotBlank() }?.let { "$label · $it" } ?: label
+}
+
+private fun homeRainDayKey(date: Date, timezone: TimeZone): String =
+    SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = timezone }.format(date)
+
+/** Same first-event / larger-later-event summary as iOS HomeRainSummaryCard. */
+private fun homeRainForecastSummary(days: List<RainDay>, fmt: RegionFormatter, timezone: TimeZone): String {
+    if (days.isEmpty()) return "Rain forecast unavailable"
+    val relevant = days.take(7).filter { it.rainMm.isFinite() && it.rainMm >= 1.0 }
+    if (relevant.isEmpty()) return "No significant rain in next 7 days"
+    val dayFmt = SimpleDateFormat("EEEE", Locale.getDefault()).apply { timeZone = timezone }
+    val today = homeRainDayKey(Date(), timezone)
+    val tomorrow = Calendar.getInstance(timezone).apply { add(Calendar.DAY_OF_YEAR, 1) }
+        .let { homeRainDayKey(it.time, timezone) }
+    fun label(day: RainDay): String {
+        val date = Date(day.dateEpochMs)
+        return when (homeRainDayKey(date, timezone)) {
+            today -> "today"
+            tomorrow -> "tomorrow"
+            else -> dayFmt.format(date)
+        }
+    }
+    val first = relevant.first()
+    val largest = relevant.maxByOrNull { it.rainMm } ?: first
+    val firstText = "${fmt.formatRainfall(first.rainMm)} ${label(first)}"
+    return if (largest.dateEpochMs != first.dateEpochMs && largest.rainMm >= first.rainMm + 2.0) {
+        "Forecast: $firstText · ${fmt.formatRainfall(largest.rainMm)} ${label(largest)}"
+    } else {
+        "Forecast: $firstText"
     }
 }
 
