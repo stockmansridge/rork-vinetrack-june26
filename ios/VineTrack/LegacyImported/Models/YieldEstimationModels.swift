@@ -40,6 +40,38 @@ nonisolated struct SampleSite: Codable, Identifiable, Sendable, Hashable {
     }
 }
 
+
+// Issue #54: preserve raw post-to-post panel evidence without guessing block
+// vine population. Projection is deliberately separate until the block's
+// inventory denominator (planting positions versus productive vines) is verified.
+nonisolated struct PanelCountMeasurement: Codable, Sendable, Hashable {
+    let totalBunches: Int
+    let plantedPositions: Int
+    let fruitingVines: Int
+    let missingPositions: Int
+    let nonproductiveVines: Int
+    let panelLengthMetres: Double?
+    let calculationVersion: Int
+
+    var bunchesPerPlantingPosition: Double {
+        Double(totalBunches) / Double(plantedPositions)
+    }
+
+    static func make(
+        totalBunches: Int, plantedPositions: Int, fruitingVines: Int,
+        missingPositions: Int, nonproductiveVines: Int, panelLengthMetres: Double?
+    ) -> Self? {
+        guard totalBunches >= 0, plantedPositions > 0,
+              fruitingVines >= 0, missingPositions >= 0, nonproductiveVines >= 0,
+              fruitingVines + missingPositions + nonproductiveVines == plantedPositions,
+              panelLengthMetres.map({ $0.isFinite && $0 > 0 }) ?? true else { return nil }
+        return Self(totalBunches: totalBunches, plantedPositions: plantedPositions,
+                    fruitingVines: fruitingVines, missingPositions: missingPositions,
+                    nonproductiveVines: nonproductiveVines,
+                    panelLengthMetres: panelLengthMetres, calculationVersion: 1)
+    }
+}
+
 nonisolated struct BunchCountEntry: Codable, Sendable, Hashable {
     var bunchesPerVine: Double
     var recordedAt: Date
