@@ -139,7 +139,7 @@ final class SupabaseYieldSamplingSitesRepository {
         if let draft = sets.first(where: { $0.status == "draft" }) { return draft }
         let source = sets.first(where: \.isConfirmed)
         let id = UUID()
-        let nextVersion = (sets.map(\.version).max() ?? 0) + 1
+        let nextVersion = source.map { (sets.filter { $0.setKey == $0.setKey }.map(\.version).max() ?? 0) + 1 } ?? 1
         let input = DraftInput(id: id, vineyard_id: vineyardId, paddock_id: paddockId,
                                set_key: source?.setKey ?? UUID(), version: nextVersion,
                                name: source?.name ?? "Permanent Yield Sampling Locations", status: "draft")
