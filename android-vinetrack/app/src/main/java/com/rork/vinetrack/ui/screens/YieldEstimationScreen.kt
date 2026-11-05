@@ -304,6 +304,9 @@ fun YieldEstimationScreen(
                 onResume = { resumed ->
                     activeTripId = resumed.id
                     localDraft = null
+                    // Recorded drafts open at their editable sample list/map,
+                    // not the setup-only route preview.
+                    showSampling = resumed.sampleSites.isNotEmpty() && !resumed.isCompleted
                 },
                 onOpenTrip = { viewingTripId = it.id },
                 onBack = onBack,
@@ -448,9 +451,15 @@ private fun BunchCountTripHome(
                 }
 
                 if (draft != null) {
-                    Text("Draft", color = vine.textSecondary)
-                    if (draft.isPanelCount) PanelCountSummary(draft)
-                    else CurrentTripEstimateSummary(state, draft, detailed = false)
+                    Text("Draft · Recorded Observations", color = vine.textSecondary)
+                    Column(modifier = Modifier.fillMaxWidth()
+                        .testTag("yield.draft.recorded.open")
+                        .clickable { onResume(draft) }) {
+                        if (draft.isPanelCount) PanelCountSummary(draft)
+                        else CurrentTripEstimateSummary(state, draft, detailed = false)
+                        Text("Tap to review, correct or delete a recorded sample",
+                            color = VineColors.Info, fontSize = 13.sp)
+                    }
                 }
             }
 
