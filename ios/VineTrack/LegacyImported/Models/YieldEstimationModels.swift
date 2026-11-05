@@ -6,6 +6,9 @@ nonisolated struct SampleSite: Codable, Identifiable, Sendable, Hashable {
     var paddockId: UUID
     var paddockName: String
     var rowNumber: Int
+    /// Additive text references for fixed panels (e.g. row 12A / panel E-4).
+    var yieldRowReference: String?
+    var yieldPanelReference: String?
     var latitude: Double
     var longitude: Double
     var siteIndex: Int
@@ -27,12 +30,16 @@ nonisolated struct SampleSite: Codable, Identifiable, Sendable, Hashable {
         latitude: Double,
         longitude: Double,
         siteIndex: Int,
-        bunchCountEntry: BunchCountEntry? = nil
+        bunchCountEntry: BunchCountEntry? = nil,
+        yieldRowReference: String? = nil,
+        yieldPanelReference: String? = nil
     ) {
         self.id = id
         self.paddockId = paddockId
         self.paddockName = paddockName
         self.rowNumber = rowNumber
+        self.yieldRowReference = yieldRowReference
+        self.yieldPanelReference = yieldPanelReference
         self.latitude = latitude
         self.longitude = longitude
         self.siteIndex = siteIndex
