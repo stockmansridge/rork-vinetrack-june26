@@ -169,7 +169,7 @@ struct YieldPermanentSamplingLocationsView: View {
                         .accessibilityIdentifier("yield.sites.placeGPS")
                         if let fieldLocationMessage {
                             Text(fieldLocationMessage).font(.caption)
-                                .foregroundStyle(fieldLocating ? .secondary : .red)
+                                .foregroundStyle(fieldLocating ? Color.secondary : Color.red)
                         }
                         ForEach(draftSites.sorted(by: { $0.siteNumber < $1.siteNumber })) { site in
                             HStack {
