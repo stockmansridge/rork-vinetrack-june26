@@ -8,6 +8,10 @@ on:
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/Components.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/DamageRecordsScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/FertiliserCalculatorScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/GrowthScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/GrowthStageBlockDetailScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/GrowthStageBundledImages.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SeasonYieldOverviewScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/PinsScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/VineyardMapScreen.kt'
@@ -73,6 +77,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon --stacktrace :app:compileDebugKotlin :app:testDebugUnitTest \
             --tests "com.rork.vinetrack.data.MobileCostingParityTest" \
+            --tests "com.rork.vinetrack.data.GrowthStageReferenceImageTest" \
             --tests "com.rork.vinetrack.data.ForecastParityContractTest" \
             --tests "com.rork.vinetrack.data.IrrigationCalculatorFixtureTest" \
             --tests "com.rork.vinetrack.data.YieldVintageReportTest" \
