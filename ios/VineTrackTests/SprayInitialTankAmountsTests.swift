@@ -47,6 +47,18 @@ final class SprayInitialTankAmountsTests: XCTestCase {
             waterLitres: water ?? original.waterLitres, chemicalBaseAmounts: chemicals ?? original.chemicalBaseAmounts)
     }
 
+    func testCalculatedTwoDecimalDisplayKeepsFullActualInputPrecision() {
+        let calculated = 1.078
+        XCTAssertEqual(
+            SprayInitialTankInput.twoDecimalDisplay(calculated),
+            calculated.formatted(.number.locale(.current).precision(.fractionLength(2)))
+        )
+        // Display rounding must never silently change an operator's entered
+        // actual, or overwrite the unrounded base-unit chemical value.
+        XCTAssertEqual(SprayInitialTankInput.input(calculated), "1.078")
+        XCTAssertEqual(SprayInitialTankInput.input(0.0012345), "0.0012345")
+    }
+
     func testActualAmountsAreDistinctFromPlanAndExplicitZeroIsValid() throws {
         let f = try fixture()
         XCTAssertTrue(f.draft.amounts.isValid(for: f.draft.tank))
