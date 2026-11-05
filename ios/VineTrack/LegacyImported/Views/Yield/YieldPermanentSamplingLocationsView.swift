@@ -279,8 +279,10 @@ struct YieldPermanentSamplingLocationsView: View {
             let rows = try await repository.listSets(vineyardId: vineyardId, paddockId: block.id)
             let draftRow = rows.first { $0.status == "draft" }
             let confirmedRow = rows.first(where: \.isConfirmed)
-            let draftValues = try await draftRow.map { try await repository.listSites($0) } ?? []
-            let confirmedValues = try await confirmedRow.map { try await repository.listSites($0) } ?? []
+            let draftValues: [YieldSamplingSiteRow]
+            if let draftRow { draftValues = try await repository.listSites(draftRow) } else { draftValues = [] }
+            let confirmedValues: [YieldSamplingSiteRow]
+            if let confirmedRow { confirmedValues = try await repository.listSites(confirmedRow) } else { confirmedValues = [] }
             guard selectedBlockId == block.id else { return }
             sets = rows
             draftSites = draftValues
