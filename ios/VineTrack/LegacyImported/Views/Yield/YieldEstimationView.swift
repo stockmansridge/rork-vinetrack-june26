@@ -5,6 +5,7 @@ struct YieldEstimationView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(SystemAdminService.self) private var systemAdmin
     @State private var showCountMethod = false
+    @State private var showPermanentSites = false
     @Environment(\.accessControl) private var accessControl
     @Environment(NetworkMonitor.self) private var network
     @State private var viewModel = YieldEstimationViewModel()
@@ -70,6 +71,11 @@ struct YieldEstimationView: View {
                 .disabled(true)
             Button("Cancel", role: .cancel) {}
         }
+        .sheet(isPresented: $showPermanentSites) {
+            if let vineyardId = store.selectedVineyardId {
+                YieldPermanentSamplingLocationsView(vineyardId: vineyardId, paddocks: paddocks)
+            }
+        }
         .task { if refreshSharedDefaults { await syncSamplingDefault() } }
         .modifier(YieldMasterRefresh(enabled: refreshSharedDefaults))
         .alert("Trip not saved", isPresented: $saveFailed) {
@@ -118,6 +124,19 @@ struct YieldEstimationView: View {
                 .tint(.blue)
                 .disabled(paddocks.isEmpty)
 
+                Button {
+                    showPermanentSites = true
+                } label: {
+                    Label("Set Permanent Locations (Optional)", systemImage: "mappin.and.ellipse")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .buttonStyle(.bordered)
+                .tint(.purple)
+                .disabled(paddocks.isEmpty || store.selectedVineyardId == nil)
+                .accessibilityIdentifier("yield.sites.open")
+
                 if let draft = activeDraft {
                     Button {
                         resumeTrip(draft)
@@ -152,7 +171,7 @@ struct YieldEstimationView: View {
 
 
                 if paddocks.isEmpty {
-                    Text("Map at least one block boundary in Blocks before starting a bunch count trip.")
+                    Text("Map at least one block boundary in Blocks before starting a yield estimate trip.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -324,7 +343,7 @@ struct YieldEstimationView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Delete this bunch count trip? This removes its route, bunch counts and estimate. If it is the latest trip, the previous trip becomes the current estimate. This cannot be undone.")
+            Text("Delete this yield estimate trip? This removes its route, bunch counts and estimate. If it is the latest trip, the previous trip becomes the current estimate. This cannot be undone.")
         }
         .onAppear {
             fitMap()
@@ -897,9 +916,9 @@ struct YieldEstimationView: View {
         Button {
             // Completed trips are preserved history — a new trip is a NEW
             // dated observation, never an overwrite.
-            if systemAdmin.isSystemAdmin { showCountMethod = true } else { startTrip() }
+            showCountMethod = true
         } label: {
-            Label("Start New Bunch Count Trip", systemImage: "plus.circle.fill")
+            Label("Start New Yield Estimate Trip", systemImage: "plus.circle.fill")
                 .font(.subheadline.weight(.semibold))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
@@ -916,7 +935,7 @@ struct YieldEstimationView: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.white)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Bunch Count Trip Completed")
+                Text("Yield Estimate Trip Completed")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.white)
                 if let completedAt = viewModel.completedAt {
@@ -967,7 +986,7 @@ struct YieldEstimationView: View {
             Button {
                 showCompleteConfirmation = true
             } label: {
-                Label("Save Bunch Count Trip", systemImage: "checkmark.seal.fill")
+                Label("Save Yield Estimate Trip", systemImage: "checkmark.seal.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -976,7 +995,7 @@ struct YieldEstimationView: View {
             .tint(.green)
             .accessibilityIdentifier("yield.saveTrip")
             .confirmationDialog(
-                "Save Bunch Count Trip?",
+                "Save Yield Estimate Trip?",
                 isPresented: $showCompleteConfirmation,
                 titleVisibility: .visible
             ) {
@@ -1027,7 +1046,7 @@ struct YieldEstimationView: View {
                 } header: {
                     Text("Samples per Hectare")
                 } footer: {
-                    Text("Number of vine sample sites to generate per hectare. Saved as the shared default for the next Bunch Count Trip on every device.")
+                    Text("Number of vine sample sites to generate per hectare. Saved as the shared default for the next Yield Estimate Trip on every device.")
                 }
 
                 if let n = Int(samplesPerHaText), n > 0, !viewModel.selectedPaddockIds.isEmpty {
