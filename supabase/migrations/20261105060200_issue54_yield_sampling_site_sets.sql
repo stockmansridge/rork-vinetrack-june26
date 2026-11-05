@@ -7,7 +7,7 @@ CREATE TABLE public.yield_sample_site_sets (
   version integer NOT NULL DEFAULT 1 CHECK (version > 0),
   name text NOT NULL DEFAULT 'Permanent Yield Sampling Locations' CHECK (length(name) BETWEEN 1 AND 120),
   status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'confirmed', 'archived')),
-  created_by uuid DEFAULT (SELECT auth.uid()),
+  created_by uuid DEFAULT auth.uid(),
   confirmed_by uuid,
   confirmed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -32,7 +32,7 @@ CREATE TABLE public.yield_sample_sites (
   latitude double precision NOT NULL CHECK (isfinite(latitude) AND latitude BETWEEN -90 AND 90),
   longitude double precision NOT NULL CHECK (isfinite(longitude) AND longitude BETWEEN -180 AND 180),
   notes text CHECK (length(notes) <= 4000),
-  created_by uuid DEFAULT (SELECT auth.uid()),
+  created_by uuid DEFAULT auth.uid(),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT yield_sites_parent FOREIGN KEY(site_set_id, vineyard_id, paddock_id)
