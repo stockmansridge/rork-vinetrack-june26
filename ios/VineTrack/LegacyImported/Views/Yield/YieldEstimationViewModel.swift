@@ -19,6 +19,7 @@ class YieldEstimationViewModel {
     var countMethod: String?
     var quadrantSectionLengthCm: Double = 60
     var isQuadrantCount: Bool { countMethod == "quadrant" }
+    var isPanelCount: Bool { countMethod == "panel" }
 
     private func vineCount(for paddock: Paddock) -> Int {
         guard isCompleted else { return paddock.authoritativeVineCount }
@@ -110,7 +111,7 @@ class YieldEstimationViewModel {
     }
 
     func recordBunchCount(siteId: UUID, bunchesPerVine: Double, recordedBy: String) {
-        guard !isQuadrantCount else { return }
+        guard !isQuadrantCount && !isPanelCount else { return }
         guard let index = sampleSites.firstIndex(where: { $0.id == siteId }) else { return }
         sampleSites[index].bunchCountEntry = BunchCountEntry(
             bunchesPerVine: bunchesPerVine,
@@ -129,6 +130,33 @@ class YieldEstimationViewModel {
         sampleSites[index].bunchCountEntry = BunchCountEntry(bunchesPerVine: checked.bunchesPerVine,
             recordedAt: Date(), recordedBy: recordedBy, quadrant: checked)
         quadrantSectionLengthCm = checked.sectionLengthCm
+        return true
+    }
+
+    /// Raw post-to-post counts are observations, never silently converted into
+    /// a Bunches Per Vine estimate or promoted as the active seasonal source.
+    @discardableResult
+    func savePanelCount(
+        siteId: UUID, measurement: PanelCountMeasurement,
+        recordedBy: String, persist: () -> Bool
+    ) -> Bool {
+        guard isPanelCount && !isCompleted,
+              let checked = PanelCountMeasurement.make(
+                totalBunches: measurement.totalBunches,
+                plantedPositions: measurement.plantedPositions,
+                fruitingVines: measurement.fruitingVines,
+                missingPositions: measurement.missingPositions,
+                nonproductiveVines: measurement.nonproductiveVines,
+                panelLengthMetres: measurement.panelLengthMetres
+              ),
+              let index = sampleSites.firstIndex(where: { $0.id == siteId }) else { return false }
+        let before = sampleSites
+        sampleSites[index].panelCountEntry = PanelCountEntry(measurement: checked, recordedBy: recordedBy)
+        sampleSites[index].bunchCountEntry = nil
+        guard persist() else {
+            sampleSites = before
+            return false
+        }
         return true
     }
 
@@ -424,7 +452,7 @@ class YieldEstimationViewModel {
         applyDamage = session.applyDamage
         routeSourceSessionId = session.routeSourceSessionId
         siteSetVersions = session.siteSetVersions
-        countMethod = session.isQuadrantCount ? "quadrant" : session.countMethod
+        countMethod = session.isPanelCount ? "panel" : (session.isQuadrantCount ? "quadrant" : session.countMethod)
         quadrantSectionLengthCm = session.quadrantSectionLengthCm ?? 60
     }
 
