@@ -287,7 +287,8 @@ private fun DashboardContent(
                 .verticalScroll(homeScroll)
                 .statusBarsPadding()
                 .padding(vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            // Match iOS visual density; keep Home scroll and its saved offset unchanged.
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             HeaderRow(
                 vineyard = state.selectedVineyard,
@@ -806,6 +807,22 @@ private fun SetupWizardCard(state: AppUiState, onClick: () -> Unit) {
     }
 }
 
+/**
+ * Home-only 15sp section heading, matching iOS .subheadline.weight(.semibold).
+ * The shared SectionHeader used on other Android screens is untouched.
+ */
+@Composable
+private fun HomeSectionHeader(title: String, fillWidth: Boolean = true) {
+    Text(
+        text = title.uppercase(),
+        fontSize = 15.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 0.5.sp,
+        color = Color.White.copy(alpha = 0.95f),
+        modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier,
+    )
+}
+
 @Composable
 private fun TodaySection(
     state: AppUiState,
@@ -827,7 +844,7 @@ private fun TodaySection(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        SectionHeader("Today")
+        HomeSectionHeader("Today")
         WeatherCard(state = state, onClick = onOpenWeather)
         if (alerts.isNotEmpty()) {
             HomeAlertsCard(alerts = alerts, onClick = onOpenAlerts)
@@ -1162,12 +1179,12 @@ internal fun QuickActionsSection(
 
     Column(
         modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         // Heading + ⓘ help entry point (iOS parity: `plainSectionHeaderWithInfo`).
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            SectionHeader("Quick Actions", fillWidth = false)
-            IconButton(onClick = { showHelp = true }, modifier = Modifier.size(44.dp)) {
+            HomeSectionHeader("Quick Actions", fillWidth = false)
+            IconButton(onClick = { showHelp = true }, modifier = Modifier.size(40.dp)) {
                 Icon(
                     Icons.Filled.Info,
                     contentDescription = "How to use Quick Actions",
@@ -1207,7 +1224,7 @@ internal fun QuickActionsSection(
                     ),
                 )
                 .clickable { onAddPinAction() }
-                .padding(horizontal = 14.dp, vertical = 8.dp),
+                .padding(horizontal = 14.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -1234,7 +1251,7 @@ internal fun QuickActionsSection(
                     .clip(RoundedCornerShape(14.dp))
                     .background(Brush.linearGradient(listOf(VineColors.Indigo, VineColors.Purple)))
                     .clickable(onClick = onPermanentItemAction)
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -1273,18 +1290,18 @@ private fun QuickActionCard(
 ) {
     Column(
         modifier = modifier
-            .heightIn(min = 76.dp)
+            // iOS-equivalent compact tile without extra decorative spacers.
+            .heightIn(min = 92.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(Brush.linearGradient(colors))
             .clickable { onClick() }
-            .padding(12.dp),
+            .padding(10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.Center,
     ) {
-        Spacer(Modifier.height(4.dp))
         Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
+        Spacer(Modifier.height(8.dp))
         Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-        Spacer(Modifier.height(4.dp))
     }
 }
 
@@ -1303,7 +1320,7 @@ private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        SectionHeader("Vineyard Overview")
+        HomeSectionHeader("Vineyard Overview")
         VineyardCard(modifier = Modifier.clickable { onOpenMap() }) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 val logo = state.selectedVineyardLogo
