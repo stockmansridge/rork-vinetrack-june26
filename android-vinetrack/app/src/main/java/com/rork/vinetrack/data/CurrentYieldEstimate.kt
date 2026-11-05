@@ -47,7 +47,8 @@ object CurrentYieldEstimate {
         }
     fun block(session: YieldEstimationSession, paddock: Paddock, weights: Map<String, YieldMasterWeight>, remaining: Double = 1.0): Block {
         val sites = session.sitesIn(paddock.id)
-        val counts = sites.mapNotNull { it.bunchCountEntry?.bunchesPerVine }
+        val counts = if (session.isPanelCount) emptyList()
+                     else sites.mapNotNull { it.bunchCountEntry?.bunchesPerVine }
         val average = counts.takeIf { it.isNotEmpty() && it.all { count -> count.isFinite() && count >= 0 } }?.average()
         val plantings = plantings(paddock)
         val share = plantings.sumOf { it.share }
@@ -67,6 +68,6 @@ object CurrentYieldEstimate {
         val blocks = paddocks.filter { session.isPaddockSelected(it.id) }.map { block(session, it, weights, remaining(it.id)) }
         val sampled = blocks.filter { it.samplesRecorded > 0 }
         val total = if (sampled.isEmpty() || sampled.any { it.displayTonnes == null }) null else sampled.sumOf { it.displayTonnes ?: 0.0 }
-        return Trip(blocks, sampled.sumOf { it.sampledAreaHa }, total, if (session.isQuadrantCount) session.countMethodName else null)
+        return Trip(blocks, sampled.sumOf { it.sampledAreaHa }, total, if (session.isQuadrantCount || session.isPanelCount) session.countMethodName else null)
     }
 }
