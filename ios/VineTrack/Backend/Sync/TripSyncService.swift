@@ -1861,10 +1861,16 @@ final class TripSyncService {
         // Adopt the server's ended timestamps without replacing live local GPS,
         // spray evidence or pending writes. This also works when the device had
         // no dirty Trip at the instant of the remote pull.
-        if !serverCompleted, let local, local.isActive, mapped.isActive,
-           let serverTankEnd = TankPathAttribution.adoptingServerTankEnds(
-               local: local, remote: mapped
-           ), serverTankEnd != local {
+        if !serverCompleted, let local, local.isActive, mapped.isActive {
+            guard let serverTankEnd = TankPathAttribution.adoptingServerTankEnds(
+                local: local, remote: mapped
+            ) else {
+                receiptReconciliationHolds[backendTrip.id] = "TRIP_SERVER_TANK_END_IDENTITY_CONFLICT"
+                metadata.markUpsertsFailed([backendTrip.id])
+                syncStatus = .failure("A server tank-session identity conflicts with retained local evidence. No local record was replaced.")
+                return
+            }
+            if serverTankEnd != local {
             guard let merged = TankPathAttribution.mergingRecordedPaths(
                 local: serverTankEnd, remote: mapped
             ) else {
@@ -1884,6 +1890,7 @@ final class TripSyncService {
             }
             if local.skippedPaths.contains(where: { !mapped.skippedPaths.contains($0) }) {
                 reconciled.skippedPaths = local.skippedPaths
+            }
             }
         }
         var retainedUnacknowledgedEvidence = false
