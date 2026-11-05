@@ -500,25 +500,51 @@ nonisolated struct SprayGuidedFlow: Sendable {
     /// Built only by `SprayCarrierVolumeCalculator`; the flow never does the
     /// arithmetic itself.
     var planningResolution: SprayPlanningResolution? {
-        guard var intent = inputs.planningIntent, supportsCanopySettings,
-              isCanopyAnswered, let dilute = volumeDecision?.recommendedLitresPerHectare else { return nil }
+        guard var intent = inputs.planningIntent, supportsCanopySettings else { return nil }
+        if intent.method == .byArea {
+            // By Area is an optional, descriptive pass setup. Its frozen rate
+            // must come from the SAME resolved carrier already used for mixing
+            // and chemical amounts. Requiring a canopy recommendation here
+            // independently blocked valid manually entered carrier jobs (and
+            // other direct-volume inputs) only AFTER Review Spray Mix opened.
+            //
+            // Do not back-calculate an invented rate from gross hectares or
+            // quietly drop the pass configuration. When a physical L/ha rate
+            // cannot be determined (e.g. 100 m basis without row spacing),
+            // keep the real safety gate and direct the operator to Carrier.
+            guard let existingCarrier = carrier,
+                  existingCarrier.totalLitres.isFinite, existingCarrier.totalLitres > 0,
+                  let appliedRate = existingCarrier.litresPerHectare,
+                  appliedRate.isFinite, appliedRate > 0 else { return nil }
+            intent.calibratedLitresPerHectare = appliedRate
+            guard let resolved = intent.resolve(
+                selectedAreaHa: geometry.grossAreaHectares,
+                physicalRowSpacingMetres: geometry.uniformRowSpacingMetres,
+                diluteLitresPerHectare: existingCarrier.diluteLitresPerHectare
+            ) else { return nil }
+            return SprayPlanningResolution(
+                intendedLitres: existingCarrier.totalLitres,
+                plannedAreaHa: resolved.plannedAreaHa,
+                litresPerHectare: appliedRate,
+                physicalRowLitresPer100m: resolved.physicalRowLitresPer100m,
+                controllerLitresPer100mTravel: resolved.controllerLitresPer100mTravel,
+                effectiveWorkingWidthMetres: resolved.effectiveWorkingWidthMetres,
+                concentrationFactor: existingCarrier.concentrationFactor
+            )
+        }
+        // Full Tank is not an executable spray workflow: retain its existing
+        // planning validation and explicit Start Trip restriction unchanged.
+        guard isCanopyAnswered,
+              let dilute = volumeDecision?.recommendedLitresPerHectare else { return nil }
         if intent.method == .fullTank {
             guard let tank = intent.intendedTankLitres, inputs.tankCapacityLitres.isFinite,
                   inputs.tankCapacityLitres > 0, tank <= inputs.tankCapacityLitres else { return nil }
         }
-        if intent.method == .byArea { intent.calibratedLitresPerHectare = volumeDecision?.actualLitresPerHectare }
-        guard let resolved = intent.resolve(selectedAreaHa: geometry.grossAreaHectares,
-                              physicalRowSpacingMetres: geometry.uniformRowSpacingMetres,
-                              diluteLitresPerHectare: dilute) else { return nil }
-        if intent.method == .byArea, let existingCarrier = carrier {
-            return SprayPlanningResolution(intendedLitres: existingCarrier.totalLitres,
-                plannedAreaHa: resolved.plannedAreaHa, litresPerHectare: resolved.litresPerHectare,
-                physicalRowLitresPer100m: resolved.physicalRowLitresPer100m,
-                controllerLitresPer100mTravel: resolved.controllerLitresPer100mTravel,
-                effectiveWorkingWidthMetres: resolved.effectiveWorkingWidthMetres,
-                concentrationFactor: existingCarrier.concentrationFactor)
-        }
-        return resolved
+        return intent.resolve(
+            selectedAreaHa: geometry.grossAreaHectares,
+            physicalRowSpacingMetres: geometry.uniformRowSpacingMetres,
+            diluteLitresPerHectare: dilute
+        )
     }
 
     var operationalBlocker: String? {
