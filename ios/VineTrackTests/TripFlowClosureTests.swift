@@ -23,6 +23,11 @@ final class TripFlowClosureTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
+    private func state(_ s: MigratedDataStore, _ t: TripTrackingService) -> String {
+        let trips = s.trips.map { "id=\($0.id.uuidString.prefix(8)) active=\($0.isActive) ended=\($0.endTime != nil) sameVineyard=\($0.vineyardId == s.selectedVineyardId) paused=\($0.isPaused)" }
+        return "owner=\(s.deviceActiveTripId?.uuidString.prefix(8) ?? "nil") isOwner=\(s.isDeviceTripOwner) selected=\(s.selectedVineyardId?.uuidString.prefix(8) ?? "nil") trips=\(trips) activeTrip=\(t.activeTrip != nil) tracking=\(t.isTracking) error=\(t.errorMessage ?? "-")"
+    }
+
     private func makeActiveTrip() -> (MigratedDataStore, TripTrackingService, Trip) {
         let vineyard = UUID()
         let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
@@ -32,6 +37,7 @@ final class TripFlowClosureTests: XCTestCase {
         store.claimDeviceTrip(trip.id)
         let tracking = TripTrackingService()
         tracking.configure(store: store, locationService: LocationService())
+        XCTAssertNotNil(tracking.activeTrip, "after configure: " + state(store, tracking))
         return (store, tracking, trip)
     }
 
@@ -63,8 +69,9 @@ final class TripFlowClosureTests: XCTestCase {
     }
 
     func testPauseAndResumeArePersistedImmediately() async throws {
-        let (_, tracking, trip) = makeActiveTrip()
+        let (store, tracking, trip) = makeActiveTrip()
         tracking.pauseTrip()
+        XCTAssertEqual(store.trips.first { $0.id == trip.id }?.isPaused, true, "after pause: " + state(store, tracking))
         XCTAssertEqual(persisted(trip.id, vineyard: trip.vineyardId)?.isPaused, true)
         XCTAssertEqual(persisted(trip.id, vineyard: trip.vineyardId)?.pauseTimestamps.count, 1)
         tracking.resumeTrip()
@@ -120,6 +127,7 @@ final class TripFlowClosureTests: XCTestCase {
         store.claimDeviceTrip(trip.id)
         let tracking = TripTrackingService()
         tracking.configure(store: store, locationService: LocationService())
+        XCTAssertNotNil(tracking.activeTrip, "after configure: " + state(store, tracking))
         return (store, tracking, trip)
     }
 
@@ -179,7 +187,8 @@ final class TripFlowClosureTests: XCTestCase {
     }
 
     func testEndTripClearsLiveStateForTheNextTrip() async throws {
-        let (_, tracking, _) = makeActiveTrip()
+        let (store, tracking, _) = makeActiveTrip()
+        XCTAssertNotNil(tracking.activeTrip, "before end: " + state(store, tracking))
         tracking.currentDistance = 120
         tracking.currentPaddockName = "Block A"
         tracking.currentRowNumber = 4.5
