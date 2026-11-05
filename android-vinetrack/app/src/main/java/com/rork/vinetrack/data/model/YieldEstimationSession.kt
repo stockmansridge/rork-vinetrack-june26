@@ -44,6 +44,8 @@ data class SampleSite(
     val longitude: Double,
     val siteIndex: Int,
     val bunchCountEntry: BunchCountEntry? = null,
+    val yieldRowReference: String? = null,
+    val yieldPanelReference: String? = null,
 ) {
     val isRecorded: Boolean get() = bunchCountEntry != null
 }
