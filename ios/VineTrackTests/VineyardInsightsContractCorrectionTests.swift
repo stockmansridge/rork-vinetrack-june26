@@ -25,6 +25,29 @@ struct VineyardInsightsContractCorrectionTests {
         #expect(row.linked_growth_record_id?.uuidString == "00000000-0000-0000-0000-000000000005")
     }
 
+    @Test("upsert_vintage_note returns a scalar row, not a JSON array")
+    func noteUpsertScalarResponse() throws {
+        // SQL RETURNS vintage_notes; RPC serialises one row as a JSON object.
+        let json = """
+        {
+          "id": "00000000-0000-0000-0000-000000000011",
+          "vineyard_id": "00000000-0000-0000-0000-000000000012",
+          "note_date": "2026-11-05",
+          "vintage_year": 2027,
+          "note_type_id": null,
+          "note_type_label": "Frost",
+          "notes": "Test observation",
+          "sync_version": 1
+        }
+        """
+        let row = try JSONDecoder().decode(
+            VineyardInsightsSyncRepository.NoteRow.self, from: Data(json.utf8)
+        )
+        #expect(row.vintage_year == 2027)
+        #expect(row.note_type_label == "Frost")
+        #expect(row.id.uuidString == "00000000-0000-0000-0000-000000000011")
+    }
+
     @Test("Custom note type owns a stable UUID")
     func customTypeIdentity() {
         let suite = "insights-contract-\(UUID().uuidString)"

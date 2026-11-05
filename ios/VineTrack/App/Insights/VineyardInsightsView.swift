@@ -283,7 +283,7 @@ struct ScoutWorkspaceView: View {
                     Button { prepareObservation() } label: {
                         Text("Make observation").frame(maxWidth: .infinity, minHeight: 48)
                     }
-                    .buttonStyle(.borderedProminent).tint(VineyardTheme.leafGreen)
+                    .buttonStyle(.borderedProminent).tint(Color.blue)
                     .disabled(showsBlockSelection || creatingStop)
                     ScoutWorkspaceMap(visit: nil, selectedBlockID: $selectedMapBlockID)
                         .listRowInsets(EdgeInsets())
@@ -430,7 +430,7 @@ struct ScoutWorkspaceView: View {
                         Text(block.varietyAllocations.compactMap(\.name).joined(separator: ", "))
                             .foregroundStyle(.secondary)
                         Button("Yes, continue") { beginObservation() }
-                            .buttonStyle(.borderedProminent).tint(VineyardTheme.leafGreen)
+                            .buttonStyle(.borderedProminent).tint(Color.blue)
                             .disabled(creatingStop)
                         Button("Choose another block") {
                             self.detectedBlockID = nil; selectedMapBlockID = nil; observationFix = nil
@@ -458,13 +458,19 @@ struct ScoutWorkspaceView: View {
                             }
                         }
                     }
-                    Button(blockCorrectionStopID == nil ? "Confirm block and continue" : "Save block correction") {
+                    Button {
                         if let stopID = blockCorrectionStopID, let visit = openVisit, let blockID = selectedMapBlockID {
                             if insights.correctStopBlock(visitID: visit.id, stopID: stopID, paddockID: blockID) {
                                 cancelBlockSelection()
                             } else { observationError = "The block correction could not be saved. Retry; canonical linked evidence cannot be moved." }
                         } else { beginObservation() }
-                    }.disabled(selectedMapBlockID == nil || creatingStop)
+                    } label: {
+                        Text(blockCorrectionStopID == nil ? "Confirm block and continue" : "Save block correction")
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.blue)
+                    .disabled(selectedMapBlockID == nil || creatingStop)
                     if let observationError { Text(observationError).foregroundStyle(.red) }
                 }.navigationTitle("Select block")
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { cancelBlockSelection() } } }
@@ -617,7 +623,7 @@ struct ScoutWorkspaceView: View {
                     Button { prepareObservation() } label: {
                         Text("Make observation").frame(maxWidth: .infinity, minHeight: 48)
                     }
-                    .buttonStyle(.borderedProminent).tint(VineyardTheme.leafGreen)
+                    .buttonStyle(.borderedProminent).tint(Color.blue)
                     .disabled(showsBlockSelection || creatingStop)
                 }
                 ScoutWorkspaceMap(visit: visit, selectedBlockID: $selectedMapBlockID)

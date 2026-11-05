@@ -711,11 +711,13 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
 
     func upsertNote(_ params: UpsertNoteParams) async throws -> NoteRow? {
         try requireConfigured()
-        let rows: [NoteRow] = try await provider.client
+        // SQL upsert_vintage_note RETURNS vintage_notes (one composite row).
+        // The old array decoder failed after the server committed the note.
+        let row: NoteRow = try await provider.client
             .rpc("upsert_vintage_note", params: params)
             .execute()
             .value
-        return rows.first
+        return row
     }
 
     func hardDeleteNote(

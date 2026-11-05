@@ -327,7 +327,7 @@ private fun FertCalculatorTab(
                                         modifier = Modifier
                                             .weight(1f)
                                             .clip(CircleShape)
-                                            .background(if (isOn) VineColors.Primary else vine.cardBorder.copy(alpha = 0.5f))
+                                            .background(if (isOn) VineColors.Primary else vine.appBackground)
                                             .clickable {
                                                 selectedPaddockIds = if (isOn) selectedPaddockIds - paddock.id else selectedPaddockIds + paddock.id
                                                 syncFromBlocks(selectedPaddockIds)
@@ -351,8 +351,16 @@ private fun FertCalculatorTab(
                     } else if (selectedBlocks.isNotEmpty()) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf(FertiliserVineCounts.ACTUAL, FertiliserVineCounts.ASSUMED_FULL).forEach { basis ->
-                                OutlinedButton(onClick = { countBasis = basis }, modifier = Modifier.weight(1f)) {
-                                    Text(FertiliserVineCounts.label(basis), fontWeight = if (countBasis == basis) FontWeight.Bold else FontWeight.Normal)
+                                val isSelected = countBasis == basis
+                                OutlinedButton(
+                                    onClick = { countBasis = basis },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = if (isSelected) VineColors.Primary else vine.appBackground,
+                                        contentColor = if (isSelected) Color.White else vine.textPrimary,
+                                    ),
+                                ) {
+                                    Text(FertiliserVineCounts.label(basis), fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
                                 }
                             }
                         }
