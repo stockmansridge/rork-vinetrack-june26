@@ -4,6 +4,12 @@ import XCTest
 
 /// Trip start → end closure: every open item (pause, fill timer, tank) is
 /// closed on the saved record, and engine-hour readings round-trip.
+///
+/// Tests are `async` on purpose: with this project's MainActor default
+/// isolation, Swift 6.3 back-deployed isolated deinit (iOS 18 target) aborts
+/// with "pointer being freed was not allocated" in TaskLocal::StopLookupScope
+/// when a MainActor object is released inside a synchronous XCTest method.
+/// Async tests run inside a Task and avoid that runtime path.
 @MainActor
 final class TripFlowClosureTests: XCTestCase {
     private var directory: URL!
@@ -36,7 +42,7 @@ final class TripFlowClosureTests: XCTestCase {
         return reloaded.trips.first { $0.id == id }
     }
 
-    func testEndingWhilePausedSavesAClosedTripAndKeepsPausedTimeExcluded() throws {
+    func testEndingWhilePausedSavesAClosedTripAndKeepsPausedTimeExcluded() async throws {
         let (store, tracking, trip) = makeActiveTrip()
         tracking.pauseTrip()
         XCTAssertEqual(store.trips.first { $0.id == trip.id }?.isPaused, true)
@@ -56,7 +62,7 @@ final class TripFlowClosureTests: XCTestCase {
         XCTAssertFalse(tracking.isPaused)
     }
 
-    func testPauseAndResumeArePersistedImmediately() throws {
+    func testPauseAndResumeArePersistedImmediately() async throws {
         let (_, tracking, trip) = makeActiveTrip()
         tracking.pauseTrip()
         XCTAssertEqual(persisted(trip.id, vineyard: trip.vineyardId)?.isPaused, true)
@@ -66,7 +72,7 @@ final class TripFlowClosureTests: XCTestCase {
         XCTAssertEqual(persisted(trip.id, vineyard: trip.vineyardId)?.resumeTimestamps.count, 1)
     }
 
-    func testRunningFillBlocksPlainEndAndStopFillAndEndClosesItFirst() throws {
+    func testRunningFillBlocksPlainEndAndStopFillAndEndClosesItFirst() async throws {
         let (_, tracking, trip) = makeActiveTrip()
         tracking.startFillTimer()
         XCTAssertEqual(persisted(trip.id, vineyard: trip.vineyardId)?.isFillingTank, true)
@@ -86,7 +92,7 @@ final class TripFlowClosureTests: XCTestCase {
                        "No fill timer may be left open on an ended trip")
     }
 
-    func testManualCorrectionsAreSavedOnTheEndedTrip() throws {
+    func testManualCorrectionsAreSavedOnTheEndedTrip() async throws {
         let (_, tracking, trip) = makeActiveTrip()
         tracking.recordManualCorrection("end_review_finalised")
         XCTAssertEqual(tracking.endTrip(), .ended)
@@ -94,7 +100,7 @@ final class TripFlowClosureTests: XCTestCase {
         XCTAssertTrue(saved.manualCorrectionEvents.contains { $0.hasSuffix("end_review_finalised") })
     }
 
-    func testReviewPreviewNeverChangesTheLiveTrip() throws {
+    func testReviewPreviewNeverChangesTheLiveTrip() async throws {
         let (store, tracking, trip) = makeActiveTrip()
         let before = try XCTUnwrap(store.trips.first { $0.id == trip.id })
         let diskBefore = persisted(trip.id, vineyard: trip.vineyardId)
@@ -117,7 +123,7 @@ final class TripFlowClosureTests: XCTestCase {
         return (store, tracking, trip)
     }
 
-    func testEndingWithARunningTankFinishesTheTankThenEndsTheTrip() throws {
+    func testEndingWithARunningTankFinishesTheTankThenEndsTheTrip() async throws {
         let (store, tracking, trip) = makeActiveTrip { trip in
             trip.tankSessions = [
                 TankSession(tankNumber: 1, startTime: Date().addingTimeInterval(-3600),
@@ -139,7 +145,7 @@ final class TripFlowClosureTests: XCTestCase {
         XCTAssertNil(store.deviceActiveTripId)
     }
 
-    func testEndingWithAnOpenTankWhoseActivePointerWasLostStillFinishesIt() throws {
+    func testEndingWithAnOpenTankWhoseActivePointerWasLostStillFinishesIt() async throws {
         let (_, tracking, trip) = makeActiveTrip { trip in
             trip.tankSessions = [TankSession(tankNumber: 1, startTime: Date().addingTimeInterval(-600), startRow: 2.5)]
             trip.activeTankNumber = nil
@@ -152,7 +158,7 @@ final class TripFlowClosureTests: XCTestCase {
         XCTAssertNil(saved.activeTankNumber)
     }
 
-    func testServerEndedTripStopsTrackingAndClosesItOnTheDevice() throws {
+    func testServerEndedTripStopsTrackingAndClosesItOnTheDevice() async throws {
         let (store, tracking, trip) = makeActiveTrip()
         tracking.currentDistance = 250
         tracking.currentPaddockName = "Block B"
@@ -172,7 +178,7 @@ final class TripFlowClosureTests: XCTestCase {
         XCTAssertNotNil(saved.endTime)
     }
 
-    func testEndTripClearsLiveStateForTheNextTrip() throws {
+    func testEndTripClearsLiveStateForTheNextTrip() async throws {
         let (_, tracking, _) = makeActiveTrip()
         tracking.currentDistance = 120
         tracking.currentPaddockName = "Block A"
