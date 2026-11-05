@@ -167,7 +167,7 @@ class YieldSamplingSiteRepository(private val session: SessionStore) {
             id = UUID.randomUUID().toString(),
             vineyardId = vineyard, paddockId = paddock,
             setKey = confirmed?.setKey ?: UUID.randomUUID().toString(),
-            version = (previous.maxOfOrNull { it.version } ?: 0) + 1,
+            version = if (confirmed == null) 1 else (previous.filter { it.setKey == confirmed.setKey }.maxOfOrNull { it.version } ?: 0) + 1,
             name = confirmed?.name ?: "Permanent Yield Sampling Locations",
         )
         val t = token()
