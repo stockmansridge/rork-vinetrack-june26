@@ -142,7 +142,7 @@ private struct PermanentItemPilotRepository {
             .select()
             .eq("vineyard_id", value: op.p_vineyard_id.uuidString.lowercased())
             .eq("id", value: op.p_item_id.uuidString.lowercased())
-            .eq("server_revision", value: receipt.serverRevision)
+            .eq("server_revision", value: String(receipt.serverRevision))
             .execute().value
         guard let row = verified.first, verified.count == 1,
               row.id == op.p_item_id,

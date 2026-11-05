@@ -1,0 +1,134 @@
+name: Issue 53 Permanent Items System Admin native validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/VineTrack/App/PermanentItemsAdminPilotView.swift'
+      - 'ios/VineTrack/App/NewMainTabView.swift'
+      - 'ios/VineTrackTests/PermanentItemsPilotPolicyTests.swift'
+      - 'ios/VineTrack.xcodeproj/project.pbxproj'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PermanentItemsPilotRepository.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/PermanentItemsAdminPilotScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/HomeDashboard.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/PermanentItemPilotPolicyTest.kt'
+      - 'android-vinetrack/app/build.gradle.kts'
+      - '.github/workflows/issue53-permanent-items-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue53-permanent-items-native-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    name: iOS 3.2.0 compile and fixture/Trip safety tests
+    runs-on: macos-15
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Pin source SHA and Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > "$RUNNER_TEMP/issue53-source-sha.txt"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          XCODE_ROOT="/Applications/Xcode_26.3.app/Contents/Developer"
+          test -x "$XCODE_ROOT/usr/bin/xcodebuild" || {
+            echo "::error::Xcode 26.3 unavailable; build gate cannot be evaluated."
+            exit 2
+          }
+          echo "DEVELOPER_DIR=$XCODE_ROOT" >> "$GITHUB_ENV"
+      - name: Select iPhone simulator
+        id: sim
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIM=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; a=[x["udid"] for k,v in d.items() if "iOS" in k for x in v if x.get("isAvailable",False) and "iPhone" in x.get("name","")]; print(a[0] if a else "")')
+          test -n "$SIM"
+          echo "id=$SIM" >> "$GITHUB_OUTPUT"
+      - name: Compile all iOS sources and run isolated pilot and Trip safety tests
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project ios/VineTrack.xcodeproj -scheme VineTrack -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.id }}" \
+            -resultBundlePath "$RUNNER_TEMP/Issue53PermanentItems.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:VineTrackTests/PermanentItemsPilotPolicyTests \
+            -only-testing:VineTrackTests/TripQueuedUploadScopeTests \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/issue53-permanent-items-ios.log"
+      - name: Preserve source and native receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue53-ios-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/Issue53PermanentItems.xcresult
+            ${{ runner.temp }}/issue53-permanent-items-ios.log
+            ${{ runner.temp }}/issue53-source-sha.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  android:
+    name: Android 3.2.0 compile and fixture policy tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install SDK 36 with current command-line tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0"
+      - name: Pin source SHA and supply CI-only generated config
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          CONFIG=android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt
+          if [ ! -f "$CONFIG" ]; then
+            cat > "$CONFIG" <<'KOTLIN'
+          package com.rork.vinetrack
+          object Config {
+              val allValues: Map<String, String> = emptyMap()
+          }
+          KOTLIN
+          fi
+      - name: Compile all Android sources and run isolated pilot and map safety tests
+        working-directory: android-vinetrack
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace :app:compileDebugKotlin :app:testDebugUnitTest \
+            --tests "com.rork.vinetrack.data.PermanentItemPilotPolicyTest" \
+            --tests "com.rork.vinetrack.data.MainSurfaceRestorationTest" \
+            --tests "com.rork.vinetrack.data.PinsMapCurrentLocationRegressionTest"
+      - name: Preserve native test receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue53-android-${{ github.sha }}
+          path: |
+            android-vinetrack/app/build/test-results/testDebugUnitTest/
+            android-vinetrack/app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 14
