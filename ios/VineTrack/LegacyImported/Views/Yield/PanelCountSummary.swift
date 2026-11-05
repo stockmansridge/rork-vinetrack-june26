@@ -12,7 +12,7 @@ struct PanelCountSummary: View {
         }
         return Dictionary(grouping: recorded, by: { $0.0 })
             .map { (_, samples) in
-                (name: samples.first?.1 ?? "Block", measurements: samples.map(\.2))
+                (name: samples.first?.1 ?? "Block", measurements: samples.map { $0.2 })
             }
             .sorted { $0.name < $1.name }
     }
