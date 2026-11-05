@@ -294,6 +294,56 @@ struct PersistencePerformanceTests {
         #expect(PersistenceDataset.classify("vinetrack_saved_spray_presets") == .sprayPresets)
     }
 
+    @Test func liveTripGPSWritesReuseExactSavedSnapshotAndStillObserveExternalDiskChanges() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let repository = TripRepository(persistence: persistence)
+        let vineyardId = UUID()
+        let started = Date(timeIntervalSince1970: 1_700_000_000)
+        var trip = Trip(
+            vineyardId: vineyardId,
+            startTime: started,
+            pathPoints: (0..<3_000).map {
+                CoordinatePoint(latitude: -33.15 + Double($0) * 0.0000001, longitude: 148.86)
+            },
+            isActive: true,
+            tankSessions: [TankSession(tankNumber: 1, startTime: started)],
+            activeTankNumber: 1,
+            totalTanks: 2
+        )
+        var measurements: [PersistenceMeasurement] = []
+        persistence.onPersistenceMeasurementForTesting = { measurements.append($0) }
+        repository.saveSlice([trip], for: vineyardId)
+
+        for i in 0..<6 {
+            let loaded = repository.loadAll()
+            #expect(loaded == [trip])
+            #expect(measurements.last?.operation == .read)
+            #expect(measurements.last?.reusedDecode == true)
+            #expect(measurements.last?.codecMilliseconds == 0)
+            trip.pathPoints.append(
+                CoordinatePoint(latitude: -33.14 + Double(i) * 0.000001, longitude: 148.87)
+            )
+            repository.saveSlice([trip], for: vineyardId)
+        }
+
+        // Every point remains on disk even after restarting; the optimisation
+        // memoizes only the last successfully persisted exact snapshot.
+        let afterRestart = TripRepository(persistence: PersistenceStore(directory: directory))
+        #expect(afterRestart.loadAll() == [trip])
+
+        // Another writer may change the disk behind this instance's memo.
+        // Its next read must observe the new bytes, not an old in-memory Trip.
+        var external = trip
+        external.isPaused = true
+        try PersistenceStore(directory: directory).saveOrThrow(
+            [external], key: TripRepository.storageKey
+        )
+        #expect(repository.loadAll() == [external])
+        #expect(measurements.last?.reusedDecode == false)
+    }
+
     @Test func largeTripDecodePreparationReusesExactBytesAndPreservesRouteTanksAndOwnership() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
