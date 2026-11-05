@@ -1295,6 +1295,10 @@ final class TripSyncService {
         for id in Array(dirty.keys) where retryThrottle.isCoolingDown(id, now: sweepStartedAt) {
             dirty.removeValue(forKey: id)
         }
+        // The original queued revision is immutable evidence. If an independent
+        // server Tank End is incorporated before uploading, use the NEW durable
+        // local revision for that projection, not the stale preflight timestamp.
+        var uploadRevisions = dirty
         if !dirty.isEmpty {
             // An admin end wins over an offline active snapshot regardless of its
             // client timestamp. Read before replay; do not upload that snapshot.
@@ -1464,9 +1468,25 @@ final class TripSyncService {
                     }
                 }
                 if let remote = serverTrips.first(where: { $0.id == tripId })?.toTrip(), trip.isActive {
-                    guard let preserved = TankPathAttribution.mergingRecordedPaths(local: trip, remote: remote) else {
-                        skipped.append((tripId, "Tank session identity conflicts; retained for review."))
+                    // A Portal administrator may have ended the current tank
+                    // while this phone was offline. Accept the server End on the
+                    // SAME session before any queued active snapshot is replayed.
+                    // A mismatch is protected, never silently overwritten.
+                    guard let accepted = TankPathAttribution.adoptingServerTankEnds(
+                        local: trip, remote: remote
+                    ), let preserved = TankPathAttribution.mergingRecordedPaths(
+                        local: accepted, remote: remote
+                    ) else {
+                        skipped.append((tripId, "Server tank end differs from the retained device session; upload held for review."))
+                        metadata.markUpsertsFailed([tripId])
                         continue
+                    }
+                    if preserved != trip {
+                        // This is a durable local state change, not an upload ACK.
+                        // The source GPS, actual chemicals and pending queue
+                        // remain intact. Future UI sees the server-ended tank.
+                        try store.updateTripOrThrow(preserved)
+                        uploadRevisions[tripId] = metadata.pendingUpserts[tripId] ?? Date()
                     }
                     trip = preserved
                 }
@@ -1483,14 +1503,16 @@ final class TripSyncService {
                     skipped.append((tripId, TankDependencyVerification.requiredSessionMissing))
                     continue
                 }
-                payloads.append(BackendTrip.upsert(from: trip, createdBy: createdBy, clientUpdatedAt: ts))
+                payloads.append(BackendTrip.upsert(
+                    from: trip, createdBy: createdBy, clientUpdatedAt: uploadRevisions[tripId] ?? ts
+                ))
                 pushedIds.append(tripId)
             }
             let result = await SyncQueuePush.run(
                 entity: "Trips",
                 ids: pushedIds,
                 payloads: payloads,
-                queuedAt: dirty,
+                queuedAt: uploadRevisions,
                 vineyardId: vineyardId
             ) { payloads in
                 do { try await repository.upsertTrips(payloads) }
@@ -1835,6 +1857,35 @@ final class TripSyncService {
         let local = store.trips.first { $0.id == mapped.id }
             ?? store.deviceOwnedTrip.flatMap { $0.id == mapped.id ? $0 : nil }
         var reconciled = ActiveTripPathReconciler.reconcile(local: local, remote: mapped)
+        // When only End Tank happened on the Portal, the Trip stays active.
+        // Adopt the server's ended timestamps without replacing live local GPS,
+        // spray evidence or pending writes. This also works when the device had
+        // no dirty Trip at the instant of the remote pull.
+        if !serverCompleted, let local, local.isActive, mapped.isActive,
+           let serverTankEnd = TankPathAttribution.adoptingServerTankEnds(
+               local: local, remote: mapped
+           ), serverTankEnd != local {
+            guard let merged = TankPathAttribution.mergingRecordedPaths(
+                local: serverTankEnd, remote: mapped
+            ) else {
+                receiptReconciliationHolds[backendTrip.id] = "TRIP_SERVER_TANK_END_IDENTITY_CONFLICT"
+                metadata.markUpsertsFailed([backendTrip.id])
+                syncStatus = .failure("A server-ended tank conflicts with retained local tank evidence. Original data is protected.")
+                return
+            }
+            reconciled.tankSessions = merged.tankSessions
+            reconciled.activeTankNumber = merged.activeTankNumber
+            if !ActiveTripPathReconciler.containsRoute(local.pathPoints, in: mapped.pathPoints) {
+                reconciled.pathPoints = local.pathPoints
+                reconciled.totalDistance = local.totalDistance
+            }
+            if local.completedPaths.contains(where: { !mapped.completedPaths.contains($0) }) {
+                reconciled.completedPaths = local.completedPaths
+            }
+            if local.skippedPaths.contains(where: { !mapped.skippedPaths.contains($0) }) {
+                reconciled.skippedPaths = local.skippedPaths
+            }
+        }
         var retainedUnacknowledgedEvidence = false
         if serverCompleted, let local {
             // Count is not inclusion: retain an equal/shorter divergent local branch too.
@@ -1843,7 +1894,13 @@ final class TripSyncService {
                 reconciled.pathPoints = local.pathPoints
                 reconciled.totalDistance = local.totalDistance
             }
-            for session in local.tankSessions {
+            // A matching server End Tank is authoritative for its end time,
+            // even when the offline phone still has that session open. Never
+            // adopt an unverified session ID, number or start time.
+            let deviceSessions = TankPathAttribution.adoptingServerTankEnds(
+                local: local, remote: mapped
+            )?.tankSessions ?? local.tankSessions
+            for session in deviceSessions {
                 if let index = reconciled.tankSessions.firstIndex(where: { $0.id == session.id }) {
                     let serverSession = reconciled.tankSessions[index]
                     let matches = local.coverageBasis == .legacy && mapped.coverageBasis == .legacy
