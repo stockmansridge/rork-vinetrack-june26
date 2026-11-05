@@ -124,7 +124,6 @@ import java.util.TimeZone
 import com.rork.vinetrack.data.HomePrefsStore
 import com.rork.vinetrack.data.OperationalToolLayoutResolver
 import com.rork.vinetrack.data.dashboardWorkedBlockIds
-import com.rork.vinetrack.data.PermanentItemsPilotRepository
 import com.rork.vinetrack.data.PermanentItemPilotPolicy
 import com.rork.vinetrack.data.MapPrefsStore
 import com.rork.vinetrack.data.SeasonWindow
@@ -237,23 +236,6 @@ private fun DashboardContent(
     onOpenPermanentItem: () -> Unit,
 ) {
     val context = LocalContext.current
-    var permanentItemsAccessible by remember(state.currentUserId, state.selectedVineyardId) {
-        mutableStateOf(false)
-    }
-    LaunchedEffect(state.currentUserId, state.selectedVineyardId) {
-        permanentItemsAccessible = false
-        val user = state.currentUserId
-        val selected = state.selectedVineyardId
-        if (PermanentItemPilotPolicy.eligible(user, selected) && selected != null) {
-            // The server authorizes each member for this exact vineyard.
-            val access = runCatching {
-                PermanentItemsPilotRepository(context).hasAccess(selected)
-            }.getOrDefault(false)
-            if (state.currentUserId == user && state.selectedVineyardId == selected) {
-                permanentItemsAccessible = access
-            }
-        }
-    }
     val wizardEnabled = remember { com.rork.vinetrack.data.SetupWizardStore(context).isEnabled() }
     val outboxIssue by vm.pendingSyncReadIssue.collectAsStateWithLifecycle()
     val evidenceIssue by vm.pinEvidenceReadIssue.collectAsStateWithLifecycle()
@@ -325,7 +307,11 @@ private fun DashboardContent(
                 onRepairs = { onOpenObservations("Repairs") },
                 onGrowth = { onOpenObservations("Growth") },
                 onAddPinAction = onOpenAddPinAction,
-                onPermanentItemAction = if (permanentItemsAccessible) onOpenPermanentItem else null,
+                // Always show the Home shortcut for an authenticated selected vineyard.
+                // Destination re-checks membership via Supabase before reading or mutating.
+                onPermanentItemAction = if (PermanentItemPilotPolicy.eligible(
+                    state.currentUserId, state.selectedVineyardId
+                )) onOpenPermanentItem else null,
             )
 
             OverviewSection(state, onOpenMap)
