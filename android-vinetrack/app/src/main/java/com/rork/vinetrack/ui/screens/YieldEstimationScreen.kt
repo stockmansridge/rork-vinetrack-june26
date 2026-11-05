@@ -449,7 +449,8 @@ private fun BunchCountTripHome(
 
                 if (draft != null) {
                     Text("Draft", color = vine.textSecondary)
-                    CurrentTripEstimateSummary(state, draft, detailed = false)
+                    if (draft.isPanelCount) PanelCountSummary(draft)
+                    else CurrentTripEstimateSummary(state, draft, detailed = false)
                 }
             }
 
@@ -1080,11 +1081,16 @@ private fun TripCompletionScreen(
             }
 
             // Per-block summary + bunch weight confirmation.
-            Text("Shared Master Bunch Weights · configure missing weights in the Portal", color = vine.textSecondary, fontSize = 13.sp)
-            CurrentTripEstimateSummary(state, session)
+            if (session.isPanelCount) {
+                PanelCountSummary(session)
+            } else {
+                Text("Shared Master Bunch Weights · configure missing weights in the Portal",
+                    color = vine.textSecondary, fontSize = 13.sp)
+                CurrentTripEstimateSummary(state, session)
+            }
 
-            // Step 12 — damage adjustment (presentation-time; base is preserved).
-            VineyardCard {
+            // Damage applies to a calculated estimate, not to raw panel evidence.
+            if (!session.isPanelCount) VineyardCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Apply recorded damage", color = vine.textPrimary, fontWeight = FontWeight.SemiBold)
@@ -1109,7 +1115,7 @@ private fun TripCompletionScreen(
             ) {
                 Icon(Icons.Filled.DoneAll, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Save Bunch Count Trip", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text("Save Yield Estimate Trip", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -1117,8 +1123,10 @@ private fun TripCompletionScreen(
     if (showSaveConfirm) {
         AlertDialog(
             onDismissRequest = { showSaveConfirm = false },
-            title = { Text("Save Bunch Count Trip?") },
-            text = { Text("This completes the trip as a dated observation. It becomes the latest estimate for its blocks; earlier trips stay in history. Counts and weights can no longer be edited.") },
+            title = { Text("Save Yield Estimate Trip?") },
+            text = { Text(if (session.isPanelCount)
+                "This locks the dated Panel Count observations. They stay separate from the current Yield Estimate until you explicitly select a validated source."
+                else "This completes the trip as a dated observation. It becomes the latest estimate for its blocks; earlier trips stay in history. Counts and weights can no longer be edited.") },
             confirmButton = {
                 TextButton(onClick = {
                     val completed = session.copy(
@@ -1163,7 +1171,7 @@ private fun CompletedTripScreen(
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
-                title = { Text(if (session.isQuadrantCount) "Quadrant Count" else "Bunch Count Trip") },
+                title = { Text(session.countMethodName + " · Yield Estimate Trip") },
                 navigationIcon = { BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
@@ -1190,7 +1198,8 @@ private fun CompletedTripScreen(
                 )
             }
 
-            CurrentTripEstimateSummary(state, session)
+            if (session.isPanelCount) PanelCountSummary(session)
+            else CurrentTripEstimateSummary(state, session)
 
             SamplePreviewMap(
                 blocks = blocks.filter { session.isPaddockSelected(it.id) },
@@ -1310,7 +1319,9 @@ private fun SamplePreviewMap(
                 Marker(
                     state = MarkerState(position = LatLng(site.latitude, site.longitude)),
                     title = "Sample ${site.siteIndex}",
-                    snippet = site.bunchCountEntry?.let { "${formatBunches(it.bunchesPerVine)} bunches/vine" } ?: "Tap to record",
+                    snippet = site.panelCountEntry?.let { "${it.measurement.totalBunches} bunches in panel" }
+                        ?: site.bunchCountEntry?.let { "${formatBunches(it.bunchesPerVine)} bunches/vine" }
+                        ?: "Tap to record",
                     icon = yieldSiteIcon(site.siteIndex, site.isRecorded, false),
                     onClick = {
                         onSiteTap(site)
