@@ -220,13 +220,43 @@ final class SupabaseYieldSamplingSitesRepository {
         }
     }
 
-    func removeDraftSite(_ site: YieldSamplingSiteRow, set: YieldSamplingSiteSetRow) async throws {
-        guard set.status == "draft", site.siteSetId == set.id else { throw CocoaError(.fileWriteNoPermission) }
-        try await provider.client.from("yield_sample_sites").delete()
-            .eq("id", value: site.id.uuidString).eq("site_set_id", value: set.id.uuidString).execute()
-        guard !(try await listSites(set)).contains(where: { $0.id == site.id }) else {
+    private nonisolated struct SiteDeletionReceipt: Decodable, Sendable {
+        let deleted_row_id: UUID
+        let site_set_id: UUID
+        let vineyard_id: UUID
+    }
+
+    /// Real DELETE, including confirmed locations for vineyard leadership.
+    /// The trigger records metadata only; geometry is physically removed.
+    func hardDeleteSite(_ site: YieldSamplingSiteRow, set: YieldSamplingSiteSetRow) async throws {
+        guard ["draft", "confirmed"].contains(set.status),
+              site.siteSetId == set.id, site.vineyardId == set.vineyardId,
+              site.paddockId == set.paddockId else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        let _: [SmallSiteId] = try await provider.client
+            .from("yield_sample_sites").delete()
+            .eq("id", value: site.id.uuidString)
+            .eq("site_set_id", value: set.id.uuidString)
+            .eq("vineyard_id", value: set.vineyardId.uuidString)
+            .select("id").execute().value
+        let receipts: [SiteDeletionReceipt] = try await provider.client
+            .from("yield_sample_site_deletion_receipts")
+            .select("deleted_row_id,site_set_id,vineyard_id")
+            .eq("deleted_row_id", value: site.id.uuidString)
+            .eq("site_set_id", value: set.id.uuidString)
+            .execute().value
+        guard receipts.count == 1,
+              receipts[0].deleted_row_id == site.id,
+              receipts[0].site_set_id == set.id,
+              receipts[0].vineyard_id == set.vineyardId,
+              !(try await listSites(set)).contains(where: { $0.id == site.id }) else {
             throw CocoaError(.fileWriteUnknown)
         }
+    }
+
+    private nonisolated struct SmallSiteId: Decodable, Sendable {
+        let id: UUID
     }
 
     private nonisolated struct ConfirmArgs: Encodable, Sendable {
