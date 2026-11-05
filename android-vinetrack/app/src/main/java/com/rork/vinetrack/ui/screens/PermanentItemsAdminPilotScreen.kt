@@ -149,6 +149,12 @@ fun PermanentItemsAdminPilotScreen(
                 val op = repository.operation(target, action, item, name, type,
                     latitude, longitude, blockId, notes)
                 var saved = repository.commit(op)
+                // The fixture is already committed even if the optional photo upload fails.
+                // Retain its server ID+revision so an operator retry is an UPDATE, never
+                // an accidental second CREATE.
+                if (state.selectedVineyardId == target && state.currentUserId == user) {
+                    selected = saved
+                }
                 // The row must already exist before a private photo may be uploaded.
                 if (submittedPhoto != null) {
                     val path = repository.uploadJpeg(target, saved.id, submittedPhoto)
@@ -166,9 +172,10 @@ fun PermanentItemsAdminPilotScreen(
                 }
             } catch (e: Exception) {
                 if (state.selectedVineyardId == target && state.currentUserId == user) {
-                    error = (e.message ?: "Unable to verify save") +
-                        ". Any unconfirmed operation is retained for retry."
                     pending = repository.pending(target) != null
+                    error = (e.message ?: "Unable to verify save") +
+                        (if (pending) " Retry the saved operation ID." else
+                            " The fixture may already be saved; review it before retrying the photo.")
                 }
             } finally { busy = false }
         }
