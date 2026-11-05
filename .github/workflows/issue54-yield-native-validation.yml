@@ -36,8 +36,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: issue54-yield-native-${{ github.sha }}
-  cancel-in-progress: false
+  # Keep only the newest validation of main: intermediate commits must not
+  # consume macOS runners or leave a backlog that delays device testing.
+  # Scoped to this workflow to avoid cancelling Trip/Sync or other CI gates.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ios:
