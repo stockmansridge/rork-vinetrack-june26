@@ -117,7 +117,7 @@ object YieldVintageReport {
         seasonStartMonth: Int,
         seasonStartDay: Int,
     ): YieldEstimationSession? = sessions
-        .filter { it.isCompleted }
+        .filter { it.isCompleted && !it.isPanelCount }
         .filter { sessionVintage(it, seasonStartMonth, seasonStartDay) == vintage }
         .filter { s -> s.sitesIn(paddockId).any { it.isRecorded } }
         .maxByOrNull { it.completedAt ?: it.createdAt }
@@ -367,7 +367,7 @@ object BunchCountTripLogic {
             if (sourceId == null) sourceId = source.id
             collected.addAll(
                 source.sitesIn(paddockId).sortedBy { it.siteIndex }.map {
-                    it.copy(bunchCountEntry = null)
+                    it.copy(bunchCountEntry = null, panelCountEntry = null)
                 },
             )
         }
