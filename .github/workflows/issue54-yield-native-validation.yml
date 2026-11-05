@@ -1,0 +1,130 @@
+name: Issue 54 Yield Sampling native parity validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/issue54-yield-native-validation.yml'
+      - 'ios/VineTrack/Backend/Repositories/SupabaseYieldSamplingSitesRepository.swift'
+      - 'ios/VineTrack/LegacyImported/Views/Yield/YieldPermanentSamplingLocationsView.swift'
+      - 'ios/VineTrack/LegacyImported/Views/Yield/YieldEstimationView.swift'
+      - 'ios/VineTrack/LegacyImported/Views/Yield/YieldEstimationViewModel.swift'
+      - 'ios/VineTrack/LegacyImported/Views/Yield/YieldSamplingNavigationView.swift'
+      - 'ios/VineTrack/LegacyImported/Models/YieldEstimationModels.swift'
+      - 'ios/VineTrackTests/PanelCountContractTests.swift'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/YieldSamplingSiteRepository.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldPermanentSamplingSitesScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldEstimationScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/YieldEstimationSession.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/PanelCountContractTest.kt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue54-yield-native-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    name: iOS simulator compile and yield contract tests
+    runs-on: macos-15
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Pin Xcode 26.3 and exact source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          XCODE_ROOT="/Applications/Xcode_26.3.app/Contents/Developer"
+          test -x "$XCODE_ROOT/usr/bin/xcodebuild" || { echo "Xcode 26.3 unavailable"; exit 2; }
+          echo "DEVELOPER_DIR=$XCODE_ROOT" >> "$GITHUB_ENV"
+          echo "${{ github.sha }}" > "$RUNNER_TEMP/issue54-ios-sha.txt"
+      - name: Select available iOS simulator
+        id: sim
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIM=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; a=json.load(sys.stdin)["devices"]; d=[x["udid"] for k,v in a.items() if "iOS" in k for x in v if x.get("isAvailable",False) and "iPhone" in x.get("name","")]; print(d[0] if d else "")')
+          test -n "$SIM"
+          echo "id=$SIM" >> "$GITHUB_OUTPUT"
+      - name: Compile and run Issue 54 plus legacy yield tests
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project ios/VineTrack.xcodeproj -scheme VineTrack -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.id }}" \
+            -resultBundlePath "$RUNNER_TEMP/Issue54Yield.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:VineTrackTests/PanelCountContractTests \
+            -only-testing:VineTrackTests/QuadrantCountNativeTests \
+            -only-testing:VineTrackTests/YieldCompletionPersistenceTests \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/issue54-ios.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue54-ios-yield-native
+          path: |
+            ${{ runner.temp }}/Issue54Yield.xcresult
+            ${{ runner.temp }}/issue54-ios.log
+            ${{ runner.temp }}/issue54-ios-sha.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  android:
+    name: Android compile and yield contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK 36 and immutable source receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0"
+          CONFIG=android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt
+          if [ ! -f "$CONFIG" ]; then
+            cat > "$CONFIG" <<'KOTLIN'
+          package com.rork.vinetrack
+          object Config {
+              val allValues: Map<String, String> = emptyMap()
+          }
+          KOTLIN
+          fi
+          echo "${{ github.sha }}" > "$RUNNER_TEMP/issue54-android-sha.txt"
+      - name: Compile Android and run Issue 54 plus legacy yield tests
+        shell: bash
+        working-directory: android-vinetrack
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace :app:compileDebugKotlin :app:testDebugUnitTest \
+            --tests "com.rork.vinetrack.data.PanelCountContractTest" \
+            --tests "com.rork.vinetrack.data.YieldCompletionPersistenceTest" \
+            --tests "com.rork.vinetrack.data.YieldVintageReportTest"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue54-android-yield-native
+          path: |
+            android-vinetrack/app/build/test-results/testDebugUnitTest/
+            ${{ runner.temp }}/issue54-android-sha.txt
+          if-no-files-found: warn
+          retention-days: 14
