@@ -20,6 +20,8 @@ struct YieldPermanentSamplingLocationsView: View {
     @State private var statusText: String?
     @State private var showEditor = false
     @State private var showConfirm = false
+    @State private var fieldLocating = false
+    @State private var fieldLocationMessage: String?
     @State private var editingSite: YieldSamplingSiteRow?
     @State private var editCoordinate: CLLocationCoordinate2D?
     @State private var nameText = ""
@@ -49,6 +51,7 @@ struct YieldPermanentSamplingLocationsView: View {
                     if let block = selectedBlock {
                         MapReader { proxy in
                             Map(position: $mapPosition) {
+                                UserAnnotation()
                                 MapPolygon(coordinates: block.polygonPoints.map(\.coordinate))
                                     .foregroundStyle(Color.purple.opacity(0.16))
                                     .stroke(Color.purple, lineWidth: 2)
@@ -70,6 +73,10 @@ struct YieldPermanentSamplingLocationsView: View {
                                 }
                             }
                             .mapStyle(.hybrid)
+                            .mapControls {
+                                MapUserLocationButton()
+                                MapCompass()
+                            }
                             .onTapGesture(coordinateSpace: .local) { point in
                                 guard draft != nil, !busy,
                                       let coordinate = proxy.convert(point, from: .local) else { return }
@@ -106,30 +113,16 @@ struct YieldPermanentSamplingLocationsView: View {
                         .disabled(busy || selectedBlock == nil)
                     } else {
                         Button {
-                            locationService.requestPermission()
-                            locationService.startUpdating()
-                            let capture = locationService.freshLocation()
-                            guard case .fresh = capture.quality, let fix = capture.location else {
-                                errorText = "A fresh, accurate GPS fix is required. Check location permissions and accuracy, then try again."
-                                return
-                            }
-                            let matching = paddocks.filter {
-                                YieldSamplingSiteGeometry.contains(fix.coordinate, polygon: $0.polygonPoints)
-                            }
-                            guard matching.count == 1 else {
-                                errorText = "GPS location does not match one unambiguous mapped block. Select the correct block on the map and place the site manually."
-                                return
-                            }
-                            if matching[0].id != selectedBlockId {
-                                selectedBlockId = matching[0].id
-                                statusText = "Location belongs to \(matching[0].name). Selected that block; create or open its draft before placing a pin."
-                                return
-                            }
-                            openNewSite(at: fix.coordinate)
+                            Task { await captureFieldLocation() }
                         } label: {
-                            Label("Set Location in Field — Place Pin Here", systemImage: "location.fill")
+                            Label(fieldLocating ? "Locating…" : "Set Location in Field — Place Pin Here",
+                                  systemImage: "location.fill")
                         }
-                        .disabled(busy)
+                        .disabled(busy || fieldLocating)
+                        if let fieldLocationMessage {
+                            Text(fieldLocationMessage).font(.caption)
+                                .foregroundStyle(fieldLocating ? .secondary : .red)
+                        }
                         .accessibilityIdentifier("yield.sites.placeGPS")
                         ForEach(draftSites.sorted(by: { $0.siteNumber < $1.siteNumber })) { site in
                             HStack {
@@ -186,6 +179,12 @@ struct YieldPermanentSamplingLocationsView: View {
             .overlay { if busy { ProgressView("Checking server…").padding().background(.regularMaterial, in: .rect(cornerRadius: 14)) } }
             .task {
                 if selectedBlockId == nil { selectedBlockId = paddocks.first?.id }
+                // Request permission on this map so the native blue location
+                // annotation can appear without starting a Trip.
+                if locationService.authorizationStatus == .notDetermined {
+                    locationService.requestPermission()
+                }
+                locationService.startUpdating()
                 await reload()
             }
             .onChange(of: selectedBlockId) { _, _ in
@@ -230,6 +229,56 @@ struct YieldPermanentSamplingLocationsView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    /// Permission prompts are asynchronous. Wait for a fresh authorised fix
+    /// rather than trying the cache immediately after asking permission.
+    private func captureFieldLocation() async {
+        guard draft != nil, let selectedBlock else {
+            fieldLocationMessage = "Create or open a block draft before placing a field pin."
+            return
+        }
+        guard !fieldLocating else { return }
+        fieldLocating = true
+        defer { fieldLocating = false }
+        fieldLocationMessage = "Getting a fresh, accurate GPS location…"
+        locationService.requestPermission()
+        locationService.startUpdating()
+        var accepted: CLLocation?
+        for _ in 0..<30 {
+            if Task.isCancelled { return }
+            switch locationService.authorizationStatus {
+            case .denied, .restricted:
+                fieldLocationMessage = "Location access is denied. Enable Precise Location in iPhone Settings, or place the pin on the map."
+                return
+            default:
+                break
+            }
+            let captured = locationService.freshLocation()
+            if case .fresh = captured.quality, let fix = captured.location {
+                accepted = fix
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(350))
+        }
+        guard let accepted else {
+            fieldLocationMessage = "No fresh accurate GPS fix yet. Check Location Services and Precise Location, then try again."
+            return
+        }
+        let matched = paddocks.filter {
+            YieldSamplingSiteGeometry.contains(accepted.coordinate, polygon: $0.polygonPoints)
+        }
+        guard matched.count == 1 else {
+            fieldLocationMessage = "The GPS position must match one mapped block. Use the map or move within the block."
+            return
+        }
+        guard matched[0].id == selectedBlock.id else {
+            selectedBlockId = matched[0].id
+            fieldLocationMessage = "GPS matched \(matched[0].name). Open that block’s draft and press Place Pin Here again."
+            return
+        }
+        fieldLocationMessage = nil
+        openNewSite(at: accepted.coordinate)
     }
 
     private func openNewSite(at coordinate: CLLocationCoordinate2D) {
