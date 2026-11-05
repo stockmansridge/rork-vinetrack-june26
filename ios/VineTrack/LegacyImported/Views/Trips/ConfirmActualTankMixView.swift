@@ -35,7 +35,7 @@ struct ConfirmActualTankMixView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Tank \(tank.tankNumber) of \(tankCount)")
                             .font(.headline)
-                        LabeledContent("Planned", value: fmt.formatVolume(litres: tank.waterVolume))
+                        LabeledContent("Planned", value: "\(SprayInitialTankInput.twoDecimalDisplay(fmt.volumeValue(litres: tank.waterVolume))) \(fmt.volumeUnitAbbreviation)")
                         actualInputRow(text: $waterText, unit: fmt.volumeUnitAbbreviation, accessibilityName: "Actual water")
                         difference(planned: fmt.volumeValue(litres: tank.waterVolume), actual: parsed(waterText), unit: fmt.volumeUnitAbbreviation)
                     }
@@ -46,7 +46,7 @@ struct ConfirmActualTankMixView: View {
                     ForEach(tank.chemicals) { chemical in
                         VStack(alignment: .leading, spacing: 8) {
                             Text(chemical.name.isEmpty ? "Unnamed chemical" : chemical.name).font(.headline)
-                            LabeledContent("Planned", value: "\(TankMixDetailsView.number(SprayInitialTankInput.plannedDisplayAmount(chemical))) \(chemical.unitLabel)")
+                            LabeledContent("Planned", value: "\(SprayInitialTankInput.twoDecimalDisplay(SprayInitialTankInput.plannedDisplayAmount(chemical))) \(chemical.unitLabel)")
                             actualInputRow(
                                 text: Binding(
                                     get: { chemicalTexts[chemical.id] ?? "" },
@@ -137,11 +137,14 @@ struct ConfirmActualTankMixView: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(VineyardTheme.olive)
             Spacer(minLength: 12)
-            TextField("0", text: text)
+            SpraySelectAllDecimalField(
+                text: text,
+                placeholder: "0",
+                accessibilityLabel: accessibilityName,
+                accessibilityIdentifier: "spray.tankActual.\(accessibilityName)",
+                alignment: .right
+            )
                 .disabled(retainedInitialAmounts != nil)
-                .keyboardType(.decimalPad)
-                .multilineTextAlignment(.trailing)
-                .font(.body.weight(.semibold).monospacedDigit())
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .frame(width: 120)
@@ -160,7 +163,7 @@ struct ConfirmActualTankMixView: View {
 
     @ViewBuilder private func difference(planned: Double, actual: Double?, unit: String) -> some View {
         if let actual, abs(actual - planned) > 0.000_000_1 {
-            Text("Difference: \(actual > planned ? "+" : "")\(TankMixDetailsView.number(actual - planned)) \(unit)")
+            Text("Difference: \(actual > planned ? "+" : "")\(SprayInitialTankInput.twoDecimalDisplay(actual - planned)) \(unit)")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
