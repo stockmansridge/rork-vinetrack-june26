@@ -304,7 +304,9 @@ final class PersistenceStore {
         // bytes, rejecting this memo whenever another writer changed the file.
         // Keep the original bytes and durable write/ACK contract unchanged.
         decodedSnapshots.removeValue(forKey: key)
-        retainSnapshot(value, bytes: data, key: key)
+        if key == TripRepository.storageKey {
+            retainSnapshot(value, bytes: data, key: key)
+        }
         measurement.succeeded = true
     }
 
