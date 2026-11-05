@@ -1627,6 +1627,13 @@ struct ActiveTripView: View {
     /// `trip.pathPoints` array is left untouched so trip history, export and
     /// sync still see every recorded point.
     private func refreshDisplayTrail() {
+        let measurement = PerformanceCapture.shared.beginComputation()
+        defer {
+            PerformanceCapture.shared.endComputation(
+                measurement, label: "Active Trip GPS trail preparation",
+                records: trailDiagFullCount
+            )
+        }
         let live = tracking.activeTrip ?? trip
         let points = live.pathPoints
         let segments = TrailDisplayProcessor.makeDisplayTrailSegments(
