@@ -122,8 +122,8 @@ struct SprayGuidedFlowTests {
         #expect(flow.operationalBlocker == nil)
         #expect(resolved.litresPerHectare == 600)
         #expect(resolved.intendedLitres == flow.plan.totalCarrierLitres)
-        #expect(resolved.physicalRowLitresPer100m == 19.2)
-        #expect(resolved.controllerLitresPer100mTravel == 19.2)
+        #expect(abs((resolved.physicalRowLitresPer100m ?? 0) - 19.2) < tolerance)
+        #expect(abs((resolved.controllerLitresPer100mTravel ?? 0) - 19.2) < tolerance)
         #expect(SprayRecord(applicationGeometry: try #require(flow.snapshot)).operationalPlanningBlocker == nil)
     }
 
@@ -144,7 +144,7 @@ struct SprayGuidedFlowTests {
         #expect(unresolved.carrier?.totalLitres == 6_250)
         #expect(unresolved.carrier?.litresPerHectare == nil)
         #expect(unresolved.planningResolution == nil)
-        #expect(unresolved.operationalBlocker != nil)
+        #expect(unresolved.operationalBlocker?.contains("row spacing") == true)
 
         inputs = completeInputs()
         inputs.planningIntent = SprayPlanningIntent(
