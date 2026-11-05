@@ -57,9 +57,10 @@ android {
         minSdk = 24
         targetSdk = 36
         testInstrumentationRunner = "com.rork.vinetrack.data.auth.CleanExitTestRunner"
-        // v3.1.9 — keep versionCode monotonically increasing for future releases.
-        versionCode = 12
-        versionName = "3.1.9"
+        // 3.2.0 System Admin pilot: higher than the last recorded Play internal build.
+        // Rork release exports may override this with a monotonically increasing code.
+        versionCode = 1794000000
+        versionName = "3.2.0"
 
         // No runtime/property override: live storage cutover needs separate approval.
         buildConfigField("boolean", "FIELD_STORAGE_ISOLATION_ACTIVATED", "false")

@@ -104,6 +104,8 @@ import com.rork.vinetrack.data.AlertsRepository
 import com.rork.vinetrack.data.HomePrefsStore
 import com.rork.vinetrack.data.OperationalToolLayoutResolver
 import com.rork.vinetrack.data.dashboardWorkedBlockIds
+import com.rork.vinetrack.data.PermanentItemsPilotRepository
+import com.rork.vinetrack.data.PermanentItemPilotPolicy
 import com.rork.vinetrack.data.MapPrefsStore
 import com.rork.vinetrack.data.SeasonWindow
 import com.rork.vinetrack.data.auth.SessionStore
@@ -171,6 +173,10 @@ fun HomeDashboard(
                     onOpenTool(ToolRoute.WeatherData)
                 },
             )
+            HomeOverlay.PermanentItem -> PermanentItemsAdminPilotScreen(
+                state = state,
+                onBack = { overlay = HomeOverlay.None },
+            )
             HomeOverlay.None -> DashboardContent(
                 vm = vm,
                 state = state,
@@ -182,6 +188,7 @@ fun HomeDashboard(
                 onOpenPinsList = onOpenPinsList,
                 onOpenMap = { overlay = HomeOverlay.Overview },
                 onOpenRain = { overlay = HomeOverlay.Rain },
+                onOpenPermanentItem = { overlay = HomeOverlay.PermanentItem },
             )
         }
     }
@@ -193,7 +200,7 @@ private object HomeScrollMemory {
 }
 
 /** Full-screen overlays reachable directly from the Home dashboard. */
-private enum class HomeOverlay { None, Map, Overview, Rain }
+private enum class HomeOverlay { None, Map, Overview, Rain, PermanentItem }
 
 @Composable
 private fun DashboardContent(
@@ -207,8 +214,22 @@ private fun DashboardContent(
     onOpenPinsList: () -> Unit,
     onOpenMap: () -> Unit,
     onOpenRain: () -> Unit,
+    onOpenPermanentItem: () -> Unit,
 ) {
     val context = LocalContext.current
+    var permanentPilotEnabled by remember(state.currentUserId, state.selectedVineyardId) { mutableStateOf(false) }
+    LaunchedEffect(state.currentUserId, state.selectedVineyardId, state.isSystemAdmin, state.currentRole) {
+        permanentPilotEnabled = false
+        val selected = state.selectedVineyardId
+        if (PermanentItemPilotPolicy.allowed(
+            state.isSystemAdmin, true, state.currentUserId, selected, state.currentRole
+        ) && selected != null) {
+            // Remote admin+flag check; failures remain hidden. The screen verifies again.
+            permanentPilotEnabled = runCatching {
+                PermanentItemsPilotRepository(context).pilotEnabled(selected)
+            }.getOrDefault(false)
+        }
+    }
     val wizardEnabled = remember { com.rork.vinetrack.data.SetupWizardStore(context).isEnabled() }
     val outboxIssue by vm.pendingSyncReadIssue.collectAsStateWithLifecycle()
     val evidenceIssue by vm.pinEvidenceReadIssue.collectAsStateWithLifecycle()
@@ -279,6 +300,7 @@ private fun DashboardContent(
                 onRepairs = { onOpenObservations("Repairs") },
                 onGrowth = { onOpenObservations("Growth") },
                 onAddPinAction = onOpenAddPinAction,
+                onPermanentItemAction = if (permanentPilotEnabled) onOpenPermanentItem else null,
             )
 
             OverviewSection(state, onOpenMap)
@@ -893,7 +915,13 @@ private fun WeatherCard(onClick: () -> Unit) {
 }
 
 @Composable
-internal fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onAddPinAction: () -> Unit, modifier: Modifier = Modifier) {
+internal fun QuickActionsSection(
+    onRepairs: () -> Unit,
+    onGrowth: () -> Unit,
+    onAddPinAction: () -> Unit,
+    onPermanentItemAction: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
     var showHelp by remember { mutableStateOf(false) }
 
     Column(
@@ -962,6 +990,31 @@ internal fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, on
                 )
             }
             Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
+        }
+        // Issue #53 — separate, admin-flagged property fixtures. Normal Pins are unaffected.
+        if (onPermanentItemAction != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Brush.linearGradient(listOf(VineColors.Indigo, VineColors.Primary)))
+                    .clickable(onClick = onPermanentItemAction)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                com.rork.vinetrack.ui.components.BrightToolIcon(
+                    icon = Icons.Filled.AddLocationAlt,
+                    colors = listOf(VineColors.Indigo, VineColors.Primary),
+                    size = 36.dp,
+                )
+                Column(Modifier.weight(1f)) {
+                    Text("Permanent Item", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    Text("System Admin pilot · fixed property assets", fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.85f))
+                }
+                Icon(Icons.Filled.ChevronRight, contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
+            }
         }
     }
 
