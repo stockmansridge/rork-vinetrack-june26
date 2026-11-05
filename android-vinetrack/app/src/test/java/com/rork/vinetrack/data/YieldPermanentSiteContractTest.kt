@@ -35,7 +35,8 @@ class YieldPermanentSiteContractTest {
             vineyardId = UUID.randomUUID().toString(),
             createdAt = "2026-11-05T04:00:00Z",
         )
-        val wire = Json.encodeToString(legacy).replace(Regex(",?\\\"siteSetVersions\\\":\\\\{\\\\}"), "")
+        val wire = Json.encodeToString(legacy)
+        assertFalse(wire.contains("siteSetVersions"))
         val decoded = Json.decodeFromString<YieldEstimationSession>(wire)
         assertTrue(decoded.siteSetVersions.isEmpty())
     }
