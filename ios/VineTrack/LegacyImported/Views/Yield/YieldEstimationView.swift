@@ -6,6 +6,13 @@ struct YieldEstimationView: View {
     @Environment(SystemAdminService.self) private var systemAdmin
     @State private var showCountMethod = false
     @State private var showPermanentSites = false
+    @State private var confirmedSiteSets: [UUID: YieldSamplingSiteSetRow] = [:]
+    @State private var confirmedSiteCounts: [UUID: Int] = [:]
+    @State private var savedLocationBlocks: Set<UUID> = []
+    @State private var siteSourcesLoading = false
+    @State private var siteRouteBusy = false
+    @State private var siteRouteError: String?
+    private let siteSetsRepository = SupabaseYieldSamplingSitesRepository()
     @Environment(\.accessControl) private var accessControl
     @Environment(NetworkMonitor.self) private var network
     @State private var viewModel = YieldEstimationViewModel()
@@ -75,6 +82,9 @@ struct YieldEstimationView: View {
             if let vineyardId = store.selectedVineyardId {
                 YieldPermanentSamplingLocationsView(vineyardId: vineyardId, paddocks: paddocks)
             }
+        }
+        .task(id: viewModel.selectedPaddockIds) {
+            if !tripStarted || !viewModel.isGenerated { await loadConfirmedSamplingSites() }
         }
         .task { if refreshSharedDefaults { await syncSamplingDefault() } }
         .modifier(YieldMasterRefresh(enabled: refreshSharedDefaults))
@@ -375,6 +385,7 @@ struct YieldEstimationView: View {
             VStack(spacing: 20) {
                 mapSection(height: 320)
                 blockSelectionSection
+                sourceSelectionSection
                 summarySection
                 generateButton
             }
@@ -673,6 +684,148 @@ struct YieldEstimationView: View {
         }
     }
 
+    // MARK: - Yield sampling route source (one decision per block)
+
+    private var sourceSelectionSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !viewModel.selectedPaddockIds.isEmpty && !viewModel.isGenerated {
+                Label("Sampling Locations by Block", systemImage: "mappin.and.ellipse")
+                    .font(.headline)
+                Text("Choose saved confirmed locations or generate sampling locations independently for each block.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if siteSourcesLoading { ProgressView("Checking confirmed sites…") }
+                ForEach(paddocks.filter { viewModel.selectedPaddockIds.contains($0.id) }) { block in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(block.name).font(.subheadline.weight(.semibold))
+                        if let set = confirmedSiteSets[block.id] {
+                            Toggle(isOn: Binding(
+                                get: { savedLocationBlocks.contains(block.id) },
+                                set: { useSaved in
+                                    if useSaved { savedLocationBlocks.insert(block.id) }
+                                    else { savedLocationBlocks.remove(block.id) }
+                                }
+                            )) {
+                                Text("Use Saved Permanent Locations (v\(set.version) · \(confirmedSiteCounts[block.id] ?? 0) sites)")
+                                    .font(.caption)
+                            }
+                            .tint(.purple)
+                        } else {
+                            Text("Generate Sampling Locations · no confirmed sites")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(10)
+                    .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
+                }
+                if let siteRouteError {
+                    Text(siteRouteError).font(.caption).foregroundStyle(.red)
+                }
+            }
+        }
+    }
+
+    private func loadConfirmedSamplingSites() async {
+        guard let vineyard = store.selectedVineyardId, !viewModel.selectedPaddockIds.isEmpty else {
+            confirmedSiteSets = [:]
+            confirmedSiteCounts = [:]
+            savedLocationBlocks = []
+            return
+        }
+        let selected = viewModel.selectedPaddockIds
+        siteSourcesLoading = true
+        defer { siteSourcesLoading = false }
+        var sets: [UUID: YieldSamplingSiteSetRow] = [:]
+        var counts: [UUID: Int] = [:]
+        for block in paddocks where selected.contains(block.id) {
+            do {
+                if let (set, sites) = try await siteSetsRepository.confirmed(
+                    vineyardId: vineyard, paddockId: block.id) {
+                    sets[block.id] = set
+                    counts[block.id] = sites.count
+                }
+            } catch {
+                siteRouteError = "Could not verify \(block.name) locations: \(error.localizedDescription)"
+            }
+        }
+        guard viewModel.selectedPaddockIds == selected, store.selectedVineyardId == vineyard else { return }
+        confirmedSiteSets = sets
+        confirmedSiteCounts = counts
+        savedLocationBlocks.formIntersection(Set(sets.keys))
+    }
+
+    /// All readbacks happen before the first local trip mutation. A failed
+    /// server check can never silently substitute generated points for saved ones.
+    private func generateSelectedRoute() async {
+        guard !siteRouteBusy, !viewModel.selectedPaddockIds.isEmpty,
+              let vineyard = store.selectedVineyardId else { return }
+        siteRouteBusy = true
+        defer { siteRouteBusy = false }
+        siteRouteError = nil
+        let selectedBlocks = paddocks.filter { viewModel.selectedPaddockIds.contains($0.id) }
+        let chosenSaved = savedLocationBlocks
+        var saved: [UUID: (YieldSamplingSiteSetRow, [YieldSamplingSiteRow])] = [:]
+        do {
+            for block in selectedBlocks where chosenSaved.contains(block.id) {
+                guard let verified = try await siteSetsRepository.confirmed(
+                    vineyardId: vineyard, paddockId: block.id),
+                    !verified.1.isEmpty,
+                    verified.1.allSatisfy({
+                        YieldSamplingSiteGeometry.contains(
+                            CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude),
+                            polygon: block.polygonPoints
+                        )
+                    }) else {
+                    siteRouteError = "Saved locations for \(block.name) have changed or are outside the block. Review them before starting."
+                    return
+                }
+                saved[block.id] = verified
+            }
+        } catch {
+            siteRouteError = "Cannot verify saved locations. Existing route was not changed: \(error.localizedDescription)"
+            return
+        }
+        guard store.selectedVineyardId == vineyard,
+              Set(selectedBlocks.map(\.id)) == viewModel.selectedPaddockIds else {
+            siteRouteError = "Vineyard or block selection changed. Please try again."
+            return
+        }
+        viewModel.generateSampleSites(paddocks: paddocks, samplesPerHectare: samplesPerHa)
+        let generated = viewModel.sampleSites
+        var combined: [SampleSite] = []
+        var versions: [String: YieldSamplingSiteSource] = [:]
+        var index = 1
+        for block in selectedBlocks {
+            if let (set, sites) = saved[block.id] {
+                for site in sites.sorted(by: { $0.siteNumber < $1.siteNumber }) {
+                    combined.append(SampleSite(id: site.siteId, paddockId: block.id,
+                        paddockName: block.name, rowNumber: Int(site.rowNumber ?? "") ?? 0,
+                        latitude: site.latitude, longitude: site.longitude, siteIndex: index))
+                    index += 1
+                }
+                versions[block.id.uuidString.lowercased()] = YieldSamplingSiteSource(
+                    setKey: set.setKey, siteSetId: set.id, version: set.version)
+            } else {
+                for var site in generated.filter({ $0.paddockId == block.id }).sorted(by: {
+                    $0.siteIndex < $1.siteIndex
+                }) {
+                    site.siteIndex = index
+                    combined.append(site)
+                    index += 1
+                }
+            }
+        }
+        guard !combined.isEmpty, Set(combined.map(\.id)).count == combined.count else {
+            siteRouteError = "No valid unique sample sites could be prepared."
+            return
+        }
+        viewModel.sampleSites = combined
+        viewModel.siteSetVersions = versions
+        viewModel.routeSourceSessionId = nil
+        viewModel.generatePath(paddocks: paddocks)
+        fitMapToSites()
+        saveSession()
+    }
+
     // MARK: - Summary
 
     private var summarySection: some View {
@@ -822,7 +975,7 @@ struct YieldEstimationView: View {
 
     private var generateButton: some View {
         VStack(spacing: 8) {
-            if let route = reusableRouteCandidate {
+            if let route = reusableRouteCandidate, savedLocationBlocks.isEmpty {
                 Text("A previous trip already has a route for \(viewModel.selectedPaddockIds.count == 1 ? "this block" : "these blocks"). Reusing it revisits the same sample locations for comparable counts.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -844,15 +997,12 @@ struct YieldEstimationView: View {
             }
 
             Button {
-                withAnimation(.smooth(duration: 0.3)) {
-                    viewModel.generateSampleSites(paddocks: paddocks, samplesPerHectare: samplesPerHa)
-                                viewModel.generatePath(paddocks: paddocks)
-                }
-                fitMapToSites()
-                saveSession()
+                Task { await generateSelectedRoute() }
             } label: {
                 Label(
-                    reusableRouteCandidate != nil ? "Generate New Route" : "Generate Route",
+                    savedLocationBlocks.isEmpty
+                        ? (reusableRouteCandidate != nil ? "Generate New Route" : "Generate Route")
+                        : "Prepare Route (\(savedLocationBlocks.count) saved blocks)",
                     systemImage: "mappin.and.ellipse"
                 )
                 .font(.headline)
@@ -861,7 +1011,7 @@ struct YieldEstimationView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(VineyardTheme.leafGreen)
-            .disabled(viewModel.selectedPaddockIds.isEmpty)
+            .disabled(viewModel.selectedPaddockIds.isEmpty || siteRouteBusy || siteSourcesLoading)
 
             if viewModel.selectedPaddockIds.isEmpty {
                 Text("Select one or more blocks above to generate the sampling route.")
