@@ -75,6 +75,19 @@ class YieldEstimationSessionRepository(private val session: SessionStore) : Yiel
     @Serializable
     private data class SoftDeleteArgs(@SerialName("p_id") val id: String)
 
+    @Serializable
+    private data class HardDeleteArgs(
+        @SerialName("p_id") val id: String,
+        @SerialName("p_vineyard_id") val vineyardId: String,
+        @SerialName("p_expected_completed") val expectedCompleted: Boolean,
+    )
+
+    @Serializable
+    private data class HardDeleteReceipt(
+        @SerialName("session_id") val sessionId: String,
+        @SerialName("vineyard_id") val vineyardId: String,
+    )
+
     private fun nowIso(): String = Instant.now().toString()
 
     /** All non-deleted yield sessions for a vineyard, newest update first. */
@@ -137,6 +150,73 @@ class YieldEstimationSessionRepository(private val session: SessionStore) : Yiel
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }
+    }
+
+    /** Server-first hard deletion: never hide the local observation until
+     * the role/state check succeeds and its deletion receipt can be read back.
+     */
+    suspend fun hardDeleteSession(source: YieldEstimationSession) = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(
+            SupabaseClient.rpcUrl("hard_delete_yield_estimation_session"),
+        ) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(HardDeleteArgs(source.id, source.vineyardId, source.isCompleted))
+        }
+        when {
+            response.status.isSuccess() -> check(response.body<Boolean>()) {
+                "Hard delete was not acknowledged by the server."
+            }
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+        val receipt = SupabaseClient.http.get(SupabaseClient.restUrl(
+            "yield_estimation_session_deletion_receipts?select=session_id,vineyard_id" +
+                "&session_id=eq.${source.id}&vineyard_id=eq.${source.vineyardId}"
+        )) { authHeaders(token) }
+        if (!receipt.status.isSuccess()) throw BackendError.Server(receipt.status.value, receipt.bodyAsText())
+        check(receipt.body<List<HardDeleteReceipt>>().singleOrNull()?.sessionId.equals(source.id, true)) {
+            "Hard delete receipt is unavailable; reload the server before retrying."
+        }
+    }
+
+    /** Existing offline DELETE intents contain only an ID. Resolve exact
+     * vineyard and completion status on the server under RLS at replay time.
+     */
+    suspend fun hardDeleteSessionById(id: String) = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(
+            SupabaseClient.rpcUrl("hard_delete_yield_estimation_session_by_id")
+        ) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(SoftDeleteArgs(id))
+        }
+        when {
+            response.status.isSuccess() -> {
+                if (!response.body<Boolean>()) {
+                    throw BackendError.Server(404, "Session missing or not accessible for hard deletion.")
+                }
+            }
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    suspend fun deletedIds(vineyardId: String): Set<String> = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl(
+            "yield_estimation_session_deletion_receipts?select=session_id,vineyard_id" +
+                "&vineyard_id=eq.$vineyardId"
+        )) { authHeaders(token) }
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+        response.body<List<HardDeleteReceipt>>().filter {
+            it.vineyardId.equals(vineyardId, true)
+        }.map { it.sessionId.lowercase() }.toSet()
     }
 
     suspend fun softDeleteSession(id: String) = withContext(Dispatchers.IO) {
