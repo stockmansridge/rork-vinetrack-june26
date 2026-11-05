@@ -118,7 +118,9 @@ struct VineTrackApp: App {
             Group {
                 if isKeyboardValidationEnabled {
                     #if DEBUG
-                    if CommandLine.arguments.contains("--synthetic-switch-performance") {
+                    if SprayLifecycleSandbox.runID != nil {
+                        SprayLifecycleValidationView()
+                    } else if CommandLine.arguments.contains("--synthetic-switch-performance") {
                         SyntheticSwitchPerformanceView()
                     } else if CommandLine.arguments.contains("--target-nutrient-validation") {
                         TargetNutrientValidationView()

@@ -9,6 +9,10 @@ import Supabase
 @MainActor
 final class TripTrackingService {
     private let startTankCommitCoordinator = StartTankCommitCoordinator()
+    #if DEBUG
+    /// Only the explicit isolated UI process may supply a simulated authenticated tank operator.
+    var lifecycleTankOperator: (() -> UUID?)?
+    #endif
     private var isLegacySprayStartPending: Bool = false
 
     var canOperateOccurrences: Bool {
@@ -1428,6 +1432,10 @@ final class TripTrackingService {
         actualChemicalBaseAmounts: [UUID: Double]
     ) -> Bool {
         guard admitTripChange(activeTrip) else { return false }
+        var authenticatedUserId = SupabaseClientProvider.shared.client.auth.currentUser?.id
+        #if DEBUG
+        if SprayLifecycleSandbox.runID != nil { authenticatedUserId = lifecycleTankOperator?() }
+        #endif
         guard let trip = activeTrip,
               trip.isActive,
               trip.endTime == nil,
@@ -1437,7 +1445,7 @@ final class TripTrackingService {
               pending.record.tripId == trip.id,
               TankMixPresentation.linkedRecord(for: trip.id, in: store?.sprayRecords ?? [])?.id == pending.record.id,
               pending.record.tanks.first(where: { $0.tankNumber == pending.result.tankNumber })?.id == pending.tank.id,
-              let userId = SupabaseClientProvider.shared.client.auth.currentUser?.id
+              let userId = authenticatedUserId
         else { return false }
         guard trip.tankSessions == pending.sourceTrip.tankSessions,
               trip.activeTankNumber == pending.sourceTrip.activeTankNumber,

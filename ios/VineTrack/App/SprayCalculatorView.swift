@@ -322,6 +322,13 @@ struct SprayCalculatorView: View {
             view._chemicalLines = State(initialValue: [ChemicalLine(chemicalId: chemicalID, selectedRateId: UUID(), basis: .per100Litres, overrideRate: 100)])
             view._openedStep = State(initialValue: .review)
         }
+        if SprayLifecycleSandbox.runID != nil {
+            view._carrierBasisChoice = State(initialValue: .manualTotalVolume)
+            view._manualTotalLitresText = State(initialValue: "800")
+            view._canopy = State(initialValue: .unconfirmed)
+            view._sprayVolumeChoice = State(initialValue: .undecided)
+            view._passConfiguration = State(initialValue: CommandLine.arguments.contains("--lifecycle-two-row") ? .overRow : .standardPass)
+        }
         if CommandLine.arguments.contains("--spray-phase1-validation") {
             // Seed only earlier prerequisites. Application and canopy remain new, unanswered decisions.
             view._isApplicationResolved = State(initialValue: false)

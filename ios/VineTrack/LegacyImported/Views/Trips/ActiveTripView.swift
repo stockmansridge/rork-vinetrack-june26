@@ -1905,6 +1905,8 @@ struct ActiveTripView: View {
             }
             .buttonStyle(.bordered)
             .tint(.red)
+            .accessibilityLabel("End Trip")
+            .accessibilityIdentifier("trip.end")
             .confirmationDialog("End Trip?", isPresented: $showEndConfirmation) {
                 Button("End Trip", role: .destructive) {
                     let outcome = tracking.endTrip()

@@ -238,6 +238,9 @@ final class MigratedDataStore {
     /// (or on creation paths that forgot to plumb auth in).
     var currentUserIdProvider: (() -> UUID?)?
     @ObservationIgnored var legacySprayScopeProvider: (() -> LegacySpraySaveRecovery.Scope?)?
+    #if DEBUG
+    @ObservationIgnored var lifecycleReceiptTransport: ((String, Data) async throws -> Data)?
+    #endif
     /// Provides the currently-authenticated user display name. Used as a
     /// last-resort fallback for `createdBy` text when missing.
     var currentUserNameProvider: (() -> String?)?
@@ -2115,7 +2118,15 @@ final class MigratedDataStore {
             try reconcileLegacySpraySaves(isolatingHeldFailures: true)
             let current = { self.legacySprayScopeProvider?() == scope && self.selectedVineyardId == scope.vineyard }
             try await LegacySpraySaveRecovery(persistence: persistence).replay(scope: scope, isCurrent: current) { rpc, body in
-                try await LegacySprayPairReceipt.request(rpc: rpc, body: body, scope: scope, isCurrent: current)
+                #if DEBUG
+                if SprayLifecycleSandbox.runID != nil, let transport = self.lifecycleReceiptTransport {
+                    guard current() else { throw LegacySprayPairReceipt.failure }
+                    let response = try await transport(rpc, body)
+                    guard current() else { throw LegacySprayPairReceipt.failure }
+                    return response
+                }
+                #endif
+                return try await LegacySprayPairReceipt.request(rpc: rpc, body: body, scope: scope, isCurrent: current)
             }
         } catch { /* Exact evidence stays durable and held. Unrelated writers continue. */ }
     }

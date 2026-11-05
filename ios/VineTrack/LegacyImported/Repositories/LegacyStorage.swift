@@ -3,6 +3,14 @@ import os
 
 enum LegacyStorage {
     static let storageDirectory: URL = {
+        #if DEBUG
+        if let sandbox = SprayLifecycleSandbox.directory {
+            let device = sandbox.appendingPathComponent("device", isDirectory: true)
+            do { try FileManager.default.createDirectory(at: device, withIntermediateDirectories: true) }
+            catch { fatalError("Cannot create lifecycle device sandbox: \(error)") }
+            return device
+        }
+        #endif
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let dir = docs.appendingPathComponent("VineTrackData", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
