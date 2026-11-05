@@ -90,6 +90,12 @@ import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.rork.vinetrack.data.BunchCountTripLogic
 import com.rork.vinetrack.data.LocationTracker
+import com.rork.vinetrack.data.YieldSamplingSiteRepository
+import com.rork.vinetrack.data.YieldSiteSetSource
+import com.rork.vinetrack.data.ConfirmedYieldSites
+import com.rork.vinetrack.data.RowAttachment
+import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.toSampleSite
 import com.rork.vinetrack.data.YieldSamplingNavigation
 import com.rork.vinetrack.data.YieldSampleGenerator
 import com.rork.vinetrack.data.YieldVintageReport
@@ -481,6 +487,35 @@ private fun TripSetupScreen(
     var selectedSite by remember { mutableStateOf<SampleSite?>(null) }
     var showDiscardConfirm by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val siteRepo = remember(context) { YieldSamplingSiteRepository(SessionStore(context)) }
+    val siteScope = rememberCoroutineScope()
+    var verifiedSources by remember { mutableStateOf<Map<String, ConfirmedYieldSites>>(emptyMap()) }
+    var savedLocationBlocks by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var loadingSources by remember { mutableStateOf(false) }
+    var preparingRoute by remember { mutableStateOf(false) }
+    var routeSourceError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(state.selectedVineyardId, session.selectedPaddockIds, session.sampleSites.isEmpty()) {
+        val vid = state.selectedVineyardId ?: return@LaunchedEffect
+        if (session.sampleSites.isNotEmpty() || session.selectedPaddockIds.isEmpty()) return@LaunchedEffect
+        loadingSources = true
+        val verified = mutableMapOf<String, ConfirmedYieldSites>()
+        try {
+            for (selected in blocks.filter { session.isPaddockSelected(it.id) }) {
+                siteRepo.confirmed(vid, selected.id)?.let { verified[selected.id.lowercase()] = it }
+            }
+            verifiedSources = verified
+            savedLocationBlocks = savedLocationBlocks.intersect(verified.keys)
+            routeSourceError = null
+        } catch (e: Exception) {
+            verifiedSources = emptyMap()
+            savedLocationBlocks = emptySet()
+            routeSourceError = "Could not read confirmed sampling sites: ${e.message}"
+        } finally {
+            loadingSources = false
+        }
+    }
 
     val selectedBlocks = blocks.filter { session.isPaddockSelected(it.id) }
     // Shared, tested visibility contract for the simplified route preview
@@ -500,18 +535,73 @@ private fun TripSetupScreen(
     fun defaultWeights(base: Map<String, Double>): Map<String, Double> = base
 
     fun generateNewRoute() {
-        val sites = YieldSampleGenerator.generateSampleSites(
-            blocks, session.selectedPaddockIds, session.samplesPerHectare,
-        )
-        val path = YieldSampleGenerator.generatePath(blocks, session.selectedPaddockIds, sites)
-        onApply(
-            session.copy(
-                sampleSites = sites,
-                pathWaypoints = path,
-                blockBunchWeightsKg = defaultWeights(session.blockBunchWeightsKg),
-                routeSourceSessionId = null,
-            ),
-        )
+        if (preparingRoute || loadingSources) return
+        val vid = state.selectedVineyardId ?: return
+        val selectedSnapshot = selectedBlocks.toList()
+        val chosenSnapshot = savedLocationBlocks
+        siteScope.launch {
+            preparingRoute = true
+            routeSourceError = null
+            try {
+                // The server is the authority. Refetch every selected saved set
+                // before mutating the local session; never substitute silently.
+                val saved = mutableMapOf<String, ConfirmedYieldSites>()
+                for (block in selectedSnapshot.filter { it.id.lowercase() in chosenSnapshot }) {
+                    val check = siteRepo.confirmed(vid, block.id)
+                        ?: throw IllegalStateException("Saved sites for ${block.name} are no longer confirmed.")
+                    require(check.sites.isNotEmpty() && check.sites.all {
+                        RowAttachment.containsPoint(block, it.latitude, it.longitude)
+                    }) { "Saved sites for ${block.name} are outside the block. Review and confirm them." }
+                    saved[block.id.lowercase()] = check
+                }
+                require(state.selectedVineyardId == vid &&
+                    selectedSnapshot.map { it.id.lowercase() }.toSet() ==
+                        session.selectedPaddockIds.map { it.lowercase() }.toSet()) {
+                    "Vineyard/block selection changed; please retry."
+                }
+                val generated = YieldSampleGenerator.generateSampleSites(
+                    blocks, session.selectedPaddockIds, session.samplesPerHectare
+                )
+                val combined = mutableListOf<SampleSite>()
+                val versions = mutableMapOf<String, YieldSiteSetSource>()
+                var globalIndex = 1
+                for (block in selectedSnapshot) {
+                    val fromServer = saved[block.id.lowercase()]
+                    if (fromServer != null) {
+                        for (site in fromServer.sites.sortedBy { it.siteNumber }) {
+                            combined += site.toSampleSite(block, globalIndex++)
+                        }
+                        versions[block.id.lowercase()] = YieldSiteSetSource(
+                            setKey = fromServer.set.setKey,
+                            siteSetId = fromServer.set.id,
+                            version = fromServer.set.version,
+                        )
+                    } else {
+                        for (site in generated.filter { it.paddockId.equals(block.id, true) }
+                            .sortedBy { it.siteIndex }) {
+                            combined += site.copy(siteIndex = globalIndex++)
+                        }
+                    }
+                }
+                check(combined.isNotEmpty() && combined.map { it.id.lowercase() }.toSet().size == combined.size) {
+                    "Unable to generate unique sites for this block selection."
+                }
+                val path = YieldSampleGenerator.generatePath(blocks, session.selectedPaddockIds, combined)
+                if (!onApply(session.copy(
+                    sampleSites = combined,
+                    pathWaypoints = path,
+                    blockBunchWeightsKg = defaultWeights(session.blockBunchWeightsKg),
+                    routeSourceSessionId = null,
+                    siteSetVersions = versions,
+                ))) {
+                    routeSourceError = "The route could not be saved locally. No sites were advanced."
+                }
+            } catch (e: Exception) {
+                routeSourceError = "Could not prepare sampling route: ${e.message}"
+            } finally {
+                preparingRoute = false
+            }
+        }
     }
 
     fun useExistingRoute() {
@@ -523,6 +613,7 @@ private fun TripSetupScreen(
                 pathWaypoints = path,
                 blockBunchWeightsKg = defaultWeights(session.blockBunchWeightsKg),
                 routeSourceSessionId = route.sourceSessionId,
+                siteSetVersions = emptyMap(),
             ),
         )
     }
@@ -531,7 +622,7 @@ private fun TripSetupScreen(
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
-                title = { Text(if (session.isQuadrantCount) "Quadrant Count" else "Bunch Count Trip") },
+                title = { Text(if (session.isQuadrantCount) "Quadrant Count" else "Yield Estimate Trip") },
                 navigationIcon = { BackNavIcon(onBack) },
                 actions = {
                     // Secondary trip actions — deliberately kept out of the
@@ -546,7 +637,7 @@ private fun TripSetupScreen(
                                 text = { Text("Change Route") },
                                 onClick = {
                                     menuOpen = false
-                                    onApply(session.copy(sampleSites = emptyList(), pathWaypoints = emptyList(), routeSourceSessionId = null))
+                                    onApply(session.copy(sampleSites = emptyList(), pathWaypoints = emptyList(), routeSourceSessionId = null, siteSetVersions = emptyMap()))
                                 },
                             )
                         }
@@ -636,6 +727,41 @@ private fun TripSetupScreen(
                 }
             }
 
+            if (selectedBlocks.isNotEmpty()) {
+                VineyardCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Sampling Locations by Block", fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                        Text("Choose confirmed saved locations, or generate a new route for each selected block.",
+                            color = vine.textSecondary, fontSize = 12.sp)
+                        if (loadingSources) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        selectedBlocks.forEach { block ->
+                            val found = verifiedSources[block.id.lowercase()]
+                            if (found == null) {
+                                Text("${block.name}: Generate Sampling Locations",
+                                    color = vine.textSecondary, fontSize = 12.sp)
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(
+                                        checked = savedLocationBlocks.contains(block.id.lowercase()),
+                                        onCheckedChange = { useSaved ->
+                                            savedLocationBlocks = if (useSaved) savedLocationBlocks + block.id.lowercase()
+                                                else savedLocationBlocks - block.id.lowercase()
+                                        },
+                                        enabled = !preparingRoute && !loadingSources,
+                                    )
+                                    Column {
+                                        Text(block.name, color = vine.textPrimary)
+                                        Text("Use Saved Permanent Locations · v${found.set.version} · ${found.sites.size} sites",
+                                            color = vine.textSecondary, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                        routeSourceError?.let { Text(it, color = VineColors.Destructive, fontSize = 12.sp) }
+                    }
+                }
+            }
+
             // Steps 3–5 — sample density + route (reuse or generate).
             if (session.totalSiteCount == 0) {
                 VineyardCard {
@@ -701,7 +827,7 @@ private fun TripSetupScreen(
                             fontSize = 12.sp,
                         )
 
-                        if (reusable != null) {
+                        if (reusable != null && savedLocationBlocks.isEmpty()) {
                             Text(
                                 "A previous trip already has a route for ${if (selectedBlocks.size == 1) "this block" else "these blocks"}. Reusing it revisits the same sample locations for comparable counts.",
                                 color = vine.textSecondary, fontSize = 12.sp,
@@ -734,7 +860,7 @@ private fun TripSetupScreen(
                             ) {
                                 Icon(Icons.Filled.AutoGraph, contentDescription = null, modifier = Modifier.size(20.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text("Generate Route")
+                                Text(if (savedLocationBlocks.isEmpty()) "Generate Route" else "Prepare Route (${savedLocationBlocks.size} saved blocks)")
                             }
                         }
                     }
