@@ -550,6 +550,21 @@ nonisolated struct SprayGuidedFlow: Sendable {
     var operationalBlocker: String? {
         if let intent = inputs.planningIntent,
            let blocker = intent.fullTankExecutionBlocker(resolution: planningResolution, selectedGrossAreaHa: geometry.grossAreaHectares) { return blocker }
+        if let intent = inputs.planningIntent, intent.method == .byArea,
+           planningResolution == nil {
+            // The original generic message said "choose a pass configuration"
+            // even when one WAS selected. Name the actual missing evidence.
+            if intent.configuration == nil {
+                return "Select Single Row or 2 Row in Canopy & Spray Volume, or clear the optional pass setup."
+            }
+            if (carrier?.totalLitres ?? 0) <= 0 {
+                return "Complete the spray water volume in Canopy & Spray Volume before starting."
+            }
+            if carrier?.litresPerHectare == nil {
+                return "The selected blocks need valid, matching row spacing to convert this L/100 m rate to L/ha. Check the mapped rows or clear the optional pass setup."
+            }
+            return "The By Area pass setup needs a valid block area and sprayer rate. Review Canopy & Spray Volume."
+        }
         if let blocker = LegacySpraySetup.blocker(intent: inputs.planningIntent, resolution: planningResolution) { return blocker }
         return SprayPlanningOperationalGate.blocker(hasPlanningIntent: false,
             concentrationFactor: carrier?.concentrationFactor,
