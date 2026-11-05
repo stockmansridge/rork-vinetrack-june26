@@ -127,6 +127,8 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
     /// the season revisit comparable locations). Additive; nil for freshly
     /// generated routes and all pre-187 sessions.
     var routeSourceSessionId: UUID?
+    /// Confirmed site set/version for each sampled block, snapshotted at trip creation.
+    var siteSetVersions: [String: YieldSamplingSiteSource]
 
     var averageBunchWeightKg: Double {
         guard !blockBunchWeightsKg.isEmpty else { return 0.15 }
@@ -153,7 +155,8 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         routeSourceSessionId: UUID? = nil,
         blockVineCounts: [String: Int] = [:],
         countMethod: String? = nil,
-        quadrantSectionLengthCm: Double? = nil
+        quadrantSectionLengthCm: Double? = nil,
+        siteSetVersions: [String: YieldSamplingSiteSource] = [:]
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -171,6 +174,7 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         self.blockVineCounts = blockVineCounts
         self.countMethod = countMethod
         self.quadrantSectionLengthCm = quadrantSectionLengthCm
+        self.siteSetVersions = siteSetVersions
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -178,6 +182,7 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         case sampleSites, blockBunchWeightsKg, averageBunchWeightKg
         case previousBunchWeights, pathWaypoints, isCompleted, completedAt
         case applyDamage, routeSourceSessionId, blockVineCounts, countMethod, quadrantSectionLengthCm
+        case siteSetVersions
     }
 
     init(from decoder: Decoder) throws {
@@ -197,6 +202,7 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         blockVineCounts = try container.decodeIfPresent([String: Int].self, forKey: .blockVineCounts) ?? [:]
         countMethod = try container.decodeIfPresent(String.self, forKey: .countMethod)
         quadrantSectionLengthCm = try container.decodeIfPresent(Double.self, forKey: .quadrantSectionLengthCm)
+        siteSetVersions = try container.decodeIfPresent([String: YieldSamplingSiteSource].self, forKey: .siteSetVersions) ?? [:]
 
         if let perBlock = try? container.decode([UUID: Double].self, forKey: .blockBunchWeightsKg) {
             blockBunchWeightsKg = perBlock
@@ -229,6 +235,7 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         if !blockVineCounts.isEmpty { try container.encode(blockVineCounts, forKey: .blockVineCounts) }
         try container.encodeIfPresent(countMethod, forKey: .countMethod)
         try container.encodeIfPresent(quadrantSectionLengthCm, forKey: .quadrantSectionLengthCm)
+        if !siteSetVersions.isEmpty { try container.encode(siteSetVersions, forKey: .siteSetVersions) }
     }
 }
 
