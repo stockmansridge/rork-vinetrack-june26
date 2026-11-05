@@ -1,5 +1,8 @@
 package com.rork.vinetrack.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -222,6 +225,12 @@ fun PermanentItemsAdminPilotScreen(
             photo = stream.toByteArray()
             notice = "Camera photo selected. It will attach after the item is saved."
         }
+    }
+    val cameraPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) cameraPicker.launch(null)
+        else error = "Allow Camera permission to take a photo, or choose one from your library."
     }
 
     LaunchedEffect(user, vineyard, state.isSystemAdmin, state.currentRole) {
@@ -547,7 +556,14 @@ fun PermanentItemsAdminPilotScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showPhotoOptions = false
-                    cameraPicker.launch(null)
+                    if (ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.CAMERA
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        cameraPicker.launch(null)
+                    } else {
+                        cameraPermission.launch(Manifest.permission.CAMERA)
+                    }
                 }) { Text("Take Photo") }
             },
             dismissButton = {
