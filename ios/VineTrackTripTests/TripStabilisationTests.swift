@@ -246,6 +246,128 @@ final class TripStabilisationTests: XCTestCase {
         XCTAssertNil(metadata.pendingUpserts[next.id])
     }
 
+    func testPortalEndTankIsAdoptedBeforeOfflineTripUpload() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let store = MigratedDataStore(persistence: persistence)
+        store.selectedVineyardId = vineyardId
+        let tank1End = startedAt.addingTimeInterval(60)
+        let tank2Start = startedAt.addingTimeInterval(75)
+        let administratorEnd = startedAt.addingTimeInterval(180)
+        var local = activeTrip()
+        local.tankSessions = [
+            TankSession(tankNumber: 1, startTime: startedAt, endTime: tank1End),
+            TankSession(tankNumber: 2, startTime: tank2Start)
+        ]
+        local.activeTankNumber = 2
+        local.pathPoints = [CoordinatePoint(latitude: -33.15, longitude: 148.86)]
+        local.totalDistance = 9019.5
+        store.startTrip(local)
+        store.claimDeviceTrip(local.id)
+        let metadata = TripSyncMetadata(persistence: persistence)
+        metadata.markDirty(tripId, at: administratorEnd.addingTimeInterval(5))
+
+        var server = local
+        server.tankSessions[1].endTime = administratorEnd
+        server.activeTankNumber = nil
+        server.pathPoints = []
+        server.totalDistance = 0
+        let serverRow = try JSONDecoder().decode(BackendTrip.self, from: JSONEncoder().encode(
+            BackendTrip.upsert(from: server, createdBy: nil, clientUpdatedAt: administratorEnd)
+        ))
+        let repository = AuthoritativeCompletionRepository(completed: serverRow)
+        let service = TripSyncService(repository: repository, metadata: metadata)
+        let auth = NewBackendAuthService()
+        auth.isSignedIn = true
+        service.configure(store: store, auth: auth)
+
+        try await service.pushLocalTrips(vineyardId: vineyardId)
+        let adopted = try XCTUnwrap(store.trips.first { $0.id == tripId })
+        XCTAssertTrue(adopted.isActive) // A Portal End Tank does not end the Trip.
+        XCTAssertNil(adopted.activeTankNumber)
+        XCTAssertEqual(adopted.tankSessions.count, 2)
+        XCTAssertEqual(adopted.tankSessions[0].endTime, tank1End)
+        XCTAssertEqual(adopted.tankSessions[1].endTime, administratorEnd)
+        XCTAssertEqual(adopted.pathPoints, local.pathPoints)
+        XCTAssertEqual(adopted.totalDistance, local.totalDistance)
+        let uploaded = await repository.uploaded
+        XCTAssertEqual(uploaded.count, 1)
+        XCTAssertNil(uploaded[0].activeTankNumber)
+        XCTAssertEqual(uploaded[0].tankSessions[1].endTime, administratorEnd)
+        XCTAssertEqual(uploaded[0].pathPoints, local.pathPoints)
+    }
+
+    func testPortalEndTripAdoptsTankEndAndStopsOwnedDeviceWithoutLosingRoute() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let store = MigratedDataStore(persistence: persistence)
+        store.selectedVineyardId = vineyardId
+        let tank1End = startedAt.addingTimeInterval(60)
+        let tank2Start = startedAt.addingTimeInterval(75)
+        let adminTankEnd = startedAt.addingTimeInterval(180)
+        let adminTripEnd = startedAt.addingTimeInterval(190)
+        var local = activeTrip()
+        local.tankSessions = [
+            TankSession(tankNumber: 1, startTime: startedAt, endTime: tank1End),
+            TankSession(tankNumber: 2, startTime: tank2Start)
+        ]
+        local.activeTankNumber = 2
+        local.pathPoints = [CoordinatePoint(latitude: -33.15, longitude: 148.86)]
+        local.totalDistance = 9019.5
+        store.startTrip(local)
+        store.claimDeviceTrip(local.id)
+        let metadata = TripSyncMetadata(persistence: persistence)
+        metadata.markDirty(tripId, at: adminTripEnd.addingTimeInterval(20))
+
+        var server = local
+        server.tankSessions[1].endTime = adminTankEnd
+        server.activeTankNumber = nil
+        server.isActive = false
+        server.endTime = adminTripEnd
+        server.pathPoints = []
+        server.totalDistance = 0
+        let serverRow = try JSONDecoder().decode(BackendTrip.self, from: JSONEncoder().encode(
+            BackendTrip.upsert(from: server, createdBy: nil, clientUpdatedAt: adminTripEnd)
+        ))
+        let repository = AuthoritativeCompletionRepository(completed: serverRow)
+        let service = TripSyncService(repository: repository, metadata: metadata)
+        let auth = NewBackendAuthService()
+        auth.isSignedIn = true
+        service.configure(store: store, auth: auth)
+        try await service.pushLocalTrips(vineyardId: vineyardId)
+
+        let adopted = try XCTUnwrap(store.trips.first { $0.id == tripId })
+        XCTAssertFalse(adopted.isActive)
+        XCTAssertEqual(adopted.endTime, adminTripEnd)
+        XCTAssertNil(adopted.activeTankNumber)
+        XCTAssertEqual(adopted.tankSessions[0].endTime, tank1End)
+        XCTAssertEqual(adopted.tankSessions[1].endTime, adminTankEnd)
+        XCTAssertEqual(adopted.pathPoints, local.pathPoints)
+        XCTAssertEqual(adopted.totalDistance, local.totalDistance)
+        XCTAssertNil(store.deviceActiveTripId)
+        XCTAssertTrue((await repository.uploaded).isEmpty) // Never replay stale active state.
+        // The original unacknowledged route is still held, rather than
+        // falsely claiming it was uploaded by the Portal correction.
+        XCTAssertNotNil(metadata.pendingUpserts[tripId])
+    }
+
+    func testServerTankEndRejectsMismatchedTankIdentity() {
+        var local = activeTrip()
+        let original = TankSession(tankNumber: 2, startTime: startedAt)
+        local.activeTankNumber = 2
+        local.tankSessions = [original]
+        var remote = local
+        remote.activeTankNumber = nil
+        remote.tankSessions[0].endTime = endedAt
+        XCTAssertNotNil(TankPathAttribution.adoptingServerTankEnds(local: local, remote: remote))
+        remote.tankSessions[0].tankNumber = 1
+        XCTAssertNil(TankPathAttribution.adoptingServerTankEnds(local: local, remote: remote))
+    }
+
     func testAuthoritativeServerCompletionReleasesOwnedTripAndRetainsHistory() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
