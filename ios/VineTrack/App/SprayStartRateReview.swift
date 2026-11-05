@@ -1,6 +1,7 @@
 import Foundation
 #if canImport(SwiftUI)
 import SwiftUI
+import UIKit
 #endif
 
 /// Recipe evidence binds a review to its calculated mix, independently of route selection.
@@ -113,12 +114,78 @@ nonisolated struct SprayInitialTankInput: Equatable {
         chemical.quantityBasis == "display" ? chemical.volumePerTank : chemical.displayVolume
     }
 
+    /// Display-only rounding; do not round persisted chemical or water actuals.
+    static func twoDecimalDisplay(_ value: Double) -> String {
+        value.formatted(.number.locale(.current).precision(.fractionLength(2)))
+    }
+
     static func input(_ value: Double) -> String {
         value.formatted(.number.locale(.current).grouping(.never).precision(.fractionLength(0...12)))
     }
 }
 
 #if canImport(SwiftUI)
+/// Decimal entry for operational tank actuals. Selecting the existing amount
+/// when editing begins prevents operators having to hold/backspace through a
+/// calculated figure. The underlying value remains editable at full precision.
+struct SpraySelectAllDecimalField: UIViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let accessibilityLabel: String
+    let accessibilityIdentifier: String?
+    var alignment: NSTextAlignment = .left
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UITextField {
+        let field = UITextField()
+        field.delegate = context.coordinator
+        field.addTarget(context.coordinator, action: #selector(Coordinator.didEdit(_:)), for: .editingChanged)
+        field.placeholder = placeholder
+        field.text = text
+        field.keyboardType = .decimalPad
+        field.textAlignment = alignment
+        field.font = UIFont.preferredFont(forTextStyle: .title3)
+        field.adjustsFontForContentSizeCategory = true
+        field.autocorrectionType = .no
+        field.accessibilityLabel = accessibilityLabel
+        field.accessibilityIdentifier = accessibilityIdentifier
+        return field
+    }
+
+    func updateUIView(_ field: UITextField, context: Context) {
+        context.coordinator.parent = self
+        if field.text != text { field.text = text }
+        field.textAlignment = alignment
+        field.accessibilityLabel = accessibilityLabel
+        field.accessibilityIdentifier = accessibilityIdentifier
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: SpraySelectAllDecimalField
+
+        init(_ parent: SpraySelectAllDecimalField) { self.parent = parent }
+
+        @objc func didEdit(_ field: UITextField) {
+            let changed = field.text ?? ""
+            if parent.text != changed { parent.text = changed }
+        }
+
+        func textFieldDidBeginEditing(_ field: UITextField) {
+            // The keyboard can update its selection during the same run loop;
+            // defer so the full amount remains highlighted for replacement.
+            DispatchQueue.main.async { [weak field] in
+                guard let field, field.isFirstResponder,
+                      let range = field.textRange(
+                        from: field.beginningOfDocument,
+                        to: field.endOfDocument
+                      ) else { return }
+                field.selectedTextRange = range
+            }
+        }
+    }
+}
+
 struct SprayInitialTankActualsEditor: View {
     let tank: SprayTank
     let tankCount: Int
@@ -133,14 +200,14 @@ struct SprayInitialTankActualsEditor: View {
                 FieldInfoButton(title: "Actual tank contents", message: "The calculator is your guide. Enter the water and each chemical you actually put in this tank. These amounts are saved as the tank's actual-use record when you start. Enter 0 for a product you did not add. Later tanks are recorded when you fill them. Path selection does not change these amounts.")
             }
             VStack(alignment: .leading, spacing: 6) {
-                calculatedAmount("Water", amount: formatter.formatVolume(litres: tank.waterVolume))
+                calculatedAmount("Water", amount: "\(SprayInitialTankInput.twoDecimalDisplay(formatter.volumeValue(litres: tank.waterVolume))) \(formatter.volumeUnitAbbreviation)")
                 actualField("Actual water", unit: formatter.volumeUnitAbbreviation,
                     text: $input.waterText, identifier: "spray.actualWater")
             }
             ForEach(tank.chemicals) { chemical in
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
-                    calculatedAmount(chemical.name, amount: "\(SprayInitialTankInput.plannedDisplayAmount(chemical).formatted(.number.precision(.fractionLength(0...3)))) \(chemical.unitLabel)")
+                    calculatedAmount(chemical.name, amount: "\(SprayInitialTankInput.twoDecimalDisplay(SprayInitialTankInput.plannedDisplayAmount(chemical))) \(chemical.unitLabel)")
                     actualField("Actual amount added", unit: chemical.unitLabel,
                         text: Binding(get: { input.chemicalTexts[chemical.id] ?? "" },
                             set: { input.chemicalTexts[chemical.id] = $0 }),
@@ -190,9 +257,12 @@ struct SprayInitialTankActualsEditor: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.subheadline.weight(.semibold))
             HStack(spacing: 12) {
-                TextField("Enter amount", text: text)
-                    .keyboardType(.decimalPad)
-                    .font(.title3)
+                SpraySelectAllDecimalField(
+                    text: text,
+                    placeholder: "Enter amount",
+                    accessibilityLabel: title,
+                    accessibilityIdentifier: identifier
+                )
                     .padding(.horizontal, 12)
                     .frame(maxWidth: .infinity, minHeight: 56)
                     .background(Color(.tertiarySystemGroupedBackground), in: .rect(cornerRadius: 8))
