@@ -100,6 +100,8 @@ import com.rork.vinetrack.data.YieldSamplingNavigation
 import com.rork.vinetrack.data.YieldSampleGenerator
 import com.rork.vinetrack.data.YieldVintageReport
 import com.rork.vinetrack.data.model.BunchCountEntry
+import com.rork.vinetrack.data.model.PanelCountEntry
+import com.rork.vinetrack.data.model.PanelCountMeasurement
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.SampleSite
@@ -171,11 +173,16 @@ fun YieldEstimationScreen(
         return saved
     }
 
-    fun startCount(quadrant: Boolean) {
-        if (quadrant && !state.isSystemAdmin) return
+    fun startCount(method: String) {
+        if (method == "quadrant" && !state.isSystemAdmin) return
+        if (method !in setOf("per_vine", "quadrant", "panel")) return
         val vid = vineyardId ?: return
         val fresh = BunchCountTripLogic.startTrip(vid, state.yieldSamplesPerHectareDefault).let {
-            if (quadrant) it.copy(countMethod = "quadrant", quadrantSectionLengthCm = 60.0) else it
+            when (method) {
+                "quadrant" -> it.copy(countMethod = "quadrant", quadrantSectionLengthCm = 60.0)
+                "panel" -> it.copy(countMethod = "panel")
+                else -> it
+            }
         }
         vm.saveYieldSession(fresh) { accepted ->
             if (accepted) { localDraft = fresh; activeTripId = fresh.id }
@@ -186,11 +193,11 @@ fun YieldEstimationScreen(
         AlertDialog(onDismissRequest = { showCountMethod = false },
             title = { Text("Choose Yield Estimate Count Method") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { startCount(false) }) { Text("1. Bunches Per Vine Count") }
-                TextButton(onClick = { startCount(true) }, enabled = state.isSystemAdmin) {
+                TextButton(onClick = { startCount("per_vine") }) { Text("1. Bunches Per Vine Count") }
+                TextButton(onClick = { startCount("quadrant") }, enabled = state.isSystemAdmin) {
                     Text("2. Quadrant Count" + if (state.isSystemAdmin) "" else " (System Admin only)")
                 }
-                TextButton(onClick = {}, enabled = false) { Text("3. Panel Count (not yet enabled)") }
+                TextButton(onClick = { startCount("panel") }) { Text("3. Panel Count") }
             } },
             confirmButton = { TextButton(onClick = { showCountMethod = false }) { Text("Cancel") } })
     }
@@ -239,6 +246,9 @@ fun YieldEstimationScreen(
                     },
                     onQuadrantRecord = { siteId, measurement ->
                         state.isSystemAdmin && apply(s.recordQuadrant(siteId, measurement, state.currentUserId ?: ""))
+                    },
+                    onPanelRecord = { siteId, measurement ->
+                        apply(s.recordPanel(siteId, measurement, state.currentUserId ?: ""))
                     },
                     onComplete = { showSampling = false; showCompletion = true },
                     onBack = { closeTrip() },
@@ -307,7 +317,7 @@ private fun YieldEstimationSession.recordBunch(
     siteId: String,
     bunchesPerVine: Double,
     recordedBy: String,
-): YieldEstimationSession = if (isQuadrantCount) this else copy(
+): YieldEstimationSession = if (isQuadrantCount || isPanelCount) this else copy(
     sampleSites = sampleSites.map {
         if (it.id == siteId) {
             it.copy(
@@ -322,6 +332,21 @@ private fun YieldEstimationSession.recordBunch(
         }
     },
 )
+
+private fun YieldEstimationSession.recordPanel(
+    siteId: String, measurement: PanelCountMeasurement, recordedBy: String,
+): YieldEstimationSession {
+    if (!isPanelCount || isCompleted) return this
+    val checked = PanelCountMeasurement.make(measurement.totalBunches, measurement.plantedPositions,
+        measurement.fruitingVines, measurement.missingPositions,
+        measurement.nonproductiveVines, measurement.panelLengthMetres) ?: return this
+    return copy(sampleSites = sampleSites.map { site ->
+        if (site.id.equals(siteId, true)) site.copy(
+            bunchCountEntry = null,
+            panelCountEntry = PanelCountEntry(checked, Instant.now().toString(), recordedBy),
+        ) else site
+    })
+}
 
 // =============================================================================
 // Step 1 — Home: explain the trip, start / resume, past trips
@@ -878,6 +903,11 @@ private fun TripSetupScreen(
                 if (saved) selectedSite = null
                 saved
             },
+            onPanelSave = { measurement ->
+                val saved = onApply(session.recordPanel(site.id, measurement, state.currentUserId ?: ""))
+                if (saved) selectedSite = null
+                saved
+            },
             onDismiss = { selectedSite = null },
             onSave = { bunches ->
                 onApply(session.recordBunch(site.id, bunches, state.currentUserId ?: ""))
@@ -997,11 +1027,11 @@ private fun YieldEstimationSession.toggleBlock(blockId: String): YieldEstimation
     val idx = selected.indexOfFirst { it.equals(blockId, ignoreCase = true) }
     if (idx >= 0) selected.removeAt(idx) else selected.add(blockId)
     // Changing the block set invalidates the generated/reused route.
-    return copy(selectedPaddockIds = selected, sampleSites = emptyList(), pathWaypoints = emptyList(), routeSourceSessionId = null)
+    return copy(selectedPaddockIds = selected, sampleSites = emptyList(), pathWaypoints = emptyList(), routeSourceSessionId = null, siteSetVersions = emptyMap())
 }
 
 private fun YieldEstimationSession.withSelection(ids: List<String>): YieldEstimationSession =
-    copy(selectedPaddockIds = ids, sampleSites = emptyList(), pathWaypoints = emptyList(), routeSourceSessionId = null)
+    copy(selectedPaddockIds = ids, sampleSites = emptyList(), pathWaypoints = emptyList(), routeSourceSessionId = null, siteSetVersions = emptyMap())
 
 // =============================================================================
 // Step 10–13 — Completion: per-block summary, bunch weights, damage, save
@@ -1333,6 +1363,7 @@ internal fun YieldSamplingMapScreen(
     session: YieldEstimationSession,
     onRecord: (siteId: String, bunches: Double, recordedBy: String) -> Boolean,
     onQuadrantRecord: (String, QuadrantCountMeasurement) -> Boolean,
+    onPanelRecord: (String, PanelCountMeasurement) -> Boolean,
     onComplete: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -1533,6 +1564,16 @@ internal fun YieldSamplingMapScreen(
                 else saveError = "Could not save this sample. It has not been advanced; retry before leaving."
                 saved
             },
+            onPanelSave = { measurement ->
+                val saved = onPanelRecord(site.id, measurement)
+                if (saved) {
+                    selectedSiteId = YieldSamplingNavigation.next(session.sampleSites, site.id, justRecorded = true)
+                    recordingSite = null
+                } else {
+                    saveError = "Panel measurement was not saved. Please retry."
+                }
+                saved
+            },
             onDismiss = { recordingSite = null },
             onSave = { bunches ->
                 if (onRecord(site.id, bunches, state.currentUserId ?: "")) {
@@ -1645,7 +1686,12 @@ private fun CountMethodDialog(
     onDismiss: () -> Unit,
     onSave: (Double) -> Unit,
     onQuadrantSave: (QuadrantCountMeasurement) -> Boolean,
+    onPanelSave: (PanelCountMeasurement) -> Boolean,
 ) {
+    if (session.isPanelCount) {
+        PanelCountDialog(site = site, saveLabel = saveLabel, onDismiss = onDismiss, onSave = onPanelSave)
+        return
+    }
     if (!session.isQuadrantCount) {
         BunchCountDialog(site = site, saveLabel = saveLabel, onDismiss = onDismiss, onSave = onSave)
         return
