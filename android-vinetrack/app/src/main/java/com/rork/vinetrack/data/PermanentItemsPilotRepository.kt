@@ -21,7 +21,6 @@ import java.util.UUID
 
 /** Issue #53. Separate from existing Pins and all Trip/Spray journals. */
 object PermanentItemPilotPolicy {
-    const val FLAG = "permanent_items_admin_preview"
     val TYPES = linkedMapOf(
         "irrigation_valve" to "Irrigation Valve", "flush_valve" to "Flush Valve",
         "pump" to "Pump", "filter" to "Filter", "tank" to "Tank",
@@ -49,9 +48,9 @@ object PermanentItemPilotPolicy {
         custom.firstOrNull { it.typeKey == type }?.colorHex ?: COLORS[type] ?: "#A8559A"
     fun canHardDelete(role: String?): Boolean =
         role?.lowercase() in setOf("owner", "manager", "supervisor")
-    fun allowed(admin: Boolean, flag: Boolean, user: String?, vineyard: String?, role: String?): Boolean =
-        (admin || canHardDelete(role)) && flag &&
-            !user.isNullOrBlank() && !vineyard.isNullOrBlank() && !role.isNullOrBlank()
+    // Local identity scope only; membership and permissions come from the RPC.
+    fun eligible(user: String?, vineyard: String?): Boolean =
+        !user.isNullOrBlank() && !vineyard.isNullOrBlank()
 }
 
 @Serializable
@@ -189,7 +188,7 @@ class PermanentItemsPilotRepository(context: Context) {
             grants
         }
 
-    suspend fun pilotEnabled(vineyard: String): Boolean = permissions(vineyard).canRead
+    suspend fun hasAccess(vineyard: String): Boolean = permissions(vineyard).canRead
 
     fun pendingHardDelete(vineyard: String): PermanentItemHardDeleteIntent? {
         val account = session.userId ?: return null

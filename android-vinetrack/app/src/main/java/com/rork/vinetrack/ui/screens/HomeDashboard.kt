@@ -237,17 +237,21 @@ private fun DashboardContent(
     onOpenPermanentItem: () -> Unit,
 ) {
     val context = LocalContext.current
-    var permanentPilotEnabled by remember(state.currentUserId, state.selectedVineyardId) { mutableStateOf(false) }
-    LaunchedEffect(state.currentUserId, state.selectedVineyardId, state.isSystemAdmin, state.currentRole) {
-        permanentPilotEnabled = false
+    var permanentItemsAccessible by remember(state.currentUserId, state.selectedVineyardId) {
+        mutableStateOf(false)
+    }
+    LaunchedEffect(state.currentUserId, state.selectedVineyardId) {
+        permanentItemsAccessible = false
+        val user = state.currentUserId
         val selected = state.selectedVineyardId
-        if (PermanentItemPilotPolicy.allowed(
-            state.isSystemAdmin, true, state.currentUserId, selected, state.currentRole
-        ) && selected != null) {
-            // Remote admin+flag check; failures remain hidden. The screen verifies again.
-            permanentPilotEnabled = runCatching {
-                PermanentItemsPilotRepository(context).pilotEnabled(selected)
+        if (PermanentItemPilotPolicy.eligible(user, selected) && selected != null) {
+            // The server authorizes each member for this exact vineyard.
+            val access = runCatching {
+                PermanentItemsPilotRepository(context).hasAccess(selected)
             }.getOrDefault(false)
+            if (state.currentUserId == user && state.selectedVineyardId == selected) {
+                permanentItemsAccessible = access
+            }
         }
     }
     val wizardEnabled = remember { com.rork.vinetrack.data.SetupWizardStore(context).isEnabled() }
@@ -321,7 +325,7 @@ private fun DashboardContent(
                 onRepairs = { onOpenObservations("Repairs") },
                 onGrowth = { onOpenObservations("Growth") },
                 onAddPinAction = onOpenAddPinAction,
-                onPermanentItemAction = if (permanentPilotEnabled) onOpenPermanentItem else null,
+                onPermanentItemAction = if (permanentItemsAccessible) onOpenPermanentItem else null,
             )
 
             OverviewSection(state, onOpenMap)

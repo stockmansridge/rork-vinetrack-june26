@@ -111,7 +111,7 @@ private fun permanentItemMarkerIcon(type: String, custom: List<PermanentItemPilo
     return BitmapDescriptorFactory.fromBitmap(bitmap)
 }
 
-/** An independent System Admin pilot surface, never joined to the normal Pins map/outbox. */
+/** Independent vineyard-member feature, separate from normal Pins and Trip outboxes. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PermanentItemsAdminPilotScreen(
@@ -158,9 +158,7 @@ fun PermanentItemsAdminPilotScreen(
     var savingNewType by remember { mutableStateOf(false) }
     var newTypeError by remember { mutableStateOf<String?>(null) }
     var showPhotoOptions by remember { mutableStateOf(false) }
-    val locked = !PermanentItemPilotPolicy.allowed(
-        state.isSystemAdmin, allowed, user, vineyard, state.currentRole
-    )
+    val locked = !PermanentItemPilotPolicy.eligible(user, vineyard) || !allowed
 
     fun startEditor(item: PermanentItemPilotRow?) {
         if (locked) return
@@ -305,14 +303,12 @@ fun PermanentItemsAdminPilotScreen(
         else error = "Allow Camera permission to take a photo, or choose one from your library."
     }
 
-    LaunchedEffect(user, vineyard, state.isSystemAdmin, state.currentRole) {
+    LaunchedEffect(user, vineyard) {
         allowed = false; canManage = false; canHardDelete = false
         rows = emptyList(); customTypes = emptyList()
         editing = false; pending = false; pendingDelete = null; deleteTarget = null; loading = true
         val target = vineyard
-        if (target != null && PermanentItemPilotPolicy.allowed(
-            state.isSystemAdmin, true, user, target, state.currentRole
-        )) {
+        if (target != null && PermanentItemPilotPolicy.eligible(user, target)) {
             try {
                 val grant = repository.permissions(target)
                 if (state.selectedVineyardId == target && state.currentUserId == user) {
@@ -328,7 +324,7 @@ fun PermanentItemsAdminPilotScreen(
                 }
             } catch (e: Exception) {
                 allowed = false
-                error = e.message ?: "Pilot authorization unavailable"
+                error = e.message ?: "Vineyard membership authorization unavailable"
             }
         }
         loading = false
@@ -363,7 +359,7 @@ fun PermanentItemsAdminPilotScreen(
             Column(Modifier.fillMaxSize().padding(padding).padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Permanent Items unavailable", style = MaterialTheme.typography.titleMedium)
-                Text("Requires System Admin pilot access or an Owner/Manager role in the selected vineyard.")
+                Text("Requires signed-in membership of the selected vineyard.")
                 if (error != null) Text(error ?: "", color = MaterialTheme.colorScheme.error)
             }
         } else if (editing) {

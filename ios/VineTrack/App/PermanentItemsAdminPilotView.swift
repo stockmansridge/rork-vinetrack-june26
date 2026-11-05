@@ -6,9 +6,8 @@ import CoreLocation
 import PhotosUI
 import UIKit
 
-// Issue #53. Isolated System Admin pilot: not a mode of Pins, and never a Trip-sync job.
+// Issue #53. Vineyard-member feature, separate from ordinary Pins and Trip/Spray sync.
 enum PermanentItemsPilotPolicy {
-    static let flag = "permanent_items_admin_preview"
     /// Server RLS and the permissions RPC make the authorization decision.
     /// Do not block this lookup on the unrelated Home role-cache refresh:
     /// that can complete after .task(id:) has already run.
@@ -300,13 +299,11 @@ private struct PermanentItemPilotRepository {
     }
 }
 
-/// The Home shortcut is authorised by the exact same server-side gate used for
-/// reads and deletion. Do not rely on System Admin flags alone: owners/managers
-/// must see the list without gaining the create/edit pilot.
+/// Every signed-in vineyard member may open this shortcut. The destination
+/// independently checks server-authoritative membership before showing data.
 struct PermanentItemsPilotShortcut: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(MigratedDataStore.self) private var store
-    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(\.scenePhase) private var scenePhase
     @State private var grants: PermanentItemPilotPermissions?
 
@@ -319,15 +316,9 @@ struct PermanentItemsPilotShortcut: View {
     // the unrelated BackendAccessControl role cache finishes loading.
     // This avoids a missing shortcut after a cold start with no cached role.
     private var scope: String {
-        "\(auth.userId?.uuidString ?? "none")|\(vineyard?.uuidString ?? "none")|\(auth.isSignedIn)|\(auth.completedSignOutSequence)|\(scenePhase == .active)|\(systemAdmin.isSystemAdmin)|\(systemAdmin.isEnabled(PermanentItemsPilotPolicy.flag))"
+        "\(auth.userId?.uuidString ?? "none")|\(vineyard?.uuidString ?? "none")|\(auth.isSignedIn)|\(auth.completedSignOutSequence)|\(scenePhase == .active)"
     }
-    private var isAdminPreview: Bool {
-        validScope && systemAdmin.isSystemAdmin &&
-            systemAdmin.isEnabled(PermanentItemsPilotPolicy.flag)
-    }
-    private var isVisible: Bool {
-        validScope && (grants?.canRead == true || isAdminPreview)
-    }
+    private var isVisible: Bool { validScope }
     private var subtitle: String {
         if grants?.canRead == true { return "Fixed property assets" }
         if grants?.canRead == false { return "Vineyard access required" }
@@ -338,8 +329,7 @@ struct PermanentItemsPilotShortcut: View {
         Group {
             if isVisible {
                 NavigationLink {
-                    // Destination independently checks the RPC/role again. The
-                    // System Admin fallback exposes a diagnostic ENTRY, not data.
+                    // The visible entry cannot bypass server-authorised vineyard access.
                     PermanentItemsAdminPilotView()
                 } label: {
                     HStack(spacing: 12) {
@@ -382,14 +372,13 @@ struct PermanentItemsPilotShortcut: View {
                       validScope else { return }
                 grants = value
             } catch {
-                // A verified System Admin sees the shortcut with an access
-                // message even on a network error, but never gets fixture data.
+                // Keep the shortcut for a member to retry; no data is shown without server permission.
             }
         }
     }
 }
 
-/// Pilot writes are isolated from the app's Pins / Trip / Spray journals.
+/// Permanent Item writes are isolated from Pins / Trip / Spray journals.
 /// A single retryable operation is stored under the exact signed-in account+vineyard.
 /// A server timeout NEVER generates a second UUID; no "Synced" before readback.
 struct PermanentItemsAdminPilotView: View {
@@ -450,7 +439,7 @@ struct PermanentItemsAdminPilotView: View {
                         "Permanent Items unavailable",
                         systemImage: "lock.shield",
                         description: Text(
-                            message ?? "Access requires the pilot flag, selected-vineyard membership, and either System Admin or a Supervisor/Manager/Owner role."
+                            message ?? "Access requires signed-in membership of the selected vineyard."
                         )
                     )
                 }
@@ -677,7 +666,7 @@ struct PermanentItemsAdminPilotView: View {
             if grant.canRead {
                 await load()
             } else {
-                message = "This account does not have Permanent Items access in the selected vineyard. Verify System Admin status and vineyard membership, or select a vineyard where you are Supervisor, Manager or Owner."
+                message = "This account is not authorised for Permanent Items in the selected vineyard. Check membership or select a vineyard you belong to."
             }
         } catch {
             if capturedScope == scope {

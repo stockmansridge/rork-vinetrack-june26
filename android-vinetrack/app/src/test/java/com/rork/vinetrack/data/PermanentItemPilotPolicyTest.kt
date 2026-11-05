@@ -5,21 +5,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PermanentItemPilotPolicyTest {
-    @Test fun adminAndFlagAndMembershipAreAllRequired() {
+    @Test fun authenticatedVineyardScopeDoesNotRequireSystemAdmin() {
         val policy = PermanentItemPilotPolicy
-        assertTrue(policy.allowed(true, true, "account", "vineyard", "manager"))
-        assertTrue(policy.allowed(false, true, "account", "vineyard", "owner"))
-        assertTrue(policy.allowed(false, true, "account", "vineyard", "manager"))
-        assertTrue(policy.allowed(false, true, "account", "vineyard", "supervisor"))
-        assertFalse(policy.allowed(false, true, "account", "vineyard", "operator"))
+        assertTrue(policy.eligible("account", "vineyard"))
+        assertFalse(policy.eligible(null, "vineyard"))
+        assertFalse(policy.eligible("account", null))
+        assertFalse(policy.eligible(" ", "vineyard"))
+        assertFalse(policy.eligible("account", " "))
+        // Actual membership and can_manage are decided by the server RPC.
         assertTrue(policy.canHardDelete("owner"))
         assertTrue(policy.canHardDelete("manager"))
         assertTrue(policy.canHardDelete("supervisor"))
         assertFalse(policy.canHardDelete("operator"))
-        assertFalse(policy.allowed(true, false, "account", "vineyard", "owner"))
-        assertFalse(policy.allowed(true, true, null, "vineyard", "manager"))
-        assertFalse(policy.allowed(true, true, "account", null, "manager"))
-        assertFalse(policy.allowed(true, true, "account", "vineyard", null))
+        assertFalse(policy.canHardDelete(null))
     }
 
     @Test fun onlyFixedFixtureLocationsAndTypesPassValidation() {

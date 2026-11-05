@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import VineTrack
 
-/// Issue #53: System Admin-only fixture pilot, isolated from ordinary Pins.
+/// Issue #53: vineyard-member fixtures, isolated from ordinary Pins.
 struct PermanentItemsPilotPolicyTests {
     /// Reproduces iOS cold-start regression: server permission lookup must
     /// be eligible immediately after auth+vineyard restore, even while the
