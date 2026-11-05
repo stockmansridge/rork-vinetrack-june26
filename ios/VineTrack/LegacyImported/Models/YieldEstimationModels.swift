@@ -63,7 +63,7 @@ nonisolated struct PanelCountMeasurement: Codable, Sendable, Hashable {
     ) -> Self? {
         guard totalBunches >= 0, plantedPositions > 0,
               fruitingVines >= 0, missingPositions >= 0, nonproductiveVines >= 0,
-              fruitingVines + missingPositions + nonproductiveVines == plantedPositions,
+              fruitingVines <= plantedPositions && missingPositions <= plantedPositions - fruitingVines && nonproductiveVines == plantedPositions - fruitingVines - missingPositions,
               panelLengthMetres.map({ $0.isFinite && $0 > 0 }) ?? true else { return nil }
         return Self(totalBunches: totalBunches, plantedPositions: plantedPositions,
                     fruitingVines: fruitingVines, missingPositions: missingPositions,
