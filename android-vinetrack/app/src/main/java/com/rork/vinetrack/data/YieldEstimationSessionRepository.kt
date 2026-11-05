@@ -166,8 +166,26 @@ class YieldEstimationSessionRepository(private val session: SessionStore) : Yiel
             setBody(HardDeleteArgs(source.id, source.vineyardId, source.isCompleted))
         }
         when {
-            response.status.isSuccess() -> check(response.body<Boolean>()) {
-                "Hard delete was not acknowledged by the server."
+            response.status.isSuccess() -> {
+                if (!response.body<Boolean>()) {
+                    // A locally created draft can be deleted before its
+                    // first upload. Verify no server row exists, then let
+                    // the local delete coordinator cancel its pending save.
+                    if (source.isCompleted) {
+                        error("Completed yield observation does not exist or cannot be deleted.")
+                    }
+                    val check = SupabaseClient.http.get(SupabaseClient.restUrl(
+                        "yield_estimation_sessions?select=id" +
+                            "&id=eq.${source.id}&vineyard_id=eq.${source.vineyardId}"
+                    )) { authHeaders(token) }
+                    if (!check.status.isSuccess()) {
+                        throw BackendError.Server(check.status.value, check.bodyAsText())
+                    }
+                    check(check.body<List<kotlinx.serialization.json.JsonObject>>().isEmpty()) {
+                        "The draft exists on the server but hard deletion was rejected."
+                    }
+                    return@withContext
+                }
             }
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
