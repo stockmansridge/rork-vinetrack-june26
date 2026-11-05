@@ -174,12 +174,27 @@ struct YieldEstimationView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("yield.resume")
-                    Text("Draft")
-                    if draft.isPanelCount {
-                        PanelCountSummary(session: draft)
-                    } else {
-                        CurrentYieldEstimateSummary(estimate: currentEstimate(draft), detailed: false)
+                    Text("Draft · Recorded Observations")
+                    Button {
+                        resumeTrip(draft)
+                        if !draft.sampleSites.isEmpty { showSampling = true }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if draft.isPanelCount {
+                                PanelCountSummary(session: draft)
+                            } else {
+                                CurrentYieldEstimateSummary(estimate: currentEstimate(draft), detailed: false)
+                            }
+                            Label("Tap to review, correct or delete a recorded sample",
+                                  systemImage: "square.and.pencil")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.blue)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("yield.draft.recorded.open")
                 }
 
 
