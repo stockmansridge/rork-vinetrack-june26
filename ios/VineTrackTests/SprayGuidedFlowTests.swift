@@ -82,6 +82,7 @@ struct SprayGuidedFlowTests {
         var inputs = completeInputs()
         inputs.blocks = [block(rowLengthMetres: nil, rowSpacing: nil)]
         inputs.carrierBasis = .manualTotalVolume
+        inputs.tankCapacityLitres = 500 // 800 L spray must create two real tanks.
         inputs.manualTotalLitres = 800
         inputs.litresPerHectare = nil
         inputs.canopy = .unconfirmed
@@ -98,6 +99,7 @@ struct SprayGuidedFlowTests {
         #expect(resolved.controllerLitresPer100mTravel == nil)
         #expect(resolved.concentrationFactor == 1)
         #expect(flow.plan.totalCarrierLitres == 800)
+        #expect(flow.plan.tankSplit.totalTanks == 2)
         let persisted = try #require(flow.snapshot)
         #expect(persisted.planningResolution == resolved)
         #expect(SprayRecord(applicationGeometry: persisted).operationalPlanningBlocker == nil)
