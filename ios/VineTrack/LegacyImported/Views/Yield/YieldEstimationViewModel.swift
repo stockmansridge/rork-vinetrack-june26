@@ -34,6 +34,7 @@ class YieldEstimationViewModel {
     var applyDamage: Bool = true
     /// Earlier session whose route was reused for this trip, if any.
     var routeSourceSessionId: UUID?
+    var siteSetVersions: [String: YieldSamplingSiteSource] = [:]
 
     func togglePaddock(_ paddockId: UUID) {
         if selectedPaddockIds.contains(paddockId) {
@@ -92,6 +93,7 @@ class YieldEstimationViewModel {
         if sessionId == nil { sessionId = UUID() }
         if sessionCreatedAt == nil { sessionCreatedAt = Date() }
         routeSourceSessionId = nil
+        siteSetVersions = [:]
     }
 
     /// Adopt an earlier trip's route (site identity preserved, counts already
@@ -104,6 +106,7 @@ class YieldEstimationViewModel {
         if sessionId == nil { sessionId = UUID() }
         if sessionCreatedAt == nil { sessionCreatedAt = Date() }
         routeSourceSessionId = route.sourceSessionId
+        siteSetVersions = [:]
     }
 
     func recordBunchCount(siteId: UUID, bunchesPerVine: Double, recordedBy: String) {
@@ -420,6 +423,7 @@ class YieldEstimationViewModel {
         sessionCreatedAt = session.createdAt
         applyDamage = session.applyDamage
         routeSourceSessionId = session.routeSourceSessionId
+        siteSetVersions = session.siteSetVersions
         countMethod = session.isQuadrantCount ? "quadrant" : session.countMethod
         quadrantSectionLengthCm = session.quadrantSectionLengthCm ?? 60
     }
@@ -445,7 +449,8 @@ class YieldEstimationViewModel {
             routeSourceSessionId: routeSourceSessionId,
             blockVineCounts: blockVineCounts,
             countMethod: countMethod,
-            quadrantSectionLengthCm: isQuadrantCount ? quadrantSectionLengthCm : nil
+            quadrantSectionLengthCm: isQuadrantCount ? quadrantSectionLengthCm : nil,
+            siteSetVersions: siteSetVersions
         )
     }
 
@@ -490,6 +495,7 @@ class YieldEstimationViewModel {
         sessionCreatedAt = nil
         applyDamage = true
         routeSourceSessionId = nil
+        siteSetVersions = [:]
     }
 
     /// Return to block/route setup — clears the generated route (and any
@@ -500,6 +506,7 @@ class YieldEstimationViewModel {
         pathWaypoints = []
         isPathGenerated = false
         routeSourceSessionId = nil
+        siteSetVersions = [:]
     }
 
     /// Begin a brand-new Bunch Count Trip — every trip is its own dated
