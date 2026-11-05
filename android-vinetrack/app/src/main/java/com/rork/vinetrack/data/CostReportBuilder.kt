@@ -52,6 +52,14 @@ object CostReportBuilder {
     /** Marks a row estimated from today's inputs because the Trip has no saved allocation. */
     const val ESTIMATE_WARNING: String = "Estimated Trip cost: no saved allocation"
 
+    /** Authoritative rows only. Unsaved estimates are never recorded costs. */
+    fun savedReportRows(rows: List<CostAllocationRow>): List<CostAllocationRow> =
+        rows.filterNot { it.isEstimate }
+
+    /** Read-only preview, excluded from all saved Cost Report totals. */
+    fun unsavedEstimateRows(rows: List<CostAllocationRow>): List<CostAllocationRow> =
+        rows.filter { it.isEstimate }
+
     /**
      * Build allocation rows for every completed (ended, non-deleted) trip in the
      * supplied data set. Active/aborted trips and trips without a start date are

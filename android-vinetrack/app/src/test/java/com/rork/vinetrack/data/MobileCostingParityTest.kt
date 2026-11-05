@@ -8,6 +8,25 @@ import org.junit.Test
 import java.math.BigDecimal
 
 class MobileCostingParityTest {
+    @Test fun unsavedEstimatesNeverEnterTheSavedCostReport() {
+        val saved = CostReportBuilder.CostAllocationRow(
+            tripId = "saved", seasonYear = 2027, paddockId = "block", paddockName = "Block",
+            variety = "Shiraz", varietyFraction = 1.0, tripFunction = "spray",
+            areaHa = 1.0, labourCost = 0.0, fuelCost = 0.0,
+            chemicalCost = 0.0, totalCost = 0.0, tripDateEpochMs = null,
+            warnings = emptyList(),
+        )
+        val estimated = saved.copy(
+            tripId = "unsaved", totalCost = 128.20,
+            warnings = listOf(CostReportBuilder.ESTIMATE_WARNING),
+        )
+        val rows = listOf(saved, estimated)
+        assertEquals(listOf("saved"), CostReportBuilder.savedReportRows(rows).map { it.tripId })
+        assertEquals(listOf("unsaved"), CostReportBuilder.unsavedEstimateRows(rows).map { it.tripId })
+        assertEquals(0.0, CostReportBuilder.savedReportRows(rows).sumOf { it.totalCost }, 0.001)
+        assertEquals(128.20, CostReportBuilder.unsavedEstimateRows(rows).sumOf { it.totalCost }, 0.001)
+    }
+
     @Test fun mulchingFuelOnlyIsComplete() {
         val task = WorkTask(id = "task", vineyardId = "vineyard")
         val labour = WorkTaskLabourLine(id = "labour", workTaskId = task.id, vineyardId = task.vineyardId, hoursPerWorker = 2.0, hourlyRate = 38.0)

@@ -173,26 +173,28 @@ fun CostReportsScreen(
         }
     }
 
-    val groups = remember(filtered, groupByFunction) { aggregate(filtered, groupByFunction) }
+    // Mirror iOS: the main report is saved Trip allocations only.
+    // Live estimates have their own explicitly UNSAVED preview below.
+    val savedRows = remember(filtered) { CostReportBuilder.savedReportRows(filtered) }
+    val estimatedRows = remember(filtered) { CostReportBuilder.unsavedEstimateRows(filtered) }
+    val groups = remember(savedRows, groupByFunction) { aggregate(savedRows, groupByFunction) }
+    val estimatedGroups = remember(estimatedRows, groupByFunction) { aggregate(estimatedRows, groupByFunction) }
 
-    // Season summary, counting each (season, block) yield only once.
-    // Saved Trip allocations are the report total, exactly like iOS. Live estimates
-    // for Trips with no saved allocation are shown separately and never summed in.
-    val savedRows = filtered.filterNot { it.isEstimate }
-    val estimatedRows = filtered.filter { it.isEstimate }
+    // The saved total and financial ratios cannot use estimated-only rows.
     val totalCost = savedRows.sumOf { it.totalCost }
     val estimatedCost = estimatedRows.sumOf { it.totalCost }
     val totalArea = savedRows.sumOf { it.areaHa }
-    val totalYield = remember(filtered, state.yieldRecords) {
-        filtered.map { it.seasonYear to it.paddockId }.distinct().sumOf { (season, pid) ->
+    val totalYield = remember(savedRows, state.yieldRecords) {
+        savedRows.map { it.seasonYear to it.paddockId }.distinct().sumOf { (season, pid) ->
             CostReportBuilder.seasonBlockYieldTonnes(state.yieldRecords, season, pid)
         }
     }
     val physicalArea = com.rork.vinetrack.data.model.CostingReadAuthority.physicalArea(
         state.paddocks.filter { it.vineyardId == state.selectedVineyardId && (selectedBlock == null || it.id == selectedBlock) },
     )
-    val costPerHa = if (filtered.all { it.warnings.isEmpty() }) physicalArea?.let { totalCost / it } else null
-    val costPerTonne = if (filtered.all { it.warnings.isEmpty() } && totalYield > 0 && totalCost > 0) totalCost / totalYield else null
+    val savedComplete = savedRows.isNotEmpty() && savedRows.all { it.warnings.isEmpty() }
+    val costPerHa = if (savedComplete) physicalArea?.let { totalCost / it } else null
+    val costPerTonne = if (savedComplete && totalYield > 0 && totalCost > 0) totalCost / totalYield else null
 
     Scaffold(
         modifier = modifier,
@@ -341,7 +343,7 @@ fun CostReportsScreen(
                                 Switch(checked = groupByFunction, onCheckedChange = { groupByFunction = it })
                             }
                             Text(
-                                "Rows are grouped by season, block and variety. Tap a row to see the contributing trips.",
+                                "Saved allocations only, grouped by vintage, block and variety. Unsaved live estimates are displayed separately below and excluded from totals.",
                                 color = vine.textSecondary, fontSize = 11.sp,
                             )
                             if (groups.any { it.variety == CostReportBuilder.UNASSIGNED_VARIETY }) {
@@ -359,7 +361,7 @@ fun CostReportsScreen(
                     if (groups.isEmpty()) {
                         item {
                             VineyardCard {
-                                Text("No breakdown rows for the current filter.", color = vine.textSecondary, fontSize = 13.sp)
+                                Text("No saved allocations match this filter. Unsaved estimates, if any, are displayed separately below.", color = vine.textSecondary, fontSize = 13.sp)
                             }
                         }
                     } else {
@@ -377,6 +379,29 @@ fun CostReportsScreen(
                         }
                     }
 
+                    if (estimatedGroups.isNotEmpty()) {
+                        item(key = "unsaved-estimates-heading") {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                SectionHeader("Unsaved estimates — not in Cost Reports", onLight = true)
+                                Text(
+                                    "Calculated from current local inputs, not saved financial records. Values can differ from iOS until cost allocations are saved and synced.",
+                                    color = VineColors.Warning, fontSize = 12.sp,
+                                )
+                            }
+                        }
+                        items(estimatedGroups.size) { index ->
+                            val estimate = estimatedGroups[index]
+                            VineyardCard {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("Vintage ${estimate.seasonYear} · ${estimate.paddockName}", color = vine.textPrimary, fontWeight = FontWeight.SemiBold)
+                                        Text("${estimate.variety} · ${estimate.rows.map { it.tripId }.distinct().size} trip(s) · estimate only", color = vine.textSecondary, fontSize = 12.sp)
+                                    }
+                                    Text(fmt.formatCurrency(estimate.total), color = vine.textPrimary, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
                     item { Box(modifier = Modifier.height(8.dp)) }
                 }
             }
