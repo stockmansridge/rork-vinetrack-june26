@@ -77,11 +77,38 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 
-private fun permanentItemMarkerHue(type: String, custom: List<PermanentItemPilotType>): Float {
-    val hsv = FloatArray(3)
-    android.graphics.Color.colorToHSV(
-        android.graphics.Color.parseColor(PermanentItemPilotPolicy.hex(type, custom)), hsv)
-    return hsv[0]
+/**
+ * Exact RGB marker colour shared across Portal, iOS and Android.
+ * A Google Maps hue-only default marker changes saturation/brightness.
+ */
+private fun permanentItemMarkerIcon(type: String, custom: List<PermanentItemPilotType>)
+    : com.google.android.gms.maps.model.BitmapDescriptor {
+    val bitmap = android.graphics.Bitmap.createBitmap(
+        76, 96, android.graphics.Bitmap.Config.ARGB_8888
+    )
+    val canvas = android.graphics.Canvas(bitmap)
+    val path = android.graphics.Path().apply {
+        moveTo(38f, 92f)
+        cubicTo(31f, 76f, 6f, 57f, 6f, 37f)
+        cubicTo(6f, 19f, 20f, 5f, 38f, 5f)
+        cubicTo(56f, 5f, 70f, 19f, 70f, 37f)
+        cubicTo(70f, 57f, 45f, 76f, 38f, 92f)
+        close()
+    }
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.FILL
+        color = android.graphics.Color.parseColor(PermanentItemPilotPolicy.hex(type, custom))
+    }
+    canvas.drawPath(path, paint)
+    paint.apply {
+        color = android.graphics.Color.WHITE
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = 4f
+    }
+    canvas.drawPath(path, paint)
+    paint.style = android.graphics.Paint.Style.FILL
+    canvas.drawCircle(38f, 35f, 10f, paint)
+    return BitmapDescriptorFactory.fromBitmap(bitmap)
 }
 
 /** An independent System Admin pilot surface, never joined to the normal Pins map/outbox. */
@@ -444,8 +471,7 @@ fun PermanentItemsAdminPilotScreen(
                     if (picked != null) Marker(
                         state = MarkerState(position = picked),
                         title = "Permanent Item placement",
-                        icon = BitmapDescriptorFactory.defaultMarker(
-                            permanentItemMarkerHue(type, customTypes))
+                        icon = permanentItemMarkerIcon(type, customTypes)
                     )
                 }
                 OutlinedButton(onClick = {
@@ -565,8 +591,7 @@ fun PermanentItemsAdminPilotScreen(
                             state = MarkerState(position = LatLng(item.latitude, item.longitude)),
                             title = item.name,
                             snippet = PermanentItemPilotPolicy.label(item.itemType, customTypes),
-                            icon = BitmapDescriptorFactory.defaultMarker(
-                                permanentItemMarkerHue(item.itemType, customTypes)),
+                            icon = permanentItemMarkerIcon(item.itemType, customTypes),
                             onClick = { startEditor(item); true }
                         )
                     }

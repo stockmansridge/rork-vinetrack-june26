@@ -59,7 +59,7 @@ android {
         testInstrumentationRunner = "com.rork.vinetrack.data.auth.CleanExitTestRunner"
         // 3.2.0 System Admin pilot: higher than the last recorded Play internal build.
         // Rork release exports may override this with a monotonically increasing code.
-        versionCode = 1794000003
+        versionCode = 1794000004
         versionName = "3.2.0"
 
         // No runtime/property override: live storage cutover needs separate approval.
