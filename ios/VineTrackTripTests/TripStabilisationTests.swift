@@ -67,6 +67,63 @@ final class TripStabilisationTests: XCTestCase {
         XCTAssertEqual(TankSessionLifecycle.start(trip: endedSecond, at: endedAt.addingTimeInterval(180), currentRow: nil, plannedTankNumbers: [1, 2]), endedSecond)
     }
 
+    func testEndTripAutoClosesSecondTankBeforeTripMayEnd() {
+        let firstStarted = TankSessionLifecycle.start(
+            trip: activeTrip(), at: startedAt, currentRow: nil, plannedTankNumbers: [1, 2]
+        )
+        let firstEnded = TankSessionLifecycle.end(
+            trip: firstStarted, at: startedAt.addingTimeInterval(80), currentRow: nil
+        )
+        let secondStarted = TankSessionLifecycle.start(
+            trip: firstEnded, at: startedAt.addingTimeInterval(120),
+            currentRow: nil, plannedTankNumbers: [1, 2]
+        )
+        XCTAssertEqual(TripEndGate.evaluate(trip: secondStarted), .blocked(.activeTank(tankNumber: 2)))
+        let endRequestedAt = startedAt.addingTimeInterval(190)
+        let ready = TankSessionLifecycle.endRunningTankBeforeTripEnd(
+            trip: secondStarted, at: endRequestedAt, currentRow: 74.5
+        )
+        XCTAssertNil(ready.activeTankNumber)
+        XCTAssertEqual(ready.tankSessions.count, 2)
+        XCTAssertEqual(ready.tankSessions[0].endTime, firstEnded.tankSessions[0].endTime)
+        XCTAssertEqual(ready.tankSessions[1].endTime, endRequestedAt)
+        XCTAssertEqual(TripEndGate.evaluate(trip: ready), .allowed)
+        XCTAssertTrue(ready.isActive) // Local tank persist happens BEFORE Trip End.
+        XCTAssertNil(ready.endTime)
+        XCTAssertEqual(
+            TankSessionLifecycle.endRunningTankBeforeTripEnd(
+                trip: ready, at: endRequestedAt.addingTimeInterval(5), currentRow: 75.5
+            ),
+            ready
+        )
+    }
+
+    func testEndTripNeverAutoClosesRunningFillOrAmbiguousTankSessions() {
+        let first = TankSessionLifecycle.start(
+            trip: activeTrip(), at: startedAt, currentRow: nil, plannedTankNumbers: [1, 2]
+        )
+        var filling = first
+        filling.isFillingTank = true
+        filling.fillingTankNumber = 1
+        let unchanged = TankSessionLifecycle.endRunningTankBeforeTripEnd(
+            trip: filling, at: endedAt, currentRow: nil
+        )
+        XCTAssertEqual(unchanged, filling)
+        XCTAssertFalse(TripEndGate.evaluate(trip: unchanged).isAllowed)
+
+        var ambiguous = first
+        ambiguous.tankSessions.append(TankSession(
+            tankNumber: 2, startTime: startedAt.addingTimeInterval(10)
+        ))
+        XCTAssertEqual(
+            TankSessionLifecycle.endRunningTankBeforeTripEnd(
+                trip: ambiguous, at: endedAt, currentRow: nil
+            ),
+            ambiguous
+        )
+        XCTAssertFalse(TripEndGate.evaluate(trip: ambiguous).isAllowed)
+    }
+
     func testOfflineEndedTankSurvivesLocalReloadAndEncodesExplicitNull() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
