@@ -98,12 +98,25 @@ nonisolated enum TankSessionLifecycle {
         trip: Trip, at timestamp: Date, currentRow: Double?
     ) -> Trip {
         guard trip.isActive, trip.endTime == nil,
-              trip.activeTankNumber != nil,
               !trip.isFillingTank, trip.fillingTankNumber == nil,
               !trip.tankSessions.contains(where: {
                   $0.fillStartTime != nil && $0.fillEndTime == nil
               }) else { return trip }
-        return end(trip: trip, at: timestamp, currentRow: currentRow)
+        if trip.activeTankNumber != nil {
+            return end(trip: trip, at: timestamp, currentRow: currentRow)
+        }
+        // Exactly one recorded spray session is still open but the runtime
+        // active-tank pointer was lost (older builds / partial server repair).
+        // The End gate blocks on that session while End Tank needs the
+        // pointer, which left the operator with no way out. Close that one
+        // existing session at the operator's End Trip time; never invent one.
+        let open = trip.tankSessions.filter { isOpenSpray($0) }
+        guard open.count == 1, let session = open.first,
+              trip.tankSessions.filter({ $0.tankNumber == session.tankNumber }).count == 1 else { return trip }
+        var pointed = trip
+        pointed.activeTankNumber = session.tankNumber
+        let ended = end(trip: pointed, at: timestamp, currentRow: currentRow)
+        return ended == pointed ? trip : ended
     }
 
     /// Repairs only an ended active tank with no other open spray or fill. Never changes session data.

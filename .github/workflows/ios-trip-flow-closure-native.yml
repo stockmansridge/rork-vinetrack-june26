@@ -76,6 +76,7 @@ jobs:
             -only-testing:VineTrackTests/SprayTripPhase5FinalisationTests \
             -only-testing:VineTrackTests/TripDeletionRecoveryTests \
             -only-testing:VineTrackTests/GPSPersistencePerformanceTests \
+            -only-testing:VineTrackTripTests/TripStabilisationTests \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/ios-trip-flow-closure.log"
       - name: Preserve results
         if: always()

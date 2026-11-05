@@ -101,6 +101,73 @@ final class TripFlowClosureTests: XCTestCase {
         XCTAssertEqual(persisted(trip.id, vineyard: trip.vineyardId), before)
     }
 
+    private func makeActiveTrip(_ configure: (inout Trip) -> Void) -> (MigratedDataStore, TripTrackingService, Trip) {
+        let vineyard = UUID()
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        store.selectedVineyardId = vineyard
+        var trip = Trip(vineyardId: vineyard, isActive: true)
+        configure(&trip)
+        store.startTrip(trip)
+        store.claimDeviceTrip(trip.id)
+        let tracking = TripTrackingService()
+        tracking.configure(store: store, locationService: LocationService())
+        return (store, tracking, trip)
+    }
+
+    func testEndingWithARunningTankFinishesTheTankThenEndsTheTrip() throws {
+        let (store, tracking, trip) = makeActiveTrip { trip in
+            trip.tankSessions = [
+                TankSession(tankNumber: 1, startTime: Date().addingTimeInterval(-3600),
+                            endTime: Date().addingTimeInterval(-1800), startRow: 1.5, endRow: 9.5),
+                TankSession(tankNumber: 2, startTime: Date().addingTimeInterval(-1700), startRow: 10.5),
+            ]
+            trip.activeTankNumber = 2
+            trip.totalTanks = 2
+        }
+        XCTAssertEqual(tracking.endTrip(), .ended)
+        let saved = try XCTUnwrap(persisted(trip.id, vineyard: trip.vineyardId))
+        XCTAssertFalse(saved.isActive)
+        XCTAssertNotNil(saved.endTime)
+        XCTAssertNil(saved.activeTankNumber)
+        XCTAssertTrue(saved.tankSessions.allSatisfy { $0.endTime != nil }, "Every tank must be finished on an ended trip")
+        let tank2 = try XCTUnwrap(saved.tankSessions.first { $0.tankNumber == 2 })
+        XCTAssertLessThanOrEqual(try XCTUnwrap(tank2.endTime), try XCTUnwrap(saved.endTime))
+        XCTAssertNil(store.deviceActiveTripId)
+    }
+
+    func testEndingWithAnOpenTankWhoseActivePointerWasLostStillFinishesIt() throws {
+        let (_, tracking, trip) = makeActiveTrip { trip in
+            trip.tankSessions = [TankSession(tankNumber: 1, startTime: Date().addingTimeInterval(-600), startRow: 2.5)]
+            trip.activeTankNumber = nil
+            trip.totalTanks = 1
+        }
+        XCTAssertEqual(tracking.endTrip(), .ended)
+        let saved = try XCTUnwrap(persisted(trip.id, vineyard: trip.vineyardId))
+        XCTAssertNotNil(saved.endTime)
+        XCTAssertNotNil(saved.tankSessions.first?.endTime)
+        XCTAssertNil(saved.activeTankNumber)
+    }
+
+    func testServerEndedTripStopsTrackingAndClosesItOnTheDevice() throws {
+        let (store, tracking, trip) = makeActiveTrip()
+        tracking.currentDistance = 250
+        tracking.currentPaddockName = "Block B"
+        var ended = try XCTUnwrap(store.trips.first { $0.id == trip.id })
+        ended.isActive = false
+        ended.endTime = Date()
+        store.applyRemoteTripUpsert(ended)
+
+        XCTAssertNil(store.deviceActiveTripId, "The device must release a trip the server finished")
+        XCTAssertNil(tracking.activeTrip)
+        XCTAssertFalse(tracking.isTracking)
+        XCTAssertEqual(tracking.currentDistance, 0)
+        XCTAssertNil(tracking.currentPaddockName)
+        XCTAssertEqual(tracking.lastServerCompletedTripId, trip.id)
+        let saved = try XCTUnwrap(persisted(trip.id, vineyard: trip.vineyardId))
+        XCTAssertFalse(saved.isActive)
+        XCTAssertNotNil(saved.endTime)
+    }
+
     func testEndTripClearsLiveStateForTheNextTrip() throws {
         let (_, tracking, _) = makeActiveTrip()
         tracking.currentDistance = 120

@@ -290,13 +290,12 @@ final class TripTrackingService {
         self.accessControl = accessControl
         self.authService = auth
         store.onOwnedTripCompletedByServer = { [weak self] tripId in
-            self?.lastServerCompletedTripId = tripId
-            self?.stopTrackingLoops(stopLocation: true)
-            self?.sprayWeatherTask?.cancel()
-            self?.sprayWeatherTask = nil
-            self?.isTracking = false
-            self?.isPaused = false
-            self?.errorMessage = "This trip was finished on the server. Your saved trip history remains available."
+            guard let self else { return }
+            self.lastServerCompletedTripId = tripId
+            // Same teardown as a local End (GPS, timers, every live value),
+            // without a second weather capture for a Trip ended elsewhere.
+            self.resetLiveTripState()
+            self.errorMessage = "This trip was finished on the server. Your saved trip history remains available."
         }
         startTankCommitCoordinator.recover(store: store)
         resumeIfNeeded()
@@ -1062,6 +1061,11 @@ final class TripTrackingService {
     /// timers, and clear every live value so the next Trip starts clean.
     private func finishLocalEnd(of trip: Trip) {
         Task { await SprayReportRepository.shared.captureUnavailableIfDue(for: trip, at: Date(), isFinal: true) }
+        resetLiveTripState()
+    }
+
+    /// Stops GPS and timers and clears every live value.
+    private func resetLiveTripState() {
         sprayWeatherTask?.cancel()
         sprayWeatherTask = nil
         errorMessage = nil
