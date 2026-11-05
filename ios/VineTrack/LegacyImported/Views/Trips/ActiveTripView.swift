@@ -1919,7 +1919,9 @@ struct ActiveTripView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This will stop tracking and finalise the trip.")
+                Text((tracking.activeTrip ?? trip).activeTankNumber != nil
+                    ? "This will finish the active tank first, then stop tracking and end the trip. Tank actuals are not invented; completion will sync when available."
+                    : "This will stop tracking and end the trip. Completion will sync when available.")
             }
             .alert(
                 "Can't end the trip yet",
