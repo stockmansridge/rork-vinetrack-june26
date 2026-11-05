@@ -305,7 +305,12 @@ final class PersistenceStore {
         // Keep the original bytes and durable write/ACK contract unchanged.
         decodedSnapshots.removeValue(forKey: key)
         if key == TripRepository.storageKey {
-            retainSnapshot(value, bytes: data, key: key)
+            // The value was just encoded FROM the in-memory Trip array:
+            // decoded identity generation cannot apply here. Avoid a second
+            // complete JSONSerialization scan of every GPS point when checking
+            // memo eligibility. Subsequent loads still compare exact disk bytes
+            // and never trust the memo after an external write or corruption.
+            retainSnapshot(value, bytes: data, key: key, preparedEligibility: true)
         }
         measurement.succeeded = true
     }
