@@ -9,12 +9,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * Offline replay coordinator for yield-estimation session DELETE only (Android
+ * Offline replay coordinator for yield-estimation session physical DELETE only (Android
  * Stage Q).
  *
  * The operator deleted a yield-estimation session offline (or a transient online
- * soft-delete failed) and the row is already hidden locally. This replays the
- * soft-delete RPC ([YieldEstimationSessionRepository.softDeleteSession]) and
+ * hard-delete was interrupted) and the row is already hidden locally. This replays the
+ * hard-delete RPC ([YieldEstimationSessionRepository.hardDeleteSessionById]) and
  * nothing else.
  *
  * Discriminator: [PendingEntityType.YIELD_SESSION] / DELETE, keyed by session id
@@ -24,7 +24,7 @@ import kotlinx.serialization.json.Json
  * also defers/cancels saves while a delete is queued). Replay ordering: the save
  * pass runs first, then the delete pass.
  *
- * Idempotency / permissions: the soft-delete RPC is naturally idempotent (a
+ * Idempotency / permissions: the hard-delete RPC is idempotent via deletion receipts (a
  * not-found / already-deleted row is treated as success). Soft-delete is
  * RLS-restricted to owner/manager/supervisor, so a permission rejection BLOCKS
  * (needs attention) rather than retrying forever. No auth/session/tokens stored.
@@ -88,7 +88,7 @@ class YieldSessionDeleteSync(
                     continue
                 }
                 try {
-                    sessionRepo.softDeleteSession(payload.id)
+                    sessionRepo.hardDeleteSessionById(payload.id)
                     pending.remove(write.id)
                     onSynced(payload.id)
                 } catch (e: BackendError.Unauthorized) {
