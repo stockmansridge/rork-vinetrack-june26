@@ -295,7 +295,16 @@ final class PersistenceStore {
         let writeStart = ProcessInfo.processInfo.systemUptime
         defer { measurement.writeMilliseconds = (ProcessInfo.processInfo.systemUptime - writeStart) * 1000 }
         try data.write(to: url, options: [.atomic])
-        if decodedSnapshots[key]?.bytes != data { decodedSnapshots.removeValue(forKey: key) }
+        // A live Trip writes its complete point history at every accepted GPS
+        // sample. The next selected-vineyard save immediately loads that same
+        // file; invalidating the snapshot made it decode the entire history on
+        // the main actor once per point, growing with Trip length. After a
+        // successful atomic write we have the EXACT bytes and value, so retain
+        // them for the next load. loadOutcome still reads and compares disk
+        // bytes, rejecting this memo whenever another writer changed the file.
+        // Keep the original bytes and durable write/ACK contract unchanged.
+        decodedSnapshots.removeValue(forKey: key)
+        retainSnapshot(value, bytes: data, key: key)
         measurement.succeeded = true
     }
 
