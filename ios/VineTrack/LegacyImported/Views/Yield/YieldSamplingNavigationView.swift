@@ -27,6 +27,7 @@ struct YieldSamplingNavigationView: View {
     @State private var showInsufficientSamplesConfirmation: Bool = false
     @State private var showReport: Bool = false
     @State private var showSiteList: Bool = false
+    @State private var showPanelEntry: Bool = false
     @AppStorage("yieldSamplingTipDismissed_v1") private var tipDismissed: Bool = false
     @FocusState private var bunchesFocused: Bool
 
@@ -142,11 +143,25 @@ struct YieldSamplingNavigationView: View {
             }
             Button("Keep Sampling", role: .cancel) {}
         } message: {
-            Text("You haven't recorded every sample site yet. You can still finish and lock the estimate using the samples you've collected.")
+            Text(viewModel.isPanelCount
+                 ? "Unrecorded panels remain unrecorded. You can finish the partial survey without inventing zeros."
+                 : "You haven't recorded every sample site yet. You can still finish and lock the estimate using the samples you've collected.")
         }
-        .sheet(isPresented: $showSiteList) {
+                .sheet(isPresented: $showSiteList) {
             siteListSheet
                 .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showPanelEntry) {
+            if let site = currentSite {
+                PanelCountEntrySheet(site: site) { measurement, recordedBy in
+                    let accepted = viewModel.savePanelCount(
+                        siteId: site.id, measurement: measurement,
+                        recordedBy: recordedBy, persist: saveSession
+                    )
+                    if accepted { advanceToNextUnrecorded(after: site.id) }
+                    return accepted
+                }
+            }
         }
         .navigationDestination(isPresented: $showReport) {
             YieldReportView(viewModel: viewModel)
@@ -167,7 +182,9 @@ struct YieldSamplingNavigationView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will lock all values for this yield estimation job. Bunch counts and weights can no longer be edited.")
+            Text(viewModel.isPanelCount
+                 ? "This locks the raw panel observations. Panel Count will not automatically replace the current vineyard estimate."
+                 : "This locks all values for this yield estimation job. Bunch counts and weights can no longer be edited.")
         }
         .onAppear {
             locationService.requestPermission()
@@ -410,7 +427,11 @@ struct YieldSamplingNavigationView: View {
     private var bottomPanel: some View {
         VStack(spacing: 12) {
             guidancePanel
-            if viewModel.isQuadrantCount {
+            if viewModel.isPanelCount {
+                Label("Record the total bunches and vine positions for one post-to-post panel.",
+                      systemImage: "square.grid.3x3")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            } else if viewModel.isQuadrantCount {
                 QuadrantCountFields(countText: $bunchesText, lengthText: $quadrantLengthText,
                     vineSpacingCm: quadrantSpacingCm, isSystemAdmin: systemAdmin.isSystemAdmin)
             } else { entryPanel }
@@ -543,7 +564,8 @@ struct YieldSamplingNavigationView: View {
             .tint(.orange)
 
             Button {
-                recordAndNext()
+                if viewModel.isPanelCount { showPanelEntry = true }
+                else { recordAndNext() }
             } label: {
                 Label("Record & Next", systemImage: "checkmark.circle.fill")
                     .font(.subheadline.weight(.bold))
@@ -552,7 +574,9 @@ struct YieldSamplingNavigationView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.green)
-            .disabled((viewModel.isQuadrantCount ? quadrantMeasurement == nil : parsedBunches == nil) || viewModel.isCompleted)
+            .disabled(viewModel.isCompleted ||
+                      (!viewModel.isPanelCount &&
+                       (viewModel.isQuadrantCount ? quadrantMeasurement == nil : parsedBunches == nil)))
         }
     }
 
@@ -631,7 +655,11 @@ struct YieldSamplingNavigationView: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            if let entry = site.bunchCountEntry {
+                            if let panel = site.panelCountEntry {
+                                Text("\(panel.measurement.totalBunches) bunches")
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(.green)
+                            } else if let entry = site.bunchCountEntry {
                                 Text(String(format: "%.1f", entry.bunchesPerVine))
                                     .font(.subheadline.weight(.bold))
                                     .foregroundStyle(.green)
@@ -713,7 +741,8 @@ struct YieldSamplingNavigationView: View {
     }
 
     private func recordAndNext() {
-        guard let site = currentSite, let value = parsedBunches else { return }
+        guard !viewModel.isPanelCount, let site = currentSite,
+              let value = parsedBunches else { return }
         if viewModel.isQuadrantCount {
             guard let measurement = quadrantMeasurement,
                   viewModel.saveQuadrantCount(siteId: site.id, measurement: measurement,
