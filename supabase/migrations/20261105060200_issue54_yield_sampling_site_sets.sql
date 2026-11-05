@@ -100,7 +100,10 @@ RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
 DECLARE parent_status text;
 BEGIN
   IF TG_OP = 'DELETE' THEN
-    RAISE EXCEPTION 'Sampling site revisions cannot be deleted; create a new set version' USING ERRCODE = '23514';
+    SELECT status INTO parent_status FROM public.yield_sample_site_sets
+      WHERE id = OLD.site_set_id AND vineyard_id = OLD.vineyard_id AND paddock_id = OLD.paddock_id;
+    IF parent_status = 'draft' THEN RETURN OLD; END IF;
+    RAISE EXCEPTION 'Confirmed sampling sites cannot be deleted; create a new set version' USING ERRCODE = '23514';
   END IF;
   SELECT status INTO parent_status FROM public.yield_sample_site_sets
    WHERE id = NEW.site_set_id AND vineyard_id = NEW.vineyard_id AND paddock_id = NEW.paddock_id;
@@ -171,9 +174,16 @@ CREATE POLICY yield_sites_edit ON public.yield_sample_sites
  FOR UPDATE TO authenticated
  USING (public.has_vineyard_role(vineyard_id, ARRAY['owner','manager','supervisor','operator']))
  WITH CHECK (public.has_vineyard_role(vineyard_id, ARRAY['owner','manager','supervisor','operator']));
+CREATE POLICY yield_sites_remove_draft ON public.yield_sample_sites
+ FOR DELETE TO authenticated USING
+ (public.has_vineyard_role(vineyard_id, ARRAY['owner','manager','supervisor','operator'])
+  AND EXISTS (SELECT 1 FROM public.yield_sample_site_sets ss
+              WHERE ss.id = site_set_id AND ss.status = 'draft'));
+
 
 REVOKE ALL ON public.yield_sample_site_sets, public.yield_sample_sites FROM anon;
 GRANT SELECT, INSERT, UPDATE ON public.yield_sample_site_sets, public.yield_sample_sites TO authenticated;
+GRANT DELETE ON public.yield_sample_sites TO authenticated;
 REVOKE ALL ON FUNCTION public.confirm_yield_sample_site_set(uuid, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.confirm_yield_sample_site_set(uuid, integer) TO authenticated;
 
