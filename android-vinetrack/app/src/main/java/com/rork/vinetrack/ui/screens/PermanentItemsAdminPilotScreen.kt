@@ -67,6 +67,7 @@ import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PermanentItemPilotPolicy
+import com.rork.vinetrack.data.PermanentItemHardDeleteIntent
 import com.rork.vinetrack.data.PermanentItemPilotRow
 import com.rork.vinetrack.data.PermanentItemPilotType
 import com.rork.vinetrack.data.PermanentItemsPilotRepository
@@ -98,17 +99,23 @@ fun PermanentItemsAdminPilotScreen(
     val user = state.currentUserId
     val vineyard = state.selectedVineyardId
     var allowed by remember(user, vineyard) { mutableStateOf(false) }
+    var canManage by remember(user, vineyard) { mutableStateOf(false) }
+    var canHardDelete by remember(user, vineyard) { mutableStateOf(false) }
     var loading by remember(user, vineyard) { mutableStateOf(true) }
     var busy by remember(user, vineyard) { mutableStateOf(false) }
     var rows by remember(user, vineyard) { mutableStateOf<List<PermanentItemPilotRow>>(emptyList()) }
     var customTypes by remember(user, vineyard) { mutableStateOf<List<PermanentItemPilotType>>(emptyList()) }
     var pending by remember(user, vineyard) { mutableStateOf(false) }
+    var pendingDelete by remember(user, vineyard) {
+        mutableStateOf<PermanentItemHardDeleteIntent?>(null)
+    }
     var error by remember(user, vineyard) { mutableStateOf<String?>(null) }
     var notice by remember(user, vineyard) { mutableStateOf<String?>(null) }
     var search by remember(user, vineyard) { mutableStateOf("") }
     var editing by remember(user, vineyard) { mutableStateOf(false) }
     var selected by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
     var archiveTarget by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
+    var deleteTarget by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
     var name by remember(user, vineyard) { mutableStateOf("") }
     var type by remember(user, vineyard) { mutableStateOf("irrigation_valve") }
     var blockId by remember(user, vineyard) { mutableStateOf<String?>(null) }
@@ -129,6 +136,12 @@ fun PermanentItemsAdminPilotScreen(
     )
 
     fun startEditor(item: PermanentItemPilotRow?) {
+        if (locked) return
+        if (!canManage) {
+            if (canHardDelete && item != null) deleteTarget = item
+            return
+        }
+        if (item?.archivedAt != null) return
         selected = item
         name = item?.name ?: ""
         type = item?.itemType ?: "irrigation_valve"
@@ -149,6 +162,7 @@ fun PermanentItemsAdminPilotScreen(
                     rows = listed
                     customTypes = repository.listTypes(target)
                     pending = repository.pending(target) != null
+                    pendingDelete = repository.pendingHardDelete(target)
                 }
             } catch (e: Exception) {
                 error = "Couldn't load Permanent Items: " + (e.message ?: "Network error")
@@ -157,7 +171,7 @@ fun PermanentItemsAdminPilotScreen(
     }
     fun save(action: String, item: PermanentItemPilotRow? = selected) {
         val target = vineyard ?: return
-        if (locked || busy) return
+        if (locked || !canManage || busy || pendingDelete != null) return
         if (pending) { error = "Retry the outstanding save before making another change."; return }
         val latitude = lat.toDoubleOrNull() ?: Double.NaN
         val longitude = lon.toDoubleOrNull() ?: Double.NaN
@@ -203,6 +217,37 @@ fun PermanentItemsAdminPilotScreen(
             } finally { busy = false }
         }
     }
+    fun hardDelete(item: PermanentItemPilotRow? = null) {
+        val target = vineyard ?: return
+        if (locked || !canHardDelete || busy || pending) return
+        val already = pendingDelete
+        if (already != null && item != null && already.itemId != item.id) {
+            error = "Finish the pending hard delete before deleting another item."
+            return
+        }
+        val intent = already ?: item?.let { repository.hardDeleteIntent(it) } ?: return
+        busy = true
+        error = null
+        scope.launch {
+            try {
+                repository.hardDelete(intent)
+                if (state.selectedVineyardId == target && state.currentUserId == user) {
+                    pendingDelete = null
+                    rows = repository.list(target)
+                    notice = "Permanently deleted. All attached photos removed."
+                    deleteTarget = null
+                    selected = null
+                }
+            } catch (e: Exception) {
+                if (state.selectedVineyardId == target && state.currentUserId == user) {
+                    pendingDelete = repository.pendingHardDelete(target)
+                    error = "Delete or photo cleanup not fully confirmed. " +
+                        "Retry the same operation: " + (e.message ?: "Network unavailable.")
+                }
+            } finally { busy = false }
+        }
+    }
+
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch {
             try {
@@ -234,18 +279,25 @@ fun PermanentItemsAdminPilotScreen(
     }
 
     LaunchedEffect(user, vineyard, state.isSystemAdmin, state.currentRole) {
-        allowed = false; rows = emptyList(); customTypes = emptyList()
-        editing = false; pending = false; loading = true
+        allowed = false; canManage = false; canHardDelete = false
+        rows = emptyList(); customTypes = emptyList()
+        editing = false; pending = false; pendingDelete = null; deleteTarget = null; loading = true
         val target = vineyard
         if (target != null && PermanentItemPilotPolicy.allowed(
             state.isSystemAdmin, true, user, target, state.currentRole
         )) {
             try {
-                allowed = repository.pilotEnabled(target)
-                if (allowed) {
-                    rows = repository.list(target)
-                    customTypes = repository.listTypes(target)
-                    pending = repository.pending(target) != null
+                val grant = repository.permissions(target)
+                if (state.selectedVineyardId == target && state.currentUserId == user) {
+                    allowed = grant.canRead
+                    canManage = grant.canManage
+                    canHardDelete = grant.canHardDelete
+                    if (allowed) {
+                        rows = repository.list(target)
+                        customTypes = repository.listTypes(target)
+                        pending = repository.pending(target) != null
+                        pendingDelete = repository.pendingHardDelete(target)
+                    }
                 }
             } catch (e: Exception) {
                 allowed = false
@@ -284,7 +336,7 @@ fun PermanentItemsAdminPilotScreen(
             Column(Modifier.fillMaxSize().padding(padding).padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("System Admin pilot unavailable", style = MaterialTheme.typography.titleMedium)
-                Text("Requires an active System Admin account, selected-vineyard membership and the Permanent Items preview switch.")
+                Text("Requires System Admin pilot access or an Owner/Manager role in the selected vineyard.")
                 if (error != null) Text(error ?: "", color = MaterialTheme.colorScheme.error)
             }
         } else if (editing) {
@@ -416,7 +468,7 @@ fun PermanentItemsAdminPilotScreen(
                 if (notice != null) Text(notice ?: "", style = MaterialTheme.typography.bodySmall)
                 if (error != null) Text(error ?: "", color = MaterialTheme.colorScheme.error)
                 Button(onClick = { save(if (selected == null) "create" else "update") },
-                    enabled = !busy && !pending,
+                    enabled = canManage && !busy && !pending && pendingDelete == null,
                     modifier = Modifier.fillMaxWidth()) {
                     Text(if (busy) "Verifying with server…" else "Save Permanent Item")
                 }
@@ -429,7 +481,15 @@ fun PermanentItemsAdminPilotScreen(
             ) {
                 Text("Fixed fixtures, independent of Repairs and Observations.",
                     style = MaterialTheme.typography.bodySmall)
-                if (pending) {
+                if (pendingDelete != null && canHardDelete) {
+                    Text("Permanent delete or private photo cleanup pending.",
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold)
+                    Button(onClick = { hardDelete() }, enabled = !busy) {
+                        Text("Retry same permanent delete")
+                    }
+                }
+                if (pending && canManage) {
                     Text("Saved on device — pending server confirmation.",
                         color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
                     Button(onClick = {
@@ -453,10 +513,12 @@ fun PermanentItemsAdminPilotScreen(
                 }
                 if (notice != null) Text(notice ?: "", style = MaterialTheme.typography.bodySmall)
                 if (error != null) Text(error ?: "", color = MaterialTheme.colorScheme.error)
-                Button(onClick = { startEditor(null) },
-                    enabled = !busy && !pending,
-                    modifier = Modifier.fillMaxWidth()) {
-                    Text("New Permanent Item")
+                if (canManage) {
+                    Button(onClick = { startEditor(null) },
+                        enabled = !busy && !pending && pendingDelete == null,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("New Permanent Item")
+                    }
                 }
                 OutlinedTextField(
                     value = search, onValueChange = { search = it },
@@ -468,7 +530,7 @@ fun PermanentItemsAdminPilotScreen(
                         }
                     }
                 )
-                val visible = rows.filter { it.archivedAt == null &&
+                val visible = rows.filter { (canHardDelete || it.archivedAt == null) &&
                     (search.isBlank() || it.name.contains(search, true) ||
                         PermanentItemPilotPolicy.label(it.itemType, customTypes).contains(search, true))
                 }
@@ -518,7 +580,11 @@ fun PermanentItemsAdminPilotScreen(
                             Modifier.fillMaxWidth().clickable { startEditor(item) }.padding(vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Text(item.name, fontWeight = FontWeight.SemiBold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(item.name, fontWeight = FontWeight.SemiBold)
+                                if (item.archivedAt != null) Text(" · Archived",
+                                    style = MaterialTheme.typography.labelSmall)
+                            }
                             Row(verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Box(Modifier.size(14.dp).background(
@@ -532,12 +598,21 @@ fun PermanentItemsAdminPilotScreen(
                             Text("%.6f, %.6f".format(item.latitude, item.longitude),
                                 style = MaterialTheme.typography.bodySmall)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(onClick = { startEditor(item) }, enabled = !busy && !pending) {
-                                    Text("Edit / Move")
+                                if (canManage && item.archivedAt == null) {
+                                    OutlinedButton(onClick = { startEditor(item) },
+                                        enabled = !busy && !pending && pendingDelete == null) {
+                                        Text("Edit / Move")
+                                    }
+                                    OutlinedButton(onClick = { archiveTarget = item },
+                                        enabled = !busy && !pending && pendingDelete == null) {
+                                        Text("Archive")
+                                    }
                                 }
-                                OutlinedButton(onClick = { archiveTarget = item },
-                                    enabled = !busy && !pending) {
-                                    Text("Archive")
+                                if (canHardDelete) {
+                                    OutlinedButton(onClick = { deleteTarget = item },
+                                        enabled = !busy && !pending && pendingDelete == null) {
+                                        Text("Hard Delete", color = MaterialTheme.colorScheme.error)
+                                    }
                                 }
                             }
                         }
@@ -634,6 +709,30 @@ fun PermanentItemsAdminPilotScreen(
                 TextButton(onClick = { showNewType = false }, enabled = !savingNewType) {
                     Text("Cancel")
                 }
+            }
+        )
+    }
+
+    if (deleteTarget != null) {
+        val current = deleteTarget
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Permanently delete " + (current?.name ?: "this item") + "?") },
+            text = {
+                Text("This cannot be undone. The Permanent Item, its history entries " +
+                    "and all attached photos will be permanently removed from iOS, Android and Portal.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val item = deleteTarget ?: return@TextButton
+                    deleteTarget = null
+                    hardDelete(item)
+                }, enabled = canHardDelete && !busy && !pending && pendingDelete == null) {
+                    Text("Delete Permanently", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
             }
         )
     }

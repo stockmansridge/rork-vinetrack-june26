@@ -8,7 +8,14 @@ class PermanentItemPilotPolicyTest {
     @Test fun adminAndFlagAndMembershipAreAllRequired() {
         val policy = PermanentItemPilotPolicy
         assertTrue(policy.allowed(true, true, "account", "vineyard", "manager"))
-        assertFalse(policy.allowed(false, true, "account", "vineyard", "owner"))
+        assertTrue(policy.allowed(false, true, "account", "vineyard", "owner"))
+        assertTrue(policy.allowed(false, true, "account", "vineyard", "manager"))
+        assertFalse(policy.allowed(false, true, "account", "vineyard", "supervisor"))
+        assertFalse(policy.allowed(false, true, "account", "vineyard", "operator"))
+        assertTrue(policy.canHardDelete("owner"))
+        assertTrue(policy.canHardDelete("manager"))
+        assertFalse(policy.canHardDelete("supervisor"))
+        assertFalse(policy.canHardDelete("operator"))
         assertFalse(policy.allowed(true, false, "account", "vineyard", "owner"))
         assertFalse(policy.allowed(true, true, null, "vineyard", "manager"))
         assertFalse(policy.allowed(true, true, "account", null, "manager"))

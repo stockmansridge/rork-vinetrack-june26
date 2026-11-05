@@ -47,9 +47,40 @@ object PermanentItemPilotPolicy {
         custom.firstOrNull { it.typeKey == type }?.name ?: TYPES[type] ?: "Other"
     fun hex(type: String, custom: List<PermanentItemPilotType>): String =
         custom.firstOrNull { it.typeKey == type }?.colorHex ?: COLORS[type] ?: "#A8559A"
+    fun canHardDelete(role: String?): Boolean =
+        role?.lowercase() in setOf("owner", "manager")
     fun allowed(admin: Boolean, flag: Boolean, user: String?, vineyard: String?, role: String?): Boolean =
-        admin && flag && !user.isNullOrBlank() && !vineyard.isNullOrBlank() && !role.isNullOrBlank()
+        (admin || canHardDelete(role)) && flag &&
+            !user.isNullOrBlank() && !vineyard.isNullOrBlank() && !role.isNullOrBlank()
 }
+
+@Serializable
+data class PermanentItemPilotPermissions(
+    @SerialName("can_read") val canRead: Boolean,
+    @SerialName("can_manage") val canManage: Boolean,
+    @SerialName("can_hard_delete") val canHardDelete: Boolean
+)
+
+@Serializable
+data class PermanentItemHardDeleteIntent(
+    @SerialName("p_operation_id") val operationId: String,
+    @SerialName("p_item_id") val itemId: String,
+    @SerialName("p_vineyard_id") val vineyardId: String,
+    @SerialName("p_expected_revision") val expectedRevision: Long
+)
+
+@Serializable
+private data class PermanentItemHardDeleteResponse(
+    val deleted: Boolean,
+    @SerialName("photo_cleanup_pending") val photoCleanupPending: Boolean,
+    @SerialName("item_id") val itemId: String,
+    @SerialName("operation_id") val operationId: String
+)
+
+@Serializable
+private data class PermanentItemPermissionParams(
+    @SerialName("p_vineyard_id") val vineyardId: String
+)
 
 @Serializable
 data class PermanentItemPilotType(
@@ -116,6 +147,9 @@ class PermanentItemsPilotRepository(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(
         "permanent_items_pilot_pending_v1", Context.MODE_PRIVATE
     )
+    private val deletionPrefs = context.applicationContext.getSharedPreferences(
+        "permanent_items_hard_delete_pending_v1", Context.MODE_PRIVATE
+    )
     private fun key(vineyard: String, account: String) = "$account|$vineyard"
 
     private fun requireScope(vineyard: String, account: String) {
@@ -138,13 +172,74 @@ class PermanentItemsPilotRepository(context: Context) {
             runCatching { json.decodeFromString<PermanentItemPilotOperation>(it) }.getOrNull()
         }
     }
-    suspend fun pilotEnabled(vineyard: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun permissions(vineyard: String): PermanentItemPilotPermissions =
+        withContext(Dispatchers.IO) {
+            val account = actor(vineyard)
+            val response = SupabaseClient.http.post(
+                SupabaseClient.rpcUrl("permanent_item_permissions_v1")
+            ) {
+                headers { append("apikey", SupabaseClient.anonKey)
+                    append("Authorization", "Bearer " + token()) }
+                contentType(ContentType.Application.Json)
+                setBody(PermanentItemPermissionParams(vineyard))
+            }
+            val grants = json.decodeFromString<List<PermanentItemPilotPermissions>>(
+                succeeded(response.status.value, response.bodyAsText())).single()
+            requireScope(vineyard, account)
+            grants
+        }
+
+    suspend fun pilotEnabled(vineyard: String): Boolean = permissions(vineyard).canRead
+
+    fun pendingHardDelete(vineyard: String): PermanentItemHardDeleteIntent? {
+        val account = session.userId ?: return null
+        if (session.selectedVineyardId != vineyard) return null
+        return deletionPrefs.getString(key(vineyard, account), null)?.let {
+            runCatching { json.decodeFromString<PermanentItemHardDeleteIntent>(it) }.getOrNull()
+        }
+    }
+
+    fun hardDeleteIntent(item: PermanentItemPilotRow): PermanentItemHardDeleteIntent =
+        PermanentItemHardDeleteIntent(
+            operationId = UUID.randomUUID().toString(),
+            itemId = item.id, vineyardId = item.vineyardId,
+            expectedRevision = item.serverRevision
+        )
+
+    suspend fun hardDelete(intent: PermanentItemHardDeleteIntent) = withContext(Dispatchers.IO) {
+        val vineyard = intent.vineyardId
         val account = actor(vineyard)
-        val admin = SystemAdminRepository(session)
-        if (!admin.isSystemAdmin()) return@withContext false
-        val flag = admin.fetchFlags().any { it.key == PermanentItemPilotPolicy.FLAG && it.isEnabled }
+        if (pending(vineyard) != null) error("Finish the pending item save before hard deleting.")
+        val already = pendingHardDelete(vineyard)
+        if (already != null && already != intent) {
+            error("Finish the existing hard delete before deleting another Permanent Item.")
+        }
+        if (already == null) {
+            check(deletionPrefs.edit().putString(
+                key(vineyard, account), json.encodeToString(intent)
+            ).commit()) { "Could not retain deletion intent on this device; nothing was sent." }
+        }
+        val response = SupabaseClient.http.post(
+            SupabaseClient.baseUrl.trimEnd('/') + "/functions/v1/permanent-item-hard-delete-v1"
+        ) {
+            headers {
+                append("apikey", SupabaseClient.anonKey)
+                append("Authorization", "Bearer " + token())
+            }
+            contentType(ContentType.Application.Json)
+            setBody(intent)
+        }
+        val receipt = json.decodeFromString<PermanentItemHardDeleteResponse>(
+            succeeded(response.status.value, response.bodyAsText()))
+        if (!receipt.deleted || receipt.photoCleanupPending ||
+            !receipt.itemId.equals(intent.itemId, ignoreCase = true) ||
+            !receipt.operationId.equals(intent.operationId, ignoreCase = true)) {
+            error("Hard delete or photo cleanup not fully confirmed; retry the same ID.")
+        }
         requireScope(vineyard, account)
-        flag
+        check(deletionPrefs.edit().remove(key(vineyard, account)).commit()) {
+            "Deletion completed, but receipt still held locally. Retry same operation."
+        }
     }
     suspend fun listTypes(vineyard: String): List<PermanentItemPilotType> = withContext(Dispatchers.IO) {
         val account = actor(vineyard)
@@ -217,6 +312,8 @@ class PermanentItemsPilotRepository(context: Context) {
         withContext(Dispatchers.IO) {
             val vineyard = op.vineyardId
             val account = actor(vineyard)
+            if (pendingHardDelete(vineyard) != null)
+                error("Finish pending hard delete before saving another Permanent Item.")
             val existing = pending(vineyard)
             if (existing != null && existing.operationId != op.operationId)
                 error("A previous Permanent Item save is pending. Retry it first.")

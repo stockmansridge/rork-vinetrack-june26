@@ -9,6 +9,9 @@ import UIKit
 // Issue #53. Isolated System Admin pilot: not a mode of Pins, and never a Trip-sync job.
 enum PermanentItemsPilotPolicy {
     static let flag = "permanent_items_admin_preview"
+    static func roleMayHardDelete(_ role: BackendRole?) -> Bool {
+        role == .owner || role == .manager
+    }
     static let types: [(id: String, label: String, hex: String)] = [
         ("irrigation_valve", "Irrigation Valve", "#2D6CDF"),
         ("flush_valve", "Flush Valve", "#00A3B8"),
@@ -150,6 +153,46 @@ private enum PermanentItemsPilotError: LocalizedError {
     }
 }
 
+
+private struct PermanentItemPilotPermissions: Decodable {
+    let canRead: Bool
+    let canManage: Bool
+    let canHardDelete: Bool
+    enum CodingKeys: String, CodingKey {
+        case canRead = "can_read", canManage = "can_manage", canHardDelete = "can_hard_delete"
+    }
+}
+
+private struct PermanentItemHardDeleteIntent: Codable, Sendable {
+    let p_operation_id: UUID
+    let p_item_id: UUID
+    let p_vineyard_id: UUID
+    let p_expected_revision: Int64
+
+    init(item: PermanentItemPilotRow) {
+        p_operation_id = UUID()
+        p_item_id = item.id
+        p_vineyard_id = item.vineyardId
+        p_expected_revision = item.serverRevision
+    }
+}
+
+private struct PermanentItemHardDeleteResponse: Decodable {
+    let deleted: Bool
+    let photoCleanupPending: Bool
+    let itemId: UUID
+    let operationId: UUID
+    enum CodingKeys: String, CodingKey {
+        case deleted
+        case photoCleanupPending = "photo_cleanup_pending"
+        case itemId = "item_id", operationId = "operation_id"
+    }
+}
+
+private struct PermanentItemPermissionParams: Encodable {
+    let p_vineyard_id: UUID
+}
+
 private struct PermanentItemTypeCreateParams: Encodable {
     let p_vineyard_id: UUID
     let p_name: String
@@ -158,6 +201,29 @@ private struct PermanentItemTypeCreateParams: Encodable {
 
 private struct PermanentItemPilotRepository {
     private let client = SupabaseClientProvider.shared.client
+
+    func permissions(vineyardId: UUID) async throws -> PermanentItemPilotPermissions {
+        let rows: [PermanentItemPilotPermissions] = try await client.rpc(
+            "permanent_item_permissions_v1",
+            params: PermanentItemPermissionParams(p_vineyard_id: vineyardId)
+        ).execute().value
+        guard rows.count == 1, let permission = rows.first else {
+            throw PermanentItemsPilotError.receipt
+        }
+        return permission
+    }
+
+    func hardDelete(_ op: PermanentItemHardDeleteIntent) async throws {
+        let receipt: PermanentItemHardDeleteResponse = try await client.functions.invoke(
+            "permanent-item-hard-delete-v1",
+            options: FunctionInvokeOptions(body: op)
+        )
+        guard receipt.deleted, !receipt.photoCleanupPending,
+              receipt.itemId == op.p_item_id,
+              receipt.operationId == op.p_operation_id else {
+            throw PermanentItemsPilotError.receipt
+        }
+    }
 
     func listTypes(vineyardId: UUID) async throws -> [PermanentItemPilotType] {
         try await client.from("permanent_item_types")
@@ -228,14 +294,81 @@ private struct PermanentItemPilotRepository {
     }
 }
 
+/// The Home shortcut is authorised by the exact same server-side gate used for
+/// reads and deletion. Do not rely on System Admin flags alone: owners/managers
+/// must see the list without gaining the create/edit pilot.
+struct PermanentItemsPilotShortcut: View {
+    @Environment(NewBackendAuthService.self) private var auth
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(BackendAccessControl.self) private var access
+    @State private var grants: PermanentItemPilotPermissions?
+
+    private var vineyard: UUID? { store.selectedVineyardId }
+    private var scope: String {
+        "\(auth.userId?.uuidString ?? "none")|\(vineyard?.uuidString ?? "none")|\(auth.completedSignOutSequence)|\(access.currentRole?.rawValue ?? "unknown")"
+    }
+    private var validScope: Bool {
+        auth.isSignedIn && auth.userId != nil && vineyard != nil &&
+            !access.isLoading && access.currentRole != nil &&
+            access.loadedUserId == auth.userId &&
+            access.loadedVineyardId == vineyard
+    }
+
+    var body: some View {
+        Group {
+            if validScope && grants?.canRead == true {
+                NavigationLink {
+                    PermanentItemsAdminPilotView()
+                } label: {
+                    HStack(spacing: 12) {
+                        BrightToolIcon(symbol: "mappin.circle.fill",
+                                       colors: [.indigo, .purple], size: 36)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Permanent Item").font(.subheadline.weight(.semibold))
+                            Text("Fixed property assets")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.85))
+                                .lineLimit(1).minimumScaleFactor(0.8)
+                        }.foregroundStyle(.white)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .background(
+                        LinearGradient(colors: [.indigo, .purple],
+                                       startPoint: .topLeading,
+                                       endPoint: .bottomTrailing),
+                        in: .rect(cornerRadius: 14)
+                    )
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal)
+            }
+        }
+        .task(id: scope) {
+            grants = nil
+            guard validScope, let vineyard else { return }
+            let captured = scope
+            do {
+                let value = try await PermanentItemPilotRepository().permissions(vineyardId: vineyard)
+                if captured == scope && validScope { grants = value }
+            } catch {
+                // Fail closed when flag, session or vineyard role cannot be verified.
+            }
+        }
+    }
+}
+
 /// Pilot writes are isolated from the app's Pins / Trip / Spray journals.
 /// A single retryable operation is stored under the exact signed-in account+vineyard.
 /// A server timeout NEVER generates a second UUID; no "Synced" before readback.
 struct PermanentItemsAdminPilotView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(MigratedDataStore.self) private var store
-    @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(BackendAccessControl.self) private var access
+    @State private var permissions: PermanentItemPilotPermissions?
     @State private var rows: [PermanentItemPilotRow] = []
     @State private var customTypes: [PermanentItemPilotType] = []
     @State private var search = ""
@@ -245,25 +378,35 @@ struct PermanentItemsAdminPilotView: View {
     @State private var busy = false
     @State private var message: String?
     @State private var archiveTarget: PermanentItemPilotRow?
+    @State private var deleteTarget: PermanentItemPilotRow?
+    @State private var pendingDelete: PermanentItemHardDeleteIntent?
     @State private var camera: MapCameraPosition = .automatic
     private let repository = PermanentItemPilotRepository()
 
     private var account: UUID? { auth.userId }
     private var vineyard: UUID? { store.selectedVineyardId }
     private var scope: String {
-        "\(account?.uuidString ?? "signed-out")|\(vineyard?.uuidString ?? "none")|\(auth.completedSignOutSequence)"
+        "\(account?.uuidString ?? "signed-out")|\(vineyard?.uuidString ?? "none")|\(auth.completedSignOutSequence)|\(access.currentRole?.rawValue ?? "unknown")"
     }
-    private var permitted: Bool {
+    private var validScope: Bool {
         auth.isSignedIn && account != nil && vineyard != nil &&
-        systemAdmin.isSystemAdmin && systemAdmin.isEnabled(PermanentItemsPilotPolicy.flag) &&
         !access.isLoading && access.currentRole != nil &&
         access.loadedUserId == account && access.loadedVineyardId == vineyard
+    }
+    private var permitted: Bool { validScope && permissions?.canRead == true }
+    private var canManage: Bool { permitted && permissions?.canManage == true }
+    private var canHardDelete: Bool {
+        permitted && PermanentItemsPilotPolicy.roleMayHardDelete(access.currentRole)
+            && permissions?.canHardDelete == true
+    }
+    private var pendingDeleteKey: String {
+        "permanent-item-hard-delete-v1|\(account?.uuidString ?? "none")|\(vineyard?.uuidString ?? "none")"
     }
     private var pendingKey: String {
         "permanent-item-op-v1|\(account?.uuidString ?? "none")|\(vineyard?.uuidString ?? "none")"
     }
     private var visible: [PermanentItemPilotRow] {
-        rows.filter { $0.archivedAt == nil &&
+        rows.filter { (canHardDelete || $0.archivedAt == nil) &&
             (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) ||
              PermanentItemsPilotPolicy.label($0.itemType, custom: customTypes).localizedCaseInsensitiveContains(search)) }
             .sorted { $0.name < $1.name }
@@ -272,9 +415,9 @@ struct PermanentItemsAdminPilotView: View {
     var body: some View {
         Group {
             if !permitted {
-                ContentUnavailableView("System Admin pilot unavailable",
+                ContentUnavailableView("Permanent Items unavailable",
                                        systemImage: "lock.shield",
-                                       description: Text("Requires an active System Admin account, this vineyard's membership and the Permanent Items preview switch."))
+                                       description: Text("Requires System Admin pilot access or an Owner/Manager role in the selected vineyard."))
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
@@ -290,18 +433,33 @@ struct PermanentItemsAdminPilotView: View {
                                     .disabled(busy)
                             }.padding().background(.orange.opacity(0.12), in: .rect(cornerRadius: 12))
                         }
+                        if let pendingDelete {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label("Permanent delete pending confirmation or photo cleanup",
+                                      systemImage: "exclamationmark.triangle")
+                                    .font(.footnote.bold())
+                                Text("Item \(pendingDelete.p_item_id.uuidString.prefix(8)); no second delete will be started.")
+                                    .font(.caption)
+                                Button("Retry same permanent delete") {
+                                    Task { await retryHardDelete() }
+                                }.disabled(!canHardDelete || busy)
+                            }
+                            .padding().background(.orange.opacity(0.12), in: .rect(cornerRadius: 12))
+                        }
                         if let message {
                             Text(message).font(.footnote).foregroundStyle(.secondary)
                         }
-                        Button {
-                            editing = nil
-                            showEditor = true
-                        } label: {
-                            Label("New Permanent Item", systemImage: "mappin.and.ellipse")
-                                .frame(maxWidth: .infinity)
+                        if canManage {
+                            Button {
+                                editing = nil
+                                showEditor = true
+                            } label: {
+                                Label("New Permanent Item", systemImage: "mappin.and.ellipse")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(busy || pending != nil || pendingDelete != nil)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(busy || pending != nil)
                         HStack(spacing: 9) {
                             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                             TextField("Search permanent items", text: $search)
@@ -334,8 +492,12 @@ struct PermanentItemsAdminPilotView: View {
                             ForEach(rows.filter { $0.archivedAt == nil }) { item in
                                 Annotation(item.name, coordinate: item.coordinate) {
                                     Button {
-                                        editing = item
-                                        showEditor = true
+                                        if canManage {
+                                            editing = item
+                                            showEditor = true
+                                        } else if canHardDelete {
+                                            deleteTarget = item
+                                        }
                                     } label: {
                                         Image(systemName: "mappin.circle.fill")
                                             .font(.title2)
@@ -352,7 +514,13 @@ struct PermanentItemsAdminPilotView: View {
                         .clipShape(.rect(cornerRadius: 12))
                         ForEach(visible) { item in
                             VStack(alignment: .leading, spacing: 8) {
-                                Text(item.name).font(.headline)
+                                HStack {
+                                    Text(item.name).font(.headline)
+                                    if item.archivedAt != nil {
+                                        Text("Archived").font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
                                 Text("\(PermanentItemsPilotPolicy.label(item.itemType, custom: customTypes)) · revision \(item.serverRevision)")
                                     .foregroundStyle(PermanentItemsPilotPolicy.color(item.itemType, custom: customTypes))
                                     .font(.caption).foregroundStyle(.secondary)
@@ -364,12 +532,19 @@ struct PermanentItemsAdminPilotView: View {
                                             center: item.coordinate,
                                             span: MKCoordinateSpan(latitudeDelta: 0.002, longitudeDelta: 0.002)))
                                     }
-                                    Button("Edit / Move") {
-                                        editing = item; showEditor = true
-                                    }.disabled(busy || pending != nil)
-                                    Button("Archive", role: .destructive) {
-                                        archiveTarget = item
-                                    }.disabled(busy || pending != nil)
+                                    if canManage && item.archivedAt == nil {
+                                        Button("Edit / Move") {
+                                            editing = item; showEditor = true
+                                        }.disabled(busy || pending != nil || pendingDelete != nil)
+                                        Button("Archive") {
+                                            archiveTarget = item
+                                        }.disabled(busy || pending != nil || pendingDelete != nil)
+                                    }
+                                    if canHardDelete {
+                                        Button("Hard Delete", role: .destructive) {
+                                            deleteTarget = item
+                                        }.disabled(busy || pending != nil || pendingDelete != nil)
+                                    }
                                 }.buttonStyle(.bordered)
                             }.frame(maxWidth: .infinity, alignment: .leading)
                                 .padding().background(.regularMaterial, in: .rect(cornerRadius: 12))
@@ -391,12 +566,24 @@ struct PermanentItemsAdminPilotView: View {
             }
         }
         .task(id: scope) {
-            rows = []; customTypes = []; pending = nil; editing = nil; showEditor = false
-            await systemAdmin.refresh()
-            await load()
+            rows = []; customTypes = []; permissions = nil
+            pending = nil; pendingDelete = nil; editing = nil; showEditor = false
+            deleteTarget = nil
+            guard validScope, let vineyard else { return }
+            let current = scope
+            do {
+                let grant = try await repository.permissions(vineyardId: vineyard)
+                guard validScope && current == scope else { return }
+                permissions = grant
+                if grant.canRead { await load() }
+            } catch {
+                if current == scope { message = "Permission check failed: \(error.localizedDescription)" }
+            }
         }
         .onChange(of: scope) { _, _ in
-            rows = []; customTypes = []; pending = nil; editing = nil; showEditor = false
+            rows = []; customTypes = []; permissions = nil
+            pending = nil; pendingDelete = nil
+            editing = nil; showEditor = false; deleteTarget = nil
         }
         .sheet(isPresented: $showEditor) {
             if let vineyard {
@@ -408,6 +595,22 @@ struct PermanentItemsAdminPilotView: View {
                     )
                 }.id("\(scope)|\(editing?.id.uuidString ?? "new")")
             }
+        }
+        .confirmationDialog(
+            deleteTarget.map { "Permanently delete \($0.name)?" } ?? "Hard Delete Permanent Item?",
+            isPresented: Binding(
+                get: { deleteTarget != nil },
+                set: { if !$0 { deleteTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Permanently", role: .destructive) {
+                if let target = deleteTarget { Task { await hardDelete(target) } }
+                deleteTarget = nil
+            }
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
+        } message: {
+            Text("This cannot be undone. The fixture, history entries and all attached photos will be permanently removed from every platform.")
         }
         .confirmationDialog("Archive this Permanent Item?",
                             isPresented: Binding(
@@ -433,6 +636,8 @@ struct PermanentItemsAdminPilotView: View {
         let captured = scope
         pending = UserDefaults.standard.data(forKey: pendingKey)
             .flatMap { try? JSONDecoder().decode(PermanentItemPilotOperation.self, from: $0) }
+        pendingDelete = UserDefaults.standard.data(forKey: pendingDeleteKey)
+            .flatMap { try? JSONDecoder().decode(PermanentItemHardDeleteIntent.self, from: $0) }
         do {
             let result = try await repository.list(vineyardId: vineyard)
             guard isCurrent(captured) else { return }
@@ -449,7 +654,7 @@ struct PermanentItemsAdminPilotView: View {
     }
 
     private func applyDurably(_ operation: PermanentItemPilotOperation) async throws -> PermanentItemPilotRow {
-        guard permitted, operation.p_vineyard_id == vineyard, let account else {
+        guard canManage, operation.p_vineyard_id == vineyard, let account else {
             throw PermanentItemsPilotError.wrongScope
         }
         let captured = scope
@@ -482,12 +687,12 @@ struct PermanentItemsAdminPilotView: View {
     }
 
     private func save(_ draft: PermanentItemPilotDraft, image: Data?) async throws {
-        guard permitted, let vineyard else { throw PermanentItemsPilotError.unavailable }
+        guard canManage, let vineyard else { throw PermanentItemsPilotError.unavailable }
         guard PermanentItemsPilotPolicy.valid(name: draft.name, type: draft.itemType,
                                                latitude: draft.latitude, longitude: draft.longitude) else {
             throw PermanentItemsPilotError.invalid
         }
-        guard pending == nil, !busy else { throw PermanentItemsPilotError.pending }
+        guard pending == nil, pendingDelete == nil, !busy else { throw PermanentItemsPilotError.pending }
         let old = editing
         let capturedScope = scope
         busy = true
@@ -510,7 +715,7 @@ struct PermanentItemsAdminPilotView: View {
     }
 
     private func createCustomType(name: String, hex: String) async throws -> PermanentItemPilotType {
-        guard permitted, let vineyard else { throw PermanentItemsPilotError.unavailable }
+        guard canManage, let vineyard else { throw PermanentItemsPilotError.unavailable }
         let captured = scope
         let row = try await repository.createType(vineyardId: vineyard, name: name, hex: hex)
         guard isCurrent(captured) else { throw PermanentItemsPilotError.wrongScope }
@@ -518,8 +723,57 @@ struct PermanentItemsAdminPilotView: View {
         return row
     }
 
+    private func hardDelete(_ target: PermanentItemPilotRow) async {
+        guard canHardDelete, let vineyard,
+              target.vineyardId == vineyard, pending == nil, !busy else { return }
+        if let prior = pendingDelete, prior.p_item_id != target.id {
+            message = "Finish the previous permanent deletion before starting another."
+            return
+        }
+        let operation = pendingDelete ?? PermanentItemHardDeleteIntent(item: target)
+        await sendHardDelete(operation)
+    }
+
+    private func retryHardDelete() async {
+        guard let operation = pendingDelete, canHardDelete, !busy else { return }
+        await sendHardDelete(operation)
+    }
+
+    private func sendHardDelete(_ operation: PermanentItemHardDeleteIntent) async {
+        guard canHardDelete, let account, let vineyard,
+              operation.p_vineyard_id == vineyard, !busy else { return }
+        let capturedScope = scope
+        let key = pendingDeleteKey
+        guard let data = try? JSONEncoder().encode(operation) else {
+            message = "Couldn't save deletion intent on device."
+            return
+        }
+        // Keep the same UUID across network failure and photo cleanup retries.
+        UserDefaults.standard.set(data, forKey: key)
+        guard UserDefaults.standard.data(forKey: key) == data else {
+            message = "Couldn't retain deletion intent; nothing was sent."
+            return
+        }
+        pendingDelete = operation
+        busy = true
+        defer { busy = false }
+        do {
+            try await repository.hardDelete(operation)
+            guard scope == capturedScope, account == auth.userId,
+                  canHardDelete else { return }
+            UserDefaults.standard.removeObject(forKey: key)
+            pendingDelete = nil
+            rows.removeAll { $0.id == operation.p_item_id }
+            message = "Permanently deleted from all platforms; attached photos removed."
+        } catch {
+            if scope == capturedScope {
+                message = "Delete outcome or photo cleanup not fully confirmed. Retry the same operation: \(error.localizedDescription)"
+            }
+        }
+    }
+
     private func archive(_ target: PermanentItemPilotRow) async {
-        guard permitted, let vineyard, pending == nil, !busy else { return }
+        guard canManage, let vineyard, pending == nil, pendingDelete == nil, !busy else { return }
         busy = true; defer { busy = false }
         do {
             _ = try await applyDurably(PermanentItemPilotOperation(

@@ -1251,39 +1251,7 @@ struct NewHomeTabView: View {
             .buttonStyle(.plain)
             .padding(.horizontal)
 
-            // Issue #53 is gated twice: UI visibility here and membership/flag/RPC RLS on the server.
-            if systemAdmin.isSystemAdmin &&
-               systemAdmin.isEnabled(PermanentItemsPilotPolicy.flag) &&
-               auth.isSignedIn && auth.userId != nil &&
-               store.selectedVineyardId != nil &&
-               accessControl.currentRole != nil &&
-               !accessControl.isLoading &&
-               accessControl.loadedUserId == auth.userId &&
-               accessControl.loadedVineyardId == store.selectedVineyardId {
-                NavigationLink {
-                    PermanentItemsAdminPilotView()
-                } label: {
-                    HStack(spacing: 12) {
-                        BrightToolIcon(symbol: "mappin.circle.fill",
-                                       colors: [.indigo, .purple], size: 36)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Permanent Item").font(.subheadline.weight(.semibold))
-                            Text("Fixed property assets")
-                                .font(.caption).foregroundStyle(.white.opacity(0.85))
-                                .lineLimit(1).minimumScaleFactor(0.8)
-                        }.foregroundStyle(.white)
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.white.opacity(0.7))
-                    }
-                    .padding(.horizontal, 14).frame(maxWidth: .infinity, minHeight: 54)
-                    .background(LinearGradient(colors: [.indigo, .purple],
-                                               startPoint: .topLeading,
-                                               endPoint: .bottomTrailing),
-                                in: .rect(cornerRadius: 14))
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal)
-            }
+            PermanentItemsPilotShortcut()
         }
     }
 

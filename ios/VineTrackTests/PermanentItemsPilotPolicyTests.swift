@@ -14,6 +14,14 @@ struct PermanentItemsPilotPolicyTests {
         #expect(!PermanentItemsPilotPolicy.valid(name: "Valve", type: "custom_invalid", latitude: -34, longitude: 138))
     }
 
+    @Test func hardDeleteIsLimitedToVineyardOwnersAndManagers() {
+        #expect(PermanentItemsPilotPolicy.roleMayHardDelete(.owner))
+        #expect(PermanentItemsPilotPolicy.roleMayHardDelete(.manager))
+        #expect(!PermanentItemsPilotPolicy.roleMayHardDelete(.supervisor))
+        #expect(!PermanentItemsPilotPolicy.roleMayHardDelete(.operator))
+        #expect(!PermanentItemsPilotPolicy.roleMayHardDelete(nil))
+    }
+
     @Test func typeChoicesAreSeparateFromRepairAndYieldRecords() {
         let ids = PermanentItemsPilotPolicy.types.map { $0.id }
         #expect(ids.contains("irrigation_valve"))
