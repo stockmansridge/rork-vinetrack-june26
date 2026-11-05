@@ -141,6 +141,7 @@ fun YieldEstimationScreen(
     // "" = no active trip (home). rememberSaveable keeps resume across config changes.
     var activeTripId by rememberSaveable { mutableStateOf("") }
     var showCountMethod by rememberSaveable { mutableStateOf(false) }
+    var showPermanentSites by rememberSaveable { mutableStateOf(false) }
     var viewingTripId by rememberSaveable { mutableStateOf("") }
     var showSampling by rememberSaveable { mutableStateOf(false) }
     var showCompletion by rememberSaveable { mutableStateOf(false) }
@@ -196,6 +197,7 @@ fun YieldEstimationScreen(
     }
 
     val screen = when {
+        showPermanentSites -> "permanentSites"
         session != null && showSampling -> "sampling"
         session != null && showCompletion -> "completion"
         session != null -> "setup"
@@ -211,8 +213,8 @@ fun YieldEstimationScreen(
     }
 
     androidx.activity.compose.BackHandler(enabled = screen != "home") {
-        viewingTripId = ""
-        closeTrip()
+        if (showPermanentSites) showPermanentSites = false
+        else { viewingTripId = ""; closeTrip() }
     }
 
     AnimatedContent(
@@ -221,6 +223,7 @@ fun YieldEstimationScreen(
         label = "bunch-count-trip-nav",
     ) { current ->
         when (current) {
+            "permanentSites" -> YieldPermanentSamplingSitesScreen(state) { showPermanentSites = false }
             "sampling" -> session?.let { s ->
                 YieldSamplingMapScreen(
                     state = state,
@@ -281,6 +284,7 @@ fun YieldEstimationScreen(
                 onStart = {
                     showCountMethod = true
                 },
+                onPermanentSites = { showPermanentSites = true },
                 onResume = { resumed ->
                     activeTripId = resumed.id
                     localDraft = null
@@ -324,6 +328,7 @@ private fun BunchCountTripHome(
     draft: YieldEstimationSession?,
     completedTrips: List<YieldEstimationSession>,
     onStart: () -> Unit,
+    onPermanentSites: () -> Unit,
     onResume: (YieldEstimationSession) -> Unit,
     onOpenTrip: (YieldEstimationSession) -> Unit,
     onBack: () -> Unit,
@@ -379,6 +384,11 @@ private fun BunchCountTripHome(
                     Spacer(Modifier.width(8.dp))
                     Text("Start Yield Estimate Trip", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
+                OutlinedButton(
+                    onClick = onPermanentSites,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("yield.sites.open"),
+                    enabled = blocks.isNotEmpty(),
+                ) { Text("Set Permanent Locations (Optional)", color = VineColors.Purple) }
 
             if (blocks.isEmpty()) {
                 VineyardCard {
