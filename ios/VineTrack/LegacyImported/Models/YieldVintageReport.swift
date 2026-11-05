@@ -105,7 +105,7 @@ nonisolated enum YieldVintageReport {
         seasonStartDay: Int
     ) -> YieldEstimationSession? {
         sessions
-            .filter { $0.isCompleted }
+            .filter { $0.isCompleted && !$0.isPanelCount }
             .filter { sessionVintage($0, seasonStartMonth: seasonStartMonth, seasonStartDay: seasonStartDay) == vintage }
             .filter { session in
                 session.sampleSites.contains { $0.paddockId == paddockId && $0.isRecorded }
@@ -119,6 +119,7 @@ nonisolated enum YieldVintageReport {
         session: YieldEstimationSession,
         paddock: Paddock
     ) -> (tonnes: Double, averageBunchesPerVine: Double, samplesRecorded: Int, samplesTotal: Int)? {
+        guard !session.isPanelCount else { return nil }
         let sites = session.sampleSites.filter { $0.paddockId == paddock.id }
         let recorded = sites.filter(\.isRecorded)
         guard !recorded.isEmpty else { return nil }
