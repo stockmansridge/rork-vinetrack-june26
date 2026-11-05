@@ -335,7 +335,7 @@ fun PermanentItemsAdminPilotScreen(
         } else if (locked) {
             Column(Modifier.fillMaxSize().padding(padding).padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("System Admin pilot unavailable", style = MaterialTheme.typography.titleMedium)
+                Text("Permanent Items unavailable", style = MaterialTheme.typography.titleMedium)
                 Text("Requires System Admin pilot access or an Owner/Manager role in the selected vineyard.")
                 if (error != null) Text(error ?: "", color = MaterialTheme.colorScheme.error)
             }

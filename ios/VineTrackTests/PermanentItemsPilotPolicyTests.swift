@@ -17,7 +17,7 @@ struct PermanentItemsPilotPolicyTests {
     @Test func hardDeleteIsLimitedToVineyardOwnersAndManagers() {
         #expect(PermanentItemsPilotPolicy.roleMayHardDelete(.owner))
         #expect(PermanentItemsPilotPolicy.roleMayHardDelete(.manager))
-        #expect(!PermanentItemsPilotPolicy.roleMayHardDelete(.supervisor))
+        #expect(PermanentItemsPilotPolicy.roleMayHardDelete(.supervisor))
         #expect(!PermanentItemsPilotPolicy.roleMayHardDelete(.operator))
         #expect(!PermanentItemsPilotPolicy.roleMayHardDelete(nil))
     }

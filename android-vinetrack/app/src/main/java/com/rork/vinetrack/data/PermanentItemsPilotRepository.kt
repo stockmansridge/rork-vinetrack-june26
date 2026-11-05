@@ -48,7 +48,7 @@ object PermanentItemPilotPolicy {
     fun hex(type: String, custom: List<PermanentItemPilotType>): String =
         custom.firstOrNull { it.typeKey == type }?.colorHex ?: COLORS[type] ?: "#A8559A"
     fun canHardDelete(role: String?): Boolean =
-        role?.lowercase() in setOf("owner", "manager")
+        role?.lowercase() in setOf("owner", "manager", "supervisor")
     fun allowed(admin: Boolean, flag: Boolean, user: String?, vineyard: String?, role: String?): Boolean =
         (admin || canHardDelete(role)) && flag &&
             !user.isNullOrBlank() && !vineyard.isNullOrBlank() && !role.isNullOrBlank()

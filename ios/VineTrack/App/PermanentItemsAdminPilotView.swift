@@ -10,7 +10,7 @@ import UIKit
 enum PermanentItemsPilotPolicy {
     static let flag = "permanent_items_admin_preview"
     static func roleMayHardDelete(_ role: BackendRole?) -> Bool {
-        role == .owner || role == .manager
+        role == .owner || role == .manager || role == .supervisor
     }
     static let types: [(id: String, label: String, hex: String)] = [
         ("irrigation_valve", "Irrigation Valve", "#2D6CDF"),
