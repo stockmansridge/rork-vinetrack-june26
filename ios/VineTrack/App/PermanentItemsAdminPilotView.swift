@@ -9,6 +9,12 @@ import UIKit
 // Issue #53. Isolated System Admin pilot: not a mode of Pins, and never a Trip-sync job.
 enum PermanentItemsPilotPolicy {
     static let flag = "permanent_items_admin_preview"
+    /// Server RLS and the permissions RPC make the authorization decision.
+    /// Do not block this lookup on the unrelated Home role-cache refresh:
+    /// that can complete after .task(id:) has already run.
+    static func mayCheckVineyardAccess(isSignedIn: Bool, userId: UUID?, vineyardId: UUID?) -> Bool {
+        isSignedIn && userId != nil && vineyardId != nil
+    }
     static func roleMayHardDelete(_ role: BackendRole?) -> Bool {
         role == .owner || role == .manager || role == .supervisor
     }
@@ -300,24 +306,40 @@ private struct PermanentItemPilotRepository {
 struct PermanentItemsPilotShortcut: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(MigratedDataStore.self) private var store
-    @Environment(BackendAccessControl.self) private var access
+    @Environment(SystemAdminService.self) private var systemAdmin
+    @Environment(\.scenePhase) private var scenePhase
     @State private var grants: PermanentItemPilotPermissions?
 
     private var vineyard: UUID? { store.selectedVineyardId }
-    private var scope: String {
-        "\(auth.userId?.uuidString ?? "none")|\(vineyard?.uuidString ?? "none")|\(auth.completedSignOutSequence)|\(access.currentRole?.rawValue ?? "unknown")"
-    }
     private var validScope: Bool {
-        auth.isSignedIn && auth.userId != nil && vineyard != nil &&
-            !access.isLoading && access.currentRole != nil &&
-            access.loadedUserId == auth.userId &&
-            access.loadedVineyardId == vineyard
+        PermanentItemsPilotPolicy.mayCheckVineyardAccess(
+            isSignedIn: auth.isSignedIn, userId: auth.userId, vineyardId: vineyard)
+    }
+    // Changes when the account/vineyard/foreground session changes, not when
+    // the unrelated BackendAccessControl role cache finishes loading.
+    // This avoids a missing shortcut after a cold start with no cached role.
+    private var scope: String {
+        "\(auth.userId?.uuidString ?? "none")|\(vineyard?.uuidString ?? "none")|\(auth.isSignedIn)|\(auth.completedSignOutSequence)|\(scenePhase == .active)|\(systemAdmin.isSystemAdmin)|\(systemAdmin.isEnabled(PermanentItemsPilotPolicy.flag))"
+    }
+    private var isAdminPreview: Bool {
+        validScope && systemAdmin.isSystemAdmin &&
+            systemAdmin.isEnabled(PermanentItemsPilotPolicy.flag)
+    }
+    private var isVisible: Bool {
+        validScope && (grants?.canRead == true || isAdminPreview)
+    }
+    private var subtitle: String {
+        if grants?.canRead == true { return "Fixed property assets" }
+        if grants?.canRead == false { return "Vineyard access required" }
+        return "Checking vineyard access"
     }
 
     var body: some View {
         Group {
-            if validScope && grants?.canRead == true {
+            if isVisible {
                 NavigationLink {
+                    // Destination independently checks the RPC/role again. The
+                    // System Admin fallback exposes a diagnostic ENTRY, not data.
                     PermanentItemsAdminPilotView()
                 } label: {
                     HStack(spacing: 12) {
@@ -325,7 +347,7 @@ struct PermanentItemsPilotShortcut: View {
                                        colors: [.indigo, .purple], size: 36)
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Permanent Item").font(.subheadline.weight(.semibold))
-                            Text("Fixed property assets")
+                            Text(subtitle)
                                 .font(.caption)
                                 .foregroundStyle(.white.opacity(0.85))
                                 .lineLimit(1).minimumScaleFactor(0.8)
@@ -348,14 +370,20 @@ struct PermanentItemsPilotShortcut: View {
             }
         }
         .task(id: scope) {
+            // Fail closed for every scope change, including a new account,
+            // a different vineyard, sign out or a foreground revalidation.
             grants = nil
             guard validScope, let vineyard else { return }
-            let captured = scope
+            let capturedScope = scope
             do {
-                let value = try await PermanentItemPilotRepository().permissions(vineyardId: vineyard)
-                if captured == scope && validScope { grants = value }
+                let value = try await PermanentItemPilotRepository()
+                    .permissions(vineyardId: vineyard)
+                guard !Task.isCancelled, capturedScope == scope,
+                      validScope else { return }
+                grants = value
             } catch {
-                // Fail closed when flag, session or vineyard role cannot be verified.
+                // A verified System Admin sees the shortcut with an access
+                // message even on a network error, but never gets fixture data.
             }
         }
     }
@@ -367,8 +395,8 @@ struct PermanentItemsPilotShortcut: View {
 struct PermanentItemsAdminPilotView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(MigratedDataStore.self) private var store
-    @Environment(BackendAccessControl.self) private var access
     @State private var permissions: PermanentItemPilotPermissions?
+    @State private var permissionCheckComplete = false
     @State private var rows: [PermanentItemPilotRow] = []
     @State private var customTypes: [PermanentItemPilotType] = []
     @State private var search = ""
@@ -386,19 +414,18 @@ struct PermanentItemsAdminPilotView: View {
     private var account: UUID? { auth.userId }
     private var vineyard: UUID? { store.selectedVineyardId }
     private var scope: String {
-        "\(account?.uuidString ?? "signed-out")|\(vineyard?.uuidString ?? "none")|\(auth.completedSignOutSequence)|\(access.currentRole?.rawValue ?? "unknown")"
+        "\(account?.uuidString ?? "signed-out")|\(vineyard?.uuidString ?? "none")|\(auth.isSignedIn)|\(auth.completedSignOutSequence)"
     }
     private var validScope: Bool {
-        auth.isSignedIn && account != nil && vineyard != nil &&
-        !access.isLoading && access.currentRole != nil &&
-        access.loadedUserId == account && access.loadedVineyardId == vineyard
+        PermanentItemsPilotPolicy.mayCheckVineyardAccess(
+            isSignedIn: auth.isSignedIn, userId: account, vineyardId: vineyard)
     }
     private var permitted: Bool { validScope && permissions?.canRead == true }
     private var canManage: Bool { permitted && permissions?.canManage == true }
-    private var canHardDelete: Bool {
-        permitted && PermanentItemsPilotPolicy.roleMayHardDelete(access.currentRole)
-            && permissions?.canHardDelete == true
-    }
+    // The server computes this exclusively from the verified vineyard role:
+    // Supervisor, Manager or Owner, never System Admin alone. Its decision
+    // must not be overridden by a stale/missing Home role cache.
+    private var canHardDelete: Bool { permitted && permissions?.canHardDelete == true }
     private var pendingDeleteKey: String {
         "permanent-item-hard-delete-v1|\(account?.uuidString ?? "none")|\(vineyard?.uuidString ?? "none")"
     }
@@ -415,9 +442,18 @@ struct PermanentItemsAdminPilotView: View {
     var body: some View {
         Group {
             if !permitted {
-                ContentUnavailableView("Permanent Items unavailable",
-                                       systemImage: "lock.shield",
-                                       description: Text("Requires System Admin pilot access or an Owner/Manager role in the selected vineyard."))
+                if validScope && !permissionCheckComplete {
+                    ProgressView("Checking Permanent Items access…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ContentUnavailableView(
+                        "Permanent Items unavailable",
+                        systemImage: "lock.shield",
+                        description: Text(
+                            message ?? "Access requires the pilot flag, selected-vineyard membership, and either System Admin or a Supervisor/Manager/Owner role."
+                        )
+                    )
+                }
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
@@ -560,28 +596,25 @@ struct PermanentItemsAdminPilotView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await load() } } label: {
+                Button {
+                    Task { await reloadPermissions() }
+                } label: {
                     Image(systemName: "arrow.clockwise")
-                }.disabled(!permitted || busy)
+                }
+                .accessibilityLabel("Retry Permanent Items access")
+                .disabled(!validScope || busy)
             }
         }
         .task(id: scope) {
             rows = []; customTypes = []; permissions = nil
+            permissionCheckComplete = false; message = nil
             pending = nil; pendingDelete = nil; editing = nil; showEditor = false
             deleteTarget = nil
-            guard validScope, let vineyard else { return }
-            let current = scope
-            do {
-                let grant = try await repository.permissions(vineyardId: vineyard)
-                guard validScope && current == scope else { return }
-                permissions = grant
-                if grant.canRead { await load() }
-            } catch {
-                if current == scope { message = "Permission check failed: \(error.localizedDescription)" }
-            }
+            await reloadPermissions()
         }
         .onChange(of: scope) { _, _ in
             rows = []; customTypes = []; permissions = nil
+            permissionCheckComplete = false; message = nil
             pending = nil; pendingDelete = nil
             editing = nil; showEditor = false; deleteTarget = nil
         }
@@ -626,6 +659,31 @@ struct PermanentItemsAdminPilotView: View {
             Button("Cancel", role: .cancel) { archiveTarget = nil }
         } message: {
             Text("The fixture will disappear from the active map. Its history will remain.")
+        }
+    }
+
+    private func reloadPermissions() async {
+        permissions = nil
+        permissionCheckComplete = false
+        message = nil
+        guard validScope, let vineyard else { return }
+        let capturedScope = scope
+        do {
+            let grant = try await repository.permissions(vineyardId: vineyard)
+            guard !Task.isCancelled, validScope,
+                  capturedScope == scope else { return }
+            permissions = grant
+            permissionCheckComplete = true
+            if grant.canRead {
+                await load()
+            } else {
+                message = "This account does not have Permanent Items access in the selected vineyard. Verify System Admin status and vineyard membership, or select a vineyard where you are Supervisor, Manager or Owner."
+            }
+        } catch {
+            if capturedScope == scope {
+                permissionCheckComplete = true
+                message = "Could not check Permanent Items access: \(error.localizedDescription). Tap refresh to retry."
+            }
         }
     }
 

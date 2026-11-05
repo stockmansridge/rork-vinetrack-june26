@@ -1,8 +1,25 @@
+import Foundation
 import Testing
 @testable import VineTrack
 
 /// Issue #53: System Admin-only fixture pilot, isolated from ordinary Pins.
 struct PermanentItemsPilotPolicyTests {
+    /// Reproduces iOS cold-start regression: server permission lookup must
+    /// be eligible immediately after auth+vineyard restore, even while the
+    /// independent BackendAccessControl role cache is still loading.
+    @Test func permanentItemLookupDoesNotRequireLocalRoleCache() {
+        let actor = UUID()
+        let vineyard = UUID()
+        #expect(PermanentItemsPilotPolicy.mayCheckVineyardAccess(
+            isSignedIn: true, userId: actor, vineyardId: vineyard))
+        #expect(!PermanentItemsPilotPolicy.mayCheckVineyardAccess(
+            isSignedIn: false, userId: actor, vineyardId: vineyard))
+        #expect(!PermanentItemsPilotPolicy.mayCheckVineyardAccess(
+            isSignedIn: true, userId: nil, vineyardId: vineyard))
+        #expect(!PermanentItemsPilotPolicy.mayCheckVineyardAccess(
+            isSignedIn: true, userId: actor, vineyardId: nil))
+    }
+
     @Test func validatesFixtureNameTypeAndCoordinates() {
         #expect(PermanentItemsPilotPolicy.valid(name: "North Flush Valve", type: "flush_valve", latitude: -34, longitude: 138))
         #expect(!PermanentItemsPilotPolicy.valid(name: "  ", type: "pump", latitude: -34, longitude: 138))
@@ -14,7 +31,7 @@ struct PermanentItemsPilotPolicyTests {
         #expect(!PermanentItemsPilotPolicy.valid(name: "Valve", type: "custom_invalid", latitude: -34, longitude: 138))
     }
 
-    @Test func hardDeleteIsLimitedToVineyardOwnersAndManagers() {
+    @Test func hardDeleteIsLimitedToVineyardSupervisorsManagersAndOwners() {
         #expect(PermanentItemsPilotPolicy.roleMayHardDelete(.owner))
         #expect(PermanentItemsPilotPolicy.roleMayHardDelete(.manager))
         #expect(PermanentItemsPilotPolicy.roleMayHardDelete(.supervisor))
