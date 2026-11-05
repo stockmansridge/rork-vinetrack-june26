@@ -627,6 +627,16 @@ struct EndTripReviewSheet: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if var live = tracking.activeTrip {
             var changed = false
+            // Save exactly the auto-credited rows the operator was shown, even
+            // if GPS moved the lock while this sheet was open.
+            let shownAutoCredits = pendingAutoCredits.filter { path in
+                !live.completedPaths.contains(where: { abs($0 - path) < 0.01 })
+                    && !live.skippedPaths.contains(where: { abs($0 - path) < 0.01 })
+            }
+            if !shownAutoCredits.isEmpty {
+                live.completedPaths.append(contentsOf: shownAutoCredits.sorted())
+                changed = true
+            }
             if !manualCompletes.isEmpty {
                 for path in manualCompletes {
                     if !live.completedPaths.contains(path) && !live.skippedPaths.contains(path) {
@@ -650,6 +660,10 @@ struct EndTripReviewSheet: View {
                     finishBlockedMessage = "Your review changes could not be saved on this device, so the trip is still running. \(error.localizedDescription)"
                     return
                 }
+            }
+            if !shownAutoCredits.isEmpty {
+                let summary = shownAutoCredits.sorted().map { String(format: "%g", $0) }.joined(separator: ",")
+                tracking.recordManualCorrection("end_review_auto_finalize: [\(summary)]")
             }
             if !manualCompletes.isEmpty {
                 let summary = manualCompletes

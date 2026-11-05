@@ -464,8 +464,9 @@ struct ActiveTripView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.vertical, 8)
             }
+            // `trip.id` (not liveTrip) avoids another occurrence-journal read per render.
             if let message = tracking.errorMessage,
-               SprayTankActualStore.shared.initialMix(tripId: liveTrip.id) == nil {
+               SprayTankActualStore.shared.initialMix(tripId: trip.id) == nil {
                 // Tracking errors (location permission, a tank/fill/pause that
                 // could not be saved, a held recording) used to be set on the
                 // service and never shown on this screen.

@@ -285,12 +285,19 @@ struct NewMainTabView: View {
             tripTracking.resumeIfNeeded()
         }
         // Upload a Trip start or a durably saved Trip end straight away rather
-        // than waiting up to three minutes for the periodic sweep. The sweep
-        // keeps its dependency order (tank actuals before the final ended
-        // state) and coalesces with any sweep already running.
+        // than waiting up to three minutes for the periodic sweep.
         .onChange(of: store.deviceActiveTripId) { old, new in
             guard old != new, network.isOnline, scenePhase == .active else { return }
-            Task { await runFullSweep(alertRefresh: .none) }
+            if new != nil {
+                // Start: Trip rows only. A full sweep (pins, blocks, chemicals,
+                // images…) here would compete with the first GPS fixes.
+                Task { await tripSync.syncTripsForSelectedVineyard() }
+            } else {
+                // End: full sweep keeps the dependency order (tank actuals
+                // before the final ended state) and coalesces with any sweep
+                // already running. The operator is no longer driving.
+                Task { await runFullSweep(alertRefresh: .none) }
+            }
         }
         // Retry queued pushes the moment the network comes back.
         .onChange(of: network.isOnline) { _, online in

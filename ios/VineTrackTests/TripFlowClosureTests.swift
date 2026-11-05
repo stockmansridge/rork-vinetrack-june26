@@ -49,7 +49,8 @@ final class TripFlowClosureTests: XCTestCase {
         XCTAssertNotNil(saved.endTime)
         XCTAssertFalse(saved.isPaused, "An ended trip must not be saved as paused")
         XCTAssertEqual(saved.pauseTimestamps.count, 1)
-        XCTAssertEqual(saved.activeDuration, durationAtPause, accuracy: 1.0)
+        // Stored timestamps may drop sub-second precision.
+        XCTAssertEqual(saved.activeDuration, durationAtPause, accuracy: 2.0)
         XCTAssertNil(store.deviceActiveTripId)
         XCTAssertFalse(tracking.isTracking)
         XCTAssertFalse(tracking.isPaused)
@@ -96,9 +97,11 @@ final class TripFlowClosureTests: XCTestCase {
     func testReviewPreviewNeverChangesTheLiveTrip() throws {
         let (store, tracking, trip) = makeActiveTrip()
         let before = try XCTUnwrap(store.trips.first { $0.id == trip.id })
+        let diskBefore = persisted(trip.id, vineyard: trip.vineyardId)
         _ = tracking.pendingRowCreditsForReview()
         XCTAssertEqual(store.trips.first { $0.id == trip.id }, before)
-        XCTAssertEqual(persisted(trip.id, vineyard: trip.vineyardId), before)
+        // Compare disk to disk: stored timestamps are second-precision.
+        XCTAssertEqual(persisted(trip.id, vineyard: trip.vineyardId), diskBefore)
     }
 
     private func makeActiveTrip(_ configure: (inout Trip) -> Void) -> (MigratedDataStore, TripTrackingService, Trip) {
@@ -131,7 +134,8 @@ final class TripFlowClosureTests: XCTestCase {
         XCTAssertNil(saved.activeTankNumber)
         XCTAssertTrue(saved.tankSessions.allSatisfy { $0.endTime != nil }, "Every tank must be finished on an ended trip")
         let tank2 = try XCTUnwrap(saved.tankSessions.first { $0.tankNumber == 2 })
-        XCTAssertLessThanOrEqual(try XCTUnwrap(tank2.endTime), try XCTUnwrap(saved.endTime))
+        // Tank first, then Trip (allowing for second-precision Trip timestamps).
+        XCTAssertLessThanOrEqual(try XCTUnwrap(tank2.endTime), try XCTUnwrap(saved.endTime).addingTimeInterval(1))
         XCTAssertNil(store.deviceActiveTripId)
     }
 
