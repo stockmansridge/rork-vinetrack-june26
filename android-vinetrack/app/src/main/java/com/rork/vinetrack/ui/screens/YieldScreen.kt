@@ -1194,33 +1194,23 @@ private fun YieldListView(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (records.isEmpty() && state.pickingRecords.isEmpty() && state.yieldSessions.none { it.isCompleted }) {
-                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
-                    if (!state.isOnline) {
-                        EmptyState(
-                            icon = Icons.Filled.Scale,
-                            title = "No saved yield records",
-                            message = "You're offline and there are no yield records saved on this device. Reconnect to load your team's records.",
-                        )
-                    } else {
-                        EmptyState(
-                            icon = Icons.Filled.Scale,
-                            title = "No yield records yet",
-                            message = "Record a block's actual yield at harvest to track tonnes and feed cost-per-tonne reporting.",
-                        )
-                    }
-                    state.yieldError?.let {
-                        Text(it, color = VineColors.Destructive, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp))
-                    }
-                }
-            } else {
-                LazyColumn(
+            // Even an empty vineyard should show the iOS-style overview and
+            // selected vintage; the estimate empty-state belongs inside it.
+            LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     state.yieldError?.let { err ->
                         item { Text(err, color = VineColors.Destructive, fontSize = 13.sp) }
+                    }
+                    if (!state.isOnline && records.isEmpty() && state.pickingRecords.isEmpty()) {
+                        item(key = "yield-offline-note") {
+                            Text(
+                                "Offline: shared yield records may be incomplete. Reconnect to refresh the report.",
+                                fontSize = 12.sp, color = vine.textSecondary,
+                            )
+                        }
                     }
 
                     // The four iOS-style overview tiles sit ABOVE Vintage.
@@ -1339,7 +1329,6 @@ private fun YieldListView(
                     }
 
                 }
-            }
         }
     }
 }
