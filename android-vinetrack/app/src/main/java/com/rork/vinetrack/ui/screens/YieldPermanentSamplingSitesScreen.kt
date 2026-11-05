@@ -273,7 +273,7 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                                     }
                                     if (matched.size != 1) {
                                         errorText = "Location must match exactly one mapped block. Check boundary or select the block manually."
-                                    } else if (matched[0].id != block.id) {
+                                    } else if (matched[0].id != block?.id) {
                                         selectedBlockId = matched[0].id
                                         message = "Switched to ${matched[0].name}. Open that block's draft and place the pin again."
                                     } else {
