@@ -1,5 +1,8 @@
 package com.rork.vinetrack.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,6 +73,10 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.components.MapMyLocationButton
+import com.rork.vinetrack.ui.components.hasDeviceLocationPermission
+import com.rork.vinetrack.ui.components.mapGestureOwnership
+import com.rork.vinetrack.ui.components.ForegroundLocationSubscriptionEffect
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
@@ -89,6 +96,7 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
     val context = LocalContext.current
     val repo = remember(context) { YieldSamplingSiteRepository(SessionStore(context)) }
     val tracker = remember(context) { LocationTracker(context) }
+    ForegroundLocationSubscriptionEffect(tracker)
     val scope = rememberCoroutineScope()
     val vine = LocalVineColors.current
 
@@ -106,6 +114,10 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
     var errorText by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var showConfirm by remember { mutableStateOf(false) }
+    var mapGestureActive by remember { mutableStateOf(false) }
+    var hasLocationPerm by remember { mutableStateOf(hasDeviceLocationPermission(context)) }
+    var locatingField by remember { mutableStateOf(false) }
+    var fieldLocationFeedback by remember { mutableStateOf<String?>(null) }
 
     var editorSite by remember { mutableStateOf<YieldFixedSite?>(null) }
     var pendingCoordinate by remember { mutableStateOf<LatLng?>(null) }
@@ -130,6 +142,58 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
         notesText = existing?.notes ?: ""
         errorText = null
         showEditor = true
+    }
+
+    fun captureFieldLocation() {
+        val chosenBlock = block ?: run {
+            fieldLocationFeedback = "Select a mapped block first."
+            return
+        }
+        if (draft == null) {
+            fieldLocationFeedback = "Create a draft for this block before recording locations."
+            return
+        }
+        if (locatingField) return
+        scope.launch {
+            locatingField = true
+            fieldLocationFeedback = "Getting a fresh, precise GPS fix…"
+            try {
+                val fix = tracker.currentPinLocation(timeoutMs = 12000L)
+                if (fix !is PinLocationResult.Success) {
+                    fieldLocationFeedback = fix.operatorMessage() +
+                        " Check Location permissions and GPS, then try again."
+                    return@launch
+                }
+                val matches = blocks.filter {
+                    RowAttachment.containsPoint(it, fix.fix.latitude, fix.fix.longitude)
+                }
+                when {
+                    matches.size != 1 -> fieldLocationFeedback =
+                        "The location does not match exactly one mapped block. Move into the block or place the pin on the map."
+                    matches.single().id != chosenBlock.id -> {
+                        selectedBlockId = matches.single().id
+                        fieldLocationFeedback = "GPS matched ${matches.single().name}. Open its draft, then press Place Pin Here again."
+                    }
+                    else -> {
+                        fieldLocationFeedback = null
+                        showSiteEditor(LatLng(fix.fix.latitude, fix.fix.longitude))
+                    }
+                }
+            } catch (e: Exception) {
+                fieldLocationFeedback = "GPS capture failed: ${e.message ?: "Try again."}"
+            } finally {
+                locatingField = false
+            }
+        }
+    }
+
+    val fieldPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        hasLocationPerm = hasDeviceLocationPermission(context)
+        if (tracker.hasFinePermission) captureFieldLocation()
+        else fieldLocationFeedback =
+            "Precise location permission is required to place a field pin. Enable precise location in Android Settings or use the map."
     }
 
     LaunchedEffect(vineyardId, user, block?.id, revision) {
@@ -170,7 +234,7 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
+            modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState(), enabled = !mapGestureActive)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -192,12 +256,21 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (block != null) {
-                Box(Modifier.fillMaxWidth().height(330.dp)) {
+                Box(Modifier.fillMaxWidth().height(350.dp).mapGestureOwnership { mapGestureActive = it }) {
                     GoogleMap(
                         modifier = Modifier.fillMaxSize(),
                         cameraPositionState = camera,
-                        properties = MapProperties(mapType = MapType.HYBRID),
-                        uiSettings = MapUiSettings(zoomControlsEnabled = false, mapToolbarEnabled = false),
+                        properties = MapProperties(
+                            mapType = MapType.HYBRID,
+                            isMyLocationEnabled = hasLocationPerm,
+                        ),
+                        uiSettings = MapUiSettings(
+                            zoomControlsEnabled = true,
+                            scrollGesturesEnabled = true,
+                            zoomGesturesEnabled = true,
+                            mapToolbarEnabled = false,
+                            myLocationButtonEnabled = false,
+                        ),
                         onMapLoaded = { mapLoaded = true },
                         onMapClick = { position ->
                             if (draft != null) showSiteEditor(position)
@@ -221,6 +294,17 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                             )
                         }
                     }
+                    MapMyLocationButton(
+                        camera = camera,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+                        onMessage = { fieldLocationFeedback = it },
+                        onPermissionGranted = {
+                            hasLocationPerm = hasDeviceLocationPermission(context)
+                        },
+                        contentDescription = "Show my current location",
+                        targetZoom = 18f,
+                        locationTracker = tracker,
+                    )
                 }
                 Text(
                     if (draft != null) "Tap within the purple block to add a site, or tap a draft marker to edit."
@@ -260,31 +344,23 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                     } else {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth().testTag("yield.sites.placeGPS"),
-                            enabled = !busy,
+                            enabled = !busy && !locatingField,
                             onClick = {
-                                scope.launch {
-                                    val fix = tracker.currentPinLocation()
-                                    if (fix !is PinLocationResult.Success) {
-                                        errorText = fix.operatorMessage()
-                                        return@launch
-                                    }
-                                    val matched = blocks.filter {
-                                        RowAttachment.containsPoint(it, fix.fix.latitude, fix.fix.longitude)
-                                    }
-                                    if (matched.size != 1) {
-                                        errorText = "Location must match exactly one mapped block. Check boundary or select the block manually."
-                                    } else if (matched[0].id != block?.id) {
-                                        selectedBlockId = matched[0].id
-                                        message = "Switched to ${matched[0].name}. Open that block's draft and place the pin again."
-                                    } else {
-                                        showSiteEditor(LatLng(fix.fix.latitude, fix.fix.longitude))
-                                    }
-                                }
+                                fieldLocationFeedback = null
+                                if (!tracker.hasFinePermission) {
+                                    fieldPermissionLauncher.launch(arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                                    ))
+                                } else captureFieldLocation()
                             },
                         ) {
                             Icon(Icons.Filled.MyLocation, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Set Location in Field — Place Pin Here")
+                            Text(if (locatingField) "Locating…" else "Set Location in Field — Place Pin Here")
+                        }
+                        fieldLocationFeedback?.let {
+                            Text(it, color = if (locatingField) vine.textSecondary else VineColors.Destructive)
                         }
                         draftSites.sortedBy { it.siteNumber }.forEach { site ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
