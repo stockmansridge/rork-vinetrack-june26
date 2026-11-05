@@ -39,8 +39,8 @@ class YieldPanelCountObservationTest {
         val vintage = YieldVintageReport.sessionVintage(restored, 7, 1)
         assertNull(YieldVintageReport.latestCompletedSessionForBlock(listOf(restored), block, vintage, 7, 1))
         assertTrue(YieldVintageReport.estimateRows(
-            listOf(restored), emptyList(), remainingYieldMultiplier = { 1.0 }, vintage = vintage,
-            seasonStartMonth = 7, seasonStartDay = 1
+            sessions = listOf(restored), paddocks = emptyList(), damageRecords = emptyList(),
+            vintage = vintage, seasonStartMonth = 7, seasonStartDay = 1
         ).isEmpty())
     }
 }
