@@ -130,6 +130,7 @@ nonisolated struct SprayInitialTankInput: Equatable {
 /// calculated figure. The underlying value remains editable at full precision.
 struct SpraySelectAllDecimalField: UIViewRepresentable {
     @Binding var text: String
+    @Environment(\.isEnabled) private var isEnabled
     let placeholder: String
     let accessibilityLabel: String
     let accessibilityIdentifier: String?
@@ -146,6 +147,7 @@ struct SpraySelectAllDecimalField: UIViewRepresentable {
         field.keyboardType = .decimalPad
         field.textAlignment = alignment
         field.font = UIFont.preferredFont(forTextStyle: .title3)
+        field.isEnabled = isEnabled
         field.adjustsFontForContentSizeCategory = true
         field.autocorrectionType = .no
         field.accessibilityLabel = accessibilityLabel
@@ -156,6 +158,7 @@ struct SpraySelectAllDecimalField: UIViewRepresentable {
     func updateUIView(_ field: UITextField, context: Context) {
         context.coordinator.parent = self
         if field.text != text { field.text = text }
+        field.isEnabled = isEnabled
         field.textAlignment = alignment
         field.accessibilityLabel = accessibilityLabel
         field.accessibilityIdentifier = accessibilityIdentifier
