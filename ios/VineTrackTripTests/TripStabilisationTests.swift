@@ -349,7 +349,8 @@ final class TripStabilisationTests: XCTestCase {
         XCTAssertEqual(adopted.pathPoints, local.pathPoints)
         XCTAssertEqual(adopted.totalDistance, local.totalDistance)
         XCTAssertNil(store.deviceActiveTripId)
-        XCTAssertTrue((await repository.uploaded).isEmpty) // Never replay stale active state.
+        let uploads = await repository.uploaded
+        XCTAssertTrue(uploads.isEmpty) // Never replay stale active state.
         // The original unacknowledged route is still held, rather than
         // falsely claiming it was uploaded by the Portal correction.
         XCTAssertNotNil(metadata.pendingUpserts[tripId])
