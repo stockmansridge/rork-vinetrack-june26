@@ -227,7 +227,7 @@ struct YieldEstimationView: View {
                             .font(.subheadline.weight(.semibold))
                     }
                     .accessibilityIdentifier("yield.draft.hardDelete")
-
+                }
 
                 if paddocks.isEmpty {
                     Text("Map at least one block boundary in Blocks before starting a yield estimate trip.")
