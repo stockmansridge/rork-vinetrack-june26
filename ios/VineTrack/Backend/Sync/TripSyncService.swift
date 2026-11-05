@@ -802,7 +802,7 @@ final class TripSyncService {
     /// vineyard. Its server completion is checked by its exact original UUID,
     /// vineyard and authenticated account, not by the selected-vineyard slice.
     /// This is read-only on the server and never acknowledges a queued upload.
-    private func reconcileOwnedTripCompletionAcrossVineyards() async {
+    func reconcileOwnedTripCompletionAcrossVineyards() async {
         guard let store, let auth, auth.isSignedIn,
               let account = auth.userId,
               store.currentUserIdProvider?() == account,
