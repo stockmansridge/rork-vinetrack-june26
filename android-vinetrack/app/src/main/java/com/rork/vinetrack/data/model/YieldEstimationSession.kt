@@ -44,11 +44,19 @@ data class SampleSite(
     val longitude: Double,
     val siteIndex: Int,
     val bunchCountEntry: BunchCountEntry? = null,
+    val panelCountEntry: PanelCountEntry? = null,
     val yieldRowReference: String? = null,
     val yieldPanelReference: String? = null,
 ) {
-    val isRecorded: Boolean get() = bunchCountEntry != null
+    val isRecorded: Boolean get() = bunchCountEntry != null || panelCountEntry != null
 }
+
+@Serializable
+data class PanelCountEntry(
+    val measurement: PanelCountMeasurement,
+    val recordedAt: String,
+    val recordedBy: String = "",
+)
 
 /** A previously-used average bunch weight, offered as a quick-fill (iOS parity). */
 @Serializable
@@ -145,7 +153,12 @@ data class YieldEstimationSession(
     val siteSetVersions: Map<String, YieldSiteSetSource> = emptyMap(),
 ) {
     val isQuadrantCount: Boolean get() = countMethod == "quadrant" || sampleSites.any { it.bunchCountEntry?.quadrant != null }
-    val countMethodName: String get() = if (isQuadrantCount) "Quadrant Count" else "Bunches Per Vine Count"
+    val isPanelCount: Boolean get() = countMethod == "panel" || sampleSites.any { it.panelCountEntry != null }
+    val countMethodName: String get() = when {
+        isPanelCount -> "Panel Count"
+        isQuadrantCount -> "Quadrant Count"
+        else -> "Bunches Per Vine Count"
+    }
 
     fun vineCount(paddock: Paddock): Int = if (!isCompleted) paddock.authoritativeVineCount else
         blockVineCounts.entries.firstOrNull { it.key.equals(paddock.id, ignoreCase = true) }?.value
