@@ -1631,6 +1631,14 @@ final class YieldEstimationSessionSyncService {
         await sync(vineyardId: vineyardId)
     }
 
+    /// Called only after authenticated server hard-delete receipt/absence.
+    /// Prevents an obsolete local soft-delete outbox item being replayed.
+    func acknowledgeHardDeletedSession(_ id: UUID) {
+        metadata.clearDirty([id])
+        metadata.clearDeleted([id])
+        SyncIssueCenter.shared.clearIssues([id])
+    }
+
     func sync(vineyardId: UUID) async {
         guard !isSyncing else { return }
         guard SupabaseClientProvider.shared.isConfigured else {
@@ -1638,6 +1646,18 @@ final class YieldEstimationSessionSyncService {
         }
         syncStatus = .syncing; errorMessage = nil
         do {
+            // Hard-deleted observations have a metadata-only receipt. Read it
+            // before initial seeding or replay to prevent old device state
+            // resurrecting another user's deliberate deletion.
+            let deleted = try await SupabaseYieldEstimationHardDeleteRepository()
+                .deletedIds(vineyardId: vineyardId)
+            if let store {
+                for existing in store.yieldSessions
+                    where existing.vineyardId == vineyardId && deleted.contains(existing.id) {
+                    store.applyRemoteYieldSessionDelete(existing.id)
+                    acknowledgeHardDeletedSession(existing.id)
+                }
+            }
             try await push(vineyardId: vineyardId)
             try await pull(vineyardId: vineyardId)
             metadata.setLastSync(Date(), for: vineyardId)
