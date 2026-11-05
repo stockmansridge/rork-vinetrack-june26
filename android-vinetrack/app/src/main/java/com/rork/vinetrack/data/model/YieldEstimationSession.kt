@@ -203,3 +203,38 @@ data class QuadrantCountMeasurement(
         }
     }
 }
+
+
+/**
+ * Issue #54: raw post-to-post panel evidence.
+ * This is NOT a yield projection: block inventory must confirm whether the
+ * authoritative vine count represents planting positions or fruiting vines.
+ */
+@Serializable
+data class PanelCountMeasurement(
+    val totalBunches: Int,
+    val plantedPositions: Int,
+    val fruitingVines: Int,
+    val missingPositions: Int,
+    val nonproductiveVines: Int,
+    val panelLengthMetres: Double? = null,
+    val calculationVersion: Int = 1,
+) {
+    val bunchesPerPlantingPosition: Double get() = totalBunches.toDouble() / plantedPositions
+
+    companion object {
+        fun make(
+            totalBunches: Int, plantedPositions: Int, fruitingVines: Int,
+            missingPositions: Int, nonproductiveVines: Int,
+            panelLengthMetres: Double?,
+        ): PanelCountMeasurement? {
+            if (totalBunches < 0 || plantedPositions <= 0 ||
+                fruitingVines < 0 || missingPositions < 0 || nonproductiveVines < 0 ||
+                fruitingVines.toLong() + missingPositions + nonproductiveVines != plantedPositions.toLong() ||
+                (panelLengthMetres != null && (!panelLengthMetres.isFinite() || panelLengthMetres <= 0))
+            ) return null
+            return PanelCountMeasurement(totalBunches, plantedPositions, fruitingVines,
+                missingPositions, nonproductiveVines, panelLengthMetres)
+        }
+    }
+}
