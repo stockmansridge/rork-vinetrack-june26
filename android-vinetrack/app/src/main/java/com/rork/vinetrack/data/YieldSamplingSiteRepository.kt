@@ -75,6 +75,8 @@ fun YieldFixedSite.toSampleSite(paddock: Paddock, globalIndex: Int): SampleSite 
         latitude = latitude,
         longitude = longitude,
         siteIndex = globalIndex,
+        yieldRowReference = rowNumber,
+        yieldPanelReference = panelNumber,
     )
 }
 
