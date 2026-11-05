@@ -996,7 +996,7 @@ internal fun QuickActionsSection(
             Row(
                 modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Brush.linearGradient(listOf(VineColors.Indigo, VineColors.Primary)))
+                    .background(Brush.linearGradient(listOf(VineColors.Indigo, VineColors.Purple)))
                     .clickable(onClick = onPermanentItemAction)
                     .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1004,13 +1004,13 @@ internal fun QuickActionsSection(
             ) {
                 com.rork.vinetrack.ui.components.BrightToolIcon(
                     icon = Icons.Filled.AddLocationAlt,
-                    colors = listOf(VineColors.Indigo, VineColors.Primary),
+                    colors = listOf(VineColors.Indigo, VineColors.Purple),
                     size = 36.dp,
                 )
                 Column(Modifier.weight(1f)) {
                     Text("Permanent Item", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                    Text("System Admin pilot · fixed property assets", fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.85f))
+                    Text("Fixed property assets", fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.85f), maxLines = 1)
                 }
                 Icon(Icons.Filled.ChevronRight, contentDescription = null,
                     tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))

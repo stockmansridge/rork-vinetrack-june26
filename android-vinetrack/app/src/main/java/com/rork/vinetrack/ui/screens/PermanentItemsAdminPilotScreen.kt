@@ -3,6 +3,7 @@ package com.rork.vinetrack.ui.screens
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,10 +14,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
@@ -31,7 +34,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -43,10 +45,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.GoogleMap
@@ -55,15 +60,25 @@ import com.google.maps.android.compose.MapType
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PermanentItemPilotPolicy
 import com.rork.vinetrack.data.PermanentItemPilotRow
+import com.rork.vinetrack.data.PermanentItemPilotType
 import com.rork.vinetrack.data.PermanentItemsPilotRepository
 import com.rork.vinetrack.ui.AppUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+
+private fun permanentItemMarkerHue(type: String, custom: List<PermanentItemPilotType>): Float {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(
+        android.graphics.Color.parseColor(PermanentItemPilotPolicy.hex(type, custom)), hsv)
+    return hsv[0]
+}
 
 /** An independent System Admin pilot surface, never joined to the normal Pins map/outbox. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -83,13 +98,11 @@ fun PermanentItemsAdminPilotScreen(
     var loading by remember(user, vineyard) { mutableStateOf(true) }
     var busy by remember(user, vineyard) { mutableStateOf(false) }
     var rows by remember(user, vineyard) { mutableStateOf<List<PermanentItemPilotRow>>(emptyList()) }
+    var customTypes by remember(user, vineyard) { mutableStateOf<List<PermanentItemPilotType>>(emptyList()) }
     var pending by remember(user, vineyard) { mutableStateOf(false) }
     var error by remember(user, vineyard) { mutableStateOf<String?>(null) }
     var notice by remember(user, vineyard) { mutableStateOf<String?>(null) }
-    var mapMode by remember(user, vineyard) { mutableStateOf(false) }
-    var mapLayer by remember(user, vineyard) { mutableStateOf(true) }
     var search by remember(user, vineyard) { mutableStateOf("") }
-    var category by remember(user, vineyard) { mutableStateOf("all") }
     var editing by remember(user, vineyard) { mutableStateOf(false) }
     var selected by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
     var archiveTarget by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
@@ -102,6 +115,12 @@ fun PermanentItemsAdminPilotScreen(
     var photo by remember(user, vineyard) { mutableStateOf<ByteArray?>(null) }
     var typeExpanded by remember { mutableStateOf(false) }
     var blockExpanded by remember { mutableStateOf(false) }
+    var showNewType by remember { mutableStateOf(false) }
+    var newTypeName by remember { mutableStateOf("") }
+    var newTypeHex by remember { mutableStateOf("#7856D8") }
+    var savingNewType by remember { mutableStateOf(false) }
+    var newTypeError by remember { mutableStateOf<String?>(null) }
+    var showPhotoOptions by remember { mutableStateOf(false) }
     val locked = !PermanentItemPilotPolicy.allowed(
         state.isSystemAdmin, allowed, user, vineyard, state.currentRole
     )
@@ -125,6 +144,7 @@ fun PermanentItemsAdminPilotScreen(
                 val listed = repository.list(target)
                 if (state.selectedVineyardId == target && state.currentUserId == user) {
                     rows = listed
+                    customTypes = repository.listTypes(target)
                     pending = repository.pending(target) != null
                 }
             } catch (e: Exception) {
@@ -193,8 +213,20 @@ fun PermanentItemsAdminPilotScreen(
         }
     }
 
+    val cameraPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null) {
+            val stream = ByteArrayOutputStream()
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, stream)
+            photo = stream.toByteArray()
+            notice = "Camera photo selected. It will attach after the item is saved."
+        }
+    }
+
     LaunchedEffect(user, vineyard, state.isSystemAdmin, state.currentRole) {
-        allowed = false; rows = emptyList(); editing = false; pending = false; loading = true
+        allowed = false; rows = emptyList(); customTypes = emptyList()
+        editing = false; pending = false; loading = true
         val target = vineyard
         if (target != null && PermanentItemPilotPolicy.allowed(
             state.isSystemAdmin, true, user, target, state.currentRole
@@ -203,6 +235,7 @@ fun PermanentItemsAdminPilotScreen(
                 allowed = repository.pilotEnabled(target)
                 if (allowed) {
                     rows = repository.list(target)
+                    customTypes = repository.listTypes(target)
                     pending = repository.pending(target) != null
                 }
             } catch (e: Exception) {
@@ -220,7 +253,7 @@ fun PermanentItemsAdminPilotScreen(
         modifier = modifier,
         topBar = {
             TopAppBar(
-                title = { Text("Permanent Items · Admin Pilot") },
+                title = { Text("Permanent Items") },
                 navigationIcon = {
                     IconButton(onClick = { if (editing) editing = false else onBack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -257,14 +290,32 @@ fun PermanentItemsAdminPilotScreen(
                     label = { Text("Name (required)") }, modifier = Modifier.fillMaxWidth())
                 Box {
                     OutlinedButton(onClick = { typeExpanded = true }) {
-                        Text("Type: " + (PermanentItemPilotPolicy.TYPES[type] ?: type))
+                        Text("Type: " + PermanentItemPilotPolicy.label(type, customTypes))
+                        Icon(Icons.Filled.Add, contentDescription = "Add custom type")
                     }
                     DropdownMenu(expanded = typeExpanded, onDismissRequest = { typeExpanded = false }) {
                         PermanentItemPilotPolicy.TYPES.forEach { (key, label) ->
-                            DropdownMenuItem(text = { Text(label) }, onClick = {
-                                type = key; typeExpanded = false
-                            })
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                leadingIcon = {
+                                    Box(Modifier.size(16.dp)
+                                        .background(Color(android.graphics.Color.parseColor(
+                                            PermanentItemPilotPolicy.hex(key, customTypes))), CircleShape))
+                                },
+                                onClick = { type = key; typeExpanded = false }
+                            )
                         }
+                        customTypes.forEach { custom ->
+                            DropdownMenuItem(
+                                text = { Text(custom.name) },
+                                onClick = { type = custom.typeKey; typeExpanded = false }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("+ Add Vineyard Type") },
+                            leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                            onClick = { typeExpanded = false; showNewType = true }
+                        )
                     }
                 }
                 Box {
@@ -296,7 +347,7 @@ fun PermanentItemsAdminPilotScreen(
                     }
                 }) {
                     Icon(Icons.Filled.AddLocationAlt, contentDescription = null)
-                    Text(" Use Current GPS")
+                    Text(" Drop Permanent Pin Here")
                 }
                 val currentLat = lat.toDoubleOrNull()
                 val currentLon = lon.toDoubleOrNull()
@@ -319,10 +370,27 @@ fun PermanentItemsAdminPilotScreen(
                         error = null
                     }
                 ) {
-                    if (picked != null) Marker(state = MarkerState(position = picked),
-                        title = "Permanent Item placement")
+                    state.paddocks.forEach { block ->
+                        val points = block.polygonPoints.orEmpty()
+                            .map { LatLng(it.latitude, it.longitude) }
+                        if (points.size >= 3) Polygon(
+                            points = points,
+                            fillColor = Color.Yellow.copy(alpha = 0.10f),
+                            strokeColor = Color(0xFFF5D45B),
+                            strokeWidth = 3f
+                        )
+                    }
+                    if (picked != null) Marker(
+                        state = MarkerState(position = picked),
+                        title = "Permanent Item placement",
+                        icon = BitmapDescriptorFactory.defaultMarker(
+                            permanentItemMarkerHue(type, customTypes))
+                    )
                 }
-                Text("Tap the map to set or move the marker. Coordinates can also be entered below.")
+                OutlinedButton(onClick = {
+                    lat = ""; lon = ""; error = null
+                }, enabled = picked != null) { Text("Clear Pin") }
+                Text("Tap the map to set or move the marker. Clear Pin starts the placement again.")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = lat, onValueChange = { lat = it },
                         label = { Text("Latitude") }, modifier = Modifier.weight(1f),
@@ -331,9 +399,10 @@ fun PermanentItemsAdminPilotScreen(
                         label = { Text("Longitude") }, modifier = Modifier.weight(1f),
                         singleLine = true)
                 }
-                OutlinedButton(onClick = { photoPicker.launch("image/*") }) {
-                    Text(if (photo == null) "Add photo (optional)" else "Replace selected photo")
+                OutlinedButton(onClick = { showPhotoOptions = true }) {
+                    Text(if (photo == null) "Add Photo" else "Change Photo")
                 }
+                if (photo != null) Text("Photo ready to attach", color = MaterialTheme.colorScheme.primary)
                 if (selected?.photoPath != null) Text("This item already has a private photo reference.")
                 if (notice != null) Text(notice ?: "", style = MaterialTheme.typography.bodySmall)
                 if (error != null) Text(error ?: "", color = MaterialTheme.colorScheme.error)
@@ -380,57 +449,55 @@ fun PermanentItemsAdminPilotScreen(
                     modifier = Modifier.fillMaxWidth()) {
                     Text("New Permanent Item")
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Show Map")
-                    Switch(checked = mapMode, onCheckedChange = { mapMode = it })
-                    if (mapMode) {
-                        Spacer(Modifier.weight(1f))
-                        Text("Fixtures")
-                        Switch(checked = mapLayer, onCheckedChange = { mapLayer = it })
+                OutlinedTextField(
+                    value = search, onValueChange = { search = it },
+                    label = { Text("Search permanent items") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    trailingIcon = {
+                        if (search.isNotEmpty()) TextButton(onClick = { search = "" }) {
+                            Text("Clear")
+                        }
                     }
-                }
-                OutlinedTextField(value = search, onValueChange = { search = it },
-                    label = { Text("Search name or type") }, modifier = Modifier.fillMaxWidth(),
-                    singleLine = true)
+                )
                 val visible = rows.filter { it.archivedAt == null &&
-                    (category == "all" || it.itemType == category) &&
                     (search.isBlank() || it.name.contains(search, true) ||
-                        (PermanentItemPilotPolicy.TYPES[it.itemType] ?: "").contains(search, true))
+                        PermanentItemPilotPolicy.label(it.itemType, customTypes).contains(search, true))
                 }
-                if (mapMode) {
-                    val center = visible.firstOrNull()?.let { LatLng(it.latitude, it.longitude) }
-                        ?: LatLng(-34.0, 138.0)
-                    val mapCamera = rememberCameraPositionState {
-                        position = CameraPosition.fromLatLngZoom(center, 14f)
-                    }
-                    GoogleMap(
-                        modifier = Modifier.fillMaxWidth().height(300.dp),
-                        cameraPositionState = mapCamera,
-                        properties = MapProperties(mapType = MapType.HYBRID),
-                    ) {
-                        if (mapLayer) visible.forEach { item ->
-                            Marker(
-                                state = MarkerState(position = LatLng(item.latitude, item.longitude)),
-                                title = item.name, snippet = "Permanent Item",
-                                onClick = { startEditor(item); true }
-                            )
-                        }
-                    }
+                val allMarkers = rows.filter { it.archivedAt == null }
+                // Overview always renders every pin and vineyard block boundary.
+                // Search filters the list only; future type/layer filters are deliberately omitted.
+                val fallback = state.paddocks.firstNotNullOfOrNull { block ->
+                    block.polygonPoints?.firstOrNull()?.let { LatLng(it.latitude, it.longitude) }
+                } ?: LatLng(-34.0, 138.0)
+                val center = allMarkers.firstOrNull()?.let { LatLng(it.latitude, it.longitude) }
+                    ?: fallback
+                val mapCamera = rememberCameraPositionState {
+                    position = CameraPosition.fromLatLngZoom(center, 14f)
                 }
-                Box {
-                    var categoryExpanded by remember { mutableStateOf(false) }
-                    OutlinedButton(onClick = { categoryExpanded = true }) {
-                        Text("Filter: " + (PermanentItemPilotPolicy.TYPES[category] ?: "All types"))
+                GoogleMap(
+                    modifier = Modifier.fillMaxWidth().height(300.dp),
+                    cameraPositionState = mapCamera,
+                    properties = MapProperties(mapType = MapType.HYBRID),
+                ) {
+                    state.paddocks.forEach { block ->
+                        val points = block.polygonPoints.orEmpty()
+                            .map { LatLng(it.latitude, it.longitude) }
+                        if (points.size >= 3) Polygon(
+                            points = points,
+                            fillColor = Color.Yellow.copy(alpha = 0.10f),
+                            strokeColor = Color(0xFFF5D45B),
+                            strokeWidth = 3f
+                        )
                     }
-                    DropdownMenu(expanded = categoryExpanded, onDismissRequest = { categoryExpanded = false }) {
-                        DropdownMenuItem(text = { Text("All types") }, onClick = {
-                            category = "all"; categoryExpanded = false
-                        })
-                        PermanentItemPilotPolicy.TYPES.forEach { (key, label) ->
-                            DropdownMenuItem(text = { Text(label) }, onClick = {
-                                category = key; categoryExpanded = false
-                            })
-                        }
+                    allMarkers.forEach { item ->
+                        Marker(
+                            state = MarkerState(position = LatLng(item.latitude, item.longitude)),
+                            title = item.name,
+                            snippet = PermanentItemPilotPolicy.label(item.itemType, customTypes),
+                            icon = BitmapDescriptorFactory.defaultMarker(
+                                permanentItemMarkerHue(item.itemType, customTypes)),
+                            onClick = { startEditor(item); true }
+                        )
                     }
                 }
                 Column(
@@ -443,9 +510,16 @@ fun PermanentItemsAdminPilotScreen(
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(item.name, fontWeight = FontWeight.SemiBold)
-                            Text((PermanentItemPilotPolicy.TYPES[item.itemType] ?: item.itemType) +
-                                " · revision " + item.serverRevision,
-                                style = MaterialTheme.typography.bodySmall)
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Box(Modifier.size(14.dp).background(
+                                    Color(android.graphics.Color.parseColor(
+                                        PermanentItemPilotPolicy.hex(item.itemType, customTypes))),
+                                    CircleShape))
+                                Text(PermanentItemPilotPolicy.label(item.itemType, customTypes) +
+                                    " · revision " + item.serverRevision,
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
                             Text("%.6f, %.6f".format(item.latitude, item.longitude),
                                 style = MaterialTheme.typography.bodySmall)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -463,6 +537,89 @@ fun PermanentItemsAdminPilotScreen(
                 }
             }
         }
+    }
+
+    if (showPhotoOptions) {
+        AlertDialog(
+            onDismissRequest = { showPhotoOptions = false },
+            title = { Text("Attach a photo") },
+            text = { Text("Take a photo with the camera, or upload one from your library.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPhotoOptions = false
+                    cameraPicker.launch(null)
+                }) { Text("Take Photo") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showPhotoOptions = false
+                    photoPicker.launch("image/*")
+                }) { Text("Choose from Library") }
+            }
+        )
+    }
+
+    if (showNewType) {
+        AlertDialog(
+            onDismissRequest = { if (!savingNewType) showNewType = false },
+            title = { Text("Add Vineyard Type") },
+            text = {
+                Column(modifier = Modifier.height(350.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = newTypeName, onValueChange = { newTypeName = it.take(60) },
+                        label = { Text("Type name") }, singleLine = true
+                    )
+                    Text("Choose a colour shared across the vineyard:")
+                    PermanentItemPilotPolicy.CUSTOM_PALETTE.entries.toList()
+                        .chunked(2).forEach { pair ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                pair.forEach { (label, hex) ->
+                                    OutlinedButton(onClick = { newTypeHex = hex },
+                                        modifier = Modifier.weight(1f)) {
+                                        Box(Modifier.size(12.dp).background(
+                                            Color(android.graphics.Color.parseColor(hex)),
+                                            CircleShape))
+                                        Text(if (newTypeHex == hex) "✓$label" else label,
+                                            style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                            }
+                        }
+                    if (newTypeError != null) {
+                        Text(newTypeError ?: "", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = vineyard ?: return@TextButton
+                    if (locked || savingNewType) return@TextButton
+                    savingNewType = true
+                    newTypeError = null
+                    scope.launch {
+                        try {
+                            val added = repository.createType(target, newTypeName, newTypeHex)
+                            if (state.currentUserId == user && state.selectedVineyardId == target) {
+                                customTypes = customTypes + added
+                                type = added.typeKey
+                                showNewType = false
+                                newTypeName = ""
+                            }
+                        } catch (e: Exception) {
+                            newTypeError = e.message ?: "Unable to add vineyard type."
+                        } finally { savingNewType = false }
+                    }
+                }, enabled = !savingNewType && newTypeName.trim().isNotEmpty()) {
+                    Text(if (savingNewType) "Saving…" else "Add Type")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNewType = false }, enabled = !savingNewType) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     if (archiveTarget != null) {

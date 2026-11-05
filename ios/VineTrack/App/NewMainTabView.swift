@@ -1268,8 +1268,9 @@ struct NewHomeTabView: View {
                                        colors: [.indigo, .purple], size: 36)
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Permanent Item").font(.subheadline.weight(.semibold))
-                            Text("System Admin pilot · fixed property assets")
+                            Text("Fixed property assets")
                                 .font(.caption).foregroundStyle(.white.opacity(0.85))
+                                .lineLimit(1).minimumScaleFactor(0.8)
                         }.foregroundStyle(.white)
                         Spacer()
                         Image(systemName: "chevron.right").foregroundStyle(.white.opacity(0.7))

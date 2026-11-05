@@ -27,12 +27,45 @@ object PermanentItemPilotPolicy {
         "pump" to "Pump", "filter" to "Filter", "tank" to "Tank",
         "gate" to "Gate", "water_point" to "Water Point", "other" to "Other"
     )
+    val COLORS = linkedMapOf(
+        "irrigation_valve" to "#2D6CDF", "flush_valve" to "#00A3B8",
+        "pump" to "#7856D8", "filter" to "#0D9488",
+        "tank" to "#249B58", "gate" to "#D97706",
+        "water_point" to "#1F82C7", "other" to "#A8559A",
+    )
+    val CUSTOM_PALETTE = linkedMapOf(
+        "Purple" to "#7856D8", "Blue" to "#2D6CDF", "Cyan" to "#00A3B8",
+        "Teal" to "#0D9488", "Green" to "#249B58", "Orange" to "#D97706",
+        "Red" to "#D94848", "Magenta" to "#A8559A", "Sky" to "#1F82C7",
+        "Gold" to "#C59B22", "Slate" to "#64748B", "Rose" to "#E85D75",
+    )
     fun valid(name: String, type: String, lat: Double, lon: Double): Boolean =
-        name.trim().length in 1..100 && type in TYPES &&
+        name.trim().length in 1..100 &&
+            (type in TYPES || Regex("^custom_[a-f0-9]{32}$").matches(type)) &&
             lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0
+    fun label(type: String, custom: List<PermanentItemPilotType>): String =
+        custom.firstOrNull { it.typeKey == type }?.name ?: TYPES[type] ?: "Other"
+    fun hex(type: String, custom: List<PermanentItemPilotType>): String =
+        custom.firstOrNull { it.typeKey == type }?.colorHex ?: COLORS[type] ?: "#A8559A"
     fun allowed(admin: Boolean, flag: Boolean, user: String?, vineyard: String?, role: String?): Boolean =
         admin && flag && !user.isNullOrBlank() && !vineyard.isNullOrBlank() && !role.isNullOrBlank()
 }
+
+@Serializable
+data class PermanentItemPilotType(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    @SerialName("type_key") val typeKey: String,
+    val name: String,
+    @SerialName("color_hex") val colorHex: String
+)
+
+@Serializable
+private data class PermanentItemTypeCreateParams(
+    @SerialName("p_vineyard_id") val vineyardId: String,
+    @SerialName("p_name") val name: String,
+    @SerialName("p_color_hex") val hex: String
+)
 
 @Serializable
 data class PermanentItemPilotRow(
@@ -113,6 +146,47 @@ class PermanentItemsPilotRepository(context: Context) {
         requireScope(vineyard, account)
         flag
     }
+    suspend fun listTypes(vineyard: String): List<PermanentItemPilotType> = withContext(Dispatchers.IO) {
+        val account = actor(vineyard)
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl("permanent_item_types")) {
+            headers {
+                append("apikey", SupabaseClient.anonKey)
+                append("Authorization", "Bearer " + token())
+            }
+            url {
+                parameters.append("select", "id,vineyard_id,type_key,name,color_hex")
+                parameters.append("vineyard_id", "eq.$vineyard")
+                parameters.append("order", "name.asc")
+            }
+        }
+        val rows = json.decodeFromString<List<PermanentItemPilotType>>(
+            succeeded(response.status.value, response.bodyAsText()))
+        requireScope(vineyard, account)
+        rows
+    }
+
+    suspend fun createType(vineyard: String, name: String, hex: String): PermanentItemPilotType =
+        withContext(Dispatchers.IO) {
+            val account = actor(vineyard)
+            require(name.trim().length in 1..60)
+            require(Regex("^#[0-9A-Fa-f]{6}$").matches(hex))
+            val response = SupabaseClient.http.post(
+                SupabaseClient.rpcUrl("create_permanent_item_type_v1")
+            ) {
+                headers {
+                    append("apikey", SupabaseClient.anonKey)
+                    append("Authorization", "Bearer " + token())
+                }
+                contentType(ContentType.Application.Json)
+                setBody(PermanentItemTypeCreateParams(vineyard, name.trim(), hex))
+            }
+            val created = json.decodeFromString<List<PermanentItemPilotType>>(
+                succeeded(response.status.value, response.bodyAsText())).single()
+            requireScope(vineyard, account)
+            require(created.vineyardId == vineyard)
+            created
+        }
+
     suspend fun list(vineyard: String): List<PermanentItemPilotRow> = withContext(Dispatchers.IO) {
         val account = actor(vineyard)
         val response = SupabaseClient.http.get(SupabaseClient.restUrl("permanent_items")) {

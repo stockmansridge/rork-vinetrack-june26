@@ -9,19 +9,50 @@ import UIKit
 // Issue #53. Isolated System Admin pilot: not a mode of Pins, and never a Trip-sync job.
 enum PermanentItemsPilotPolicy {
     static let flag = "permanent_items_admin_preview"
-    static let types: [(id: String, label: String)] = [
-        ("irrigation_valve", "Irrigation Valve"), ("flush_valve", "Flush Valve"),
-        ("pump", "Pump"), ("filter", "Filter"), ("tank", "Tank"),
-        ("gate", "Gate"), ("water_point", "Water Point"), ("other", "Other")
+    static let types: [(id: String, label: String, hex: String)] = [
+        ("irrigation_valve", "Irrigation Valve", "#2D6CDF"),
+        ("flush_valve", "Flush Valve", "#00A3B8"),
+        ("pump", "Pump", "#7856D8"),
+        ("filter", "Filter", "#0D9488"),
+        ("tank", "Tank", "#249B58"),
+        ("gate", "Gate", "#D97706"),
+        ("water_point", "Water Point", "#1F82C7"),
+        ("other", "Other", "#A8559A")
     ]
     static func valid(name: String, type: String, latitude: Double, longitude: Double) -> Bool {
         (1...100).contains(name.trimmingCharacters(in: .whitespacesAndNewlines).count)
-            && types.contains(where: { $0.id == type })
+            && (types.contains(where: { $0.id == type })
+                || type.range(of: #"^custom_[0-9a-f]{32}$"#, options: .regularExpression) != nil)
             && latitude.isFinite && longitude.isFinite
             && (-90...90).contains(latitude) && (-180...180).contains(longitude)
     }
-    static func label(_ type: String) -> String {
-        types.first(where: { $0.id == type })?.label ?? "Other"
+    static func label(_ type: String, custom: [PermanentItemPilotType] = []) -> String {
+        custom.first(where: { $0.typeKey == type })?.name
+            ?? types.first(where: { $0.id == type })?.label ?? "Other"
+    }
+    static func hex(_ type: String, custom: [PermanentItemPilotType] = []) -> String {
+        custom.first(where: { $0.typeKey == type })?.colorHex
+            ?? types.first(where: { $0.id == type })?.hex ?? "#A8559A"
+    }
+    static func color(_ type: String, custom: [PermanentItemPilotType] = []) -> Color {
+        let hex = hex(type, custom: custom)
+        guard let rgb = UInt64(hex.dropFirst(), radix: 16) else { return .purple }
+        return Color(red: Double((rgb >> 16) & 0xFF) / 255,
+                     green: Double((rgb >> 8) & 0xFF) / 255,
+                     blue: Double(rgb & 0xFF) / 255)
+    }
+}
+
+struct PermanentItemPilotType: Decodable, Identifiable, Hashable, Sendable {
+    let id: UUID
+    let vineyardId: UUID
+    let typeKey: String
+    let name: String
+    let colorHex: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case vineyardId = "vineyard_id", typeKey = "type_key", colorHex = "color_hex"
     }
 }
 
@@ -119,8 +150,35 @@ private enum PermanentItemsPilotError: LocalizedError {
     }
 }
 
+private struct PermanentItemTypeCreateParams: Encodable {
+    let p_vineyard_id: UUID
+    let p_name: String
+    let p_color_hex: String
+}
+
 private struct PermanentItemPilotRepository {
     private let client = SupabaseClientProvider.shared.client
+
+    func listTypes(vineyardId: UUID) async throws -> [PermanentItemPilotType] {
+        try await client.from("permanent_item_types")
+            .select("id,vineyard_id,type_key,name,color_hex")
+            .eq("vineyard_id", value: vineyardId.uuidString.lowercased())
+            .execute().value
+    }
+
+    func createType(vineyardId: UUID, name: String, hex: String) async throws -> PermanentItemPilotType {
+        let rows: [PermanentItemPilotType] = try await client.rpc(
+            "create_permanent_item_type_v1",
+            params: PermanentItemTypeCreateParams(p_vineyard_id: vineyardId,
+                                                  p_name: name, p_color_hex: hex)
+        ).execute().value
+        guard rows.count == 1, let row = rows.first,
+              row.vineyardId == vineyardId, row.name == name.trimmingCharacters(in: .whitespacesAndNewlines),
+              row.colorHex.caseInsensitiveCompare(hex) == .orderedSame else {
+            throw PermanentItemsPilotError.receipt
+        }
+        return row
+    }
 
     func list(vineyardId: UUID) async throws -> [PermanentItemPilotRow] {
         try await client.from("permanent_items")
@@ -179,9 +237,8 @@ struct PermanentItemsAdminPilotView: View {
     @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(BackendAccessControl.self) private var access
     @State private var rows: [PermanentItemPilotRow] = []
+    @State private var customTypes: [PermanentItemPilotType] = []
     @State private var search = ""
-    @State private var showMarkers = true
-    @State private var showMap = true
     @State private var showEditor = false
     @State private var editing: PermanentItemPilotRow?
     @State private var pending: PermanentItemPilotOperation?
@@ -208,7 +265,7 @@ struct PermanentItemsAdminPilotView: View {
     private var visible: [PermanentItemPilotRow] {
         rows.filter { $0.archivedAt == nil &&
             (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) ||
-             PermanentItemsPilotPolicy.label($0.itemType).localizedCaseInsensitiveContains(search)) }
+             PermanentItemsPilotPolicy.label($0.itemType, custom: customTypes).localizedCaseInsensitiveContains(search)) }
             .sorted { $0.name < $1.name }
     }
 
@@ -245,44 +302,64 @@ struct PermanentItemsAdminPilotView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(busy || pending != nil)
-                        HStack {
-                            Toggle("Map layer", isOn: $showMarkers)
-                            Spacer()
-                            Toggle("Show map", isOn: $showMap)
-                        }.font(.subheadline)
-                        if showMap {
-                            Map(position: $camera) {
-                                if showMarkers {
-                                    ForEach(visible) { item in
-                                        Annotation(item.name, coordinate: item.coordinate) {
-                                            Button {
-                                                editing = item
-                                                showEditor = true
-                                            } label: {
-                                                Image(systemName: "mappin.circle.fill")
-                                                    .font(.title2).foregroundStyle(.indigo)
-                                                    .padding(3).background(.white, in: .circle)
-                                            }.accessibilityLabel("Permanent Item: \(item.name)")
-                                        }
-                                    }
+                        HStack(spacing: 9) {
+                            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                            TextField("Search permanent items", text: $search)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .submitLabel(.search)
+                            if !search.isEmpty {
+                                Button { search = "" } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                }.accessibilityLabel("Clear search")
+                            }
+                        }
+                        .padding(12)
+                        .background(Color(uiColor: .secondarySystemGroupedBackground),
+                                    in: .rect(cornerRadius: 11))
+                        .overlay(RoundedRectangle(cornerRadius: 11)
+                            .stroke(Color(uiColor: .separator), lineWidth: 0.6))
+                        Map(position: $camera) {
+                            ForEach(store.paddocks) { block in
+                                if block.polygonPoints.count >= 3 {
+                                    MapPolygon(coordinates: block.polygonPoints.map {
+                                        CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+                                    })
+                                    .foregroundStyle(.yellow.opacity(0.10))
+                                    .stroke(.yellow.opacity(0.9), lineWidth: 2)
                                 }
                             }
-                            .mapStyle(.hybrid)
-                            .frame(height: 270)
-                            .clipShape(.rect(cornerRadius: 12))
+                            // All fixtures remain visible regardless of text search.
+                            ForEach(rows.filter { $0.archivedAt == nil }) { item in
+                                Annotation(item.name, coordinate: item.coordinate) {
+                                    Button {
+                                        editing = item
+                                        showEditor = true
+                                    } label: {
+                                        Image(systemName: "mappin.circle.fill")
+                                            .font(.title2)
+                                            .foregroundStyle(PermanentItemsPilotPolicy.color(
+                                                item.itemType, custom: customTypes))
+                                            .padding(3)
+                                            .background(.white, in: .circle)
+                                    }.accessibilityLabel("Permanent Item: \(item.name)")
+                                }
+                            }
                         }
-                        TextField("Search name or type", text: $search)
-                            .textFieldStyle(.roundedBorder)
+                        .mapStyle(.hybrid)
+                        .frame(height: 290)
+                        .clipShape(.rect(cornerRadius: 12))
                         ForEach(visible) { item in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(item.name).font(.headline)
-                                Text("\(PermanentItemsPilotPolicy.label(item.itemType)) · revision \(item.serverRevision)")
+                                Text("\(PermanentItemsPilotPolicy.label(item.itemType, custom: customTypes)) · revision \(item.serverRevision)")
+                                    .foregroundStyle(PermanentItemsPilotPolicy.color(item.itemType, custom: customTypes))
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text(String(format: "%.6f, %.6f", item.latitude, item.longitude))
                                     .font(.caption.monospaced())
                                 HStack {
                                     Button("View on Map") {
-                                        showMap = true; showMarkers = true
                                         camera = .region(MKCoordinateRegion(
                                             center: item.coordinate,
                                             span: MKCoordinateSpan(latitudeDelta: 0.002, longitudeDelta: 0.002)))
@@ -314,18 +391,19 @@ struct PermanentItemsAdminPilotView: View {
             }
         }
         .task(id: scope) {
-            rows = []; pending = nil; editing = nil; showEditor = false
+            rows = []; customTypes = []; pending = nil; editing = nil; showEditor = false
             await systemAdmin.refresh()
             await load()
         }
         .onChange(of: scope) { _, _ in
-            rows = []; pending = nil; editing = nil; showEditor = false
+            rows = []; customTypes = []; pending = nil; editing = nil; showEditor = false
         }
         .sheet(isPresented: $showEditor) {
             if let vineyard {
                 NavigationStack {
                     PermanentItemPilotEditor(
-                        existing: editing, paddocks: store.paddocks,
+                        existing: editing, paddocks: store.paddocks, customTypes: customTypes,
+                        onCreateType: { name, hex in try await createCustomType(name: name, hex: hex) },
                         onSave: { draft, image in try await save(draft, image: image) }
                     )
                 }.id("\(scope)|\(editing?.id.uuidString ?? "new")")
@@ -359,6 +437,12 @@ struct PermanentItemsAdminPilotView: View {
             let result = try await repository.list(vineyardId: vineyard)
             guard isCurrent(captured) else { return }
             rows = result
+            do {
+                let options = try await repository.listTypes(vineyardId: vineyard)
+                if isCurrent(captured) { customTypes = options }
+            } catch {
+                if isCurrent(captured) { message = "Couldn't load vineyard types: \(error.localizedDescription)" }
+            }
         } catch {
             if isCurrent(captured) { message = "Couldn't load Permanent Items: \(error.localizedDescription)" }
         }
@@ -425,6 +509,15 @@ struct PermanentItemsAdminPilotView: View {
         showEditor = false
     }
 
+    private func createCustomType(name: String, hex: String) async throws -> PermanentItemPilotType {
+        guard permitted, let vineyard else { throw PermanentItemsPilotError.unavailable }
+        let captured = scope
+        let row = try await repository.createType(vineyardId: vineyard, name: name, hex: hex)
+        guard isCurrent(captured) else { throw PermanentItemsPilotError.wrongScope }
+        if !customTypes.contains(where: { $0.id == row.id }) { customTypes.append(row) }
+        return row
+    }
+
     private func archive(_ target: PermanentItemPilotRow) async {
         guard permitted, let vineyard, pending == nil, !busy else { return }
         busy = true; defer { busy = false }
@@ -443,6 +536,8 @@ private struct PermanentItemPilotEditor: View {
     @Environment(LocationService.self) private var locationService
     let existing: PermanentItemPilotRow?
     let paddocks: [Paddock]
+    let customTypes: [PermanentItemPilotType]
+    let onCreateType: (String, String) async throws -> PermanentItemPilotType
     let onSave: (PermanentItemPilotDraft, Data?) async throws -> Void
 
     @State private var name: String
@@ -456,10 +551,22 @@ private struct PermanentItemPilotEditor: View {
     @State private var imageData: Data?
     @State private var message: String?
     @State private var saving = false
+    @State private var addedTypes: [PermanentItemPilotType] = []
+    @State private var showNewType = false
+    @State private var newTypeName = ""
+    @State private var newTypeColor: Color = .purple
+    @State private var savingType = false
+    @State private var typeError: String?
+    @State private var showPhotoOptions = false
+    @State private var showLibrary = false
+    @State private var showCamera = false
 
     init(existing: PermanentItemPilotRow?, paddocks: [Paddock],
+         customTypes: [PermanentItemPilotType],
+         onCreateType: @escaping (String, String) async throws -> PermanentItemPilotType,
          onSave: @escaping (PermanentItemPilotDraft, Data?) async throws -> Void) {
-        self.existing = existing; self.paddocks = paddocks; self.onSave = onSave
+        self.existing = existing; self.paddocks = paddocks
+        self.customTypes = customTypes; self.onCreateType = onCreateType; self.onSave = onSave
         _name = State(initialValue: existing?.name ?? "")
         _type = State(initialValue: existing?.itemType ?? "irrigation_valve")
         _latitude = State(initialValue: existing.map { String($0.latitude) } ?? "")
@@ -479,11 +586,34 @@ private struct PermanentItemPilotEditor: View {
         Form {
             Section("Fixture") {
                 TextField("Name", text: $name).textInputAutocapitalization(.words)
-                Picker("Type", selection: $type) {
-                    ForEach(PermanentItemsPilotPolicy.types.indices, id: \.self) { index in
-                        Text(PermanentItemsPilotPolicy.types[index].label)
-                            .tag(PermanentItemsPilotPolicy.types[index].id)
+                HStack {
+                    Picker("Type", selection: $type) {
+                        ForEach(PermanentItemsPilotPolicy.types.indices, id: \.self) { index in
+                            Text(PermanentItemsPilotPolicy.types[index].label)
+                                .tag(PermanentItemsPilotPolicy.types[index].id)
+                        }
+                        ForEach(customTypes + addedTypes) { entry in
+                            Text(entry.name).tag(entry.typeKey)
+                        }
                     }
+                    Button { showNewType = true } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(VineyardTheme.actionBlue)
+                    }
+                    .accessibilityLabel("Add a custom vineyard type")
+                    .buttonStyle(.plain)
+                }
+                HStack(spacing: 8) {
+                    Circle().fill(PermanentItemsPilotPolicy.color(
+                        type, custom: customTypes + addedTypes))
+                        .frame(width: 14, height: 14)
+                    Text("Pin colour")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text(PermanentItemsPilotPolicy.hex(
+                        type, custom: customTypes + addedTypes))
+                        .font(.caption.monospaced()).foregroundStyle(.secondary)
                 }
                 Picker("Block (optional)", selection: $paddockId) {
                     Text("No block / outside blocks").tag(UUID?.none)
@@ -495,29 +625,53 @@ private struct PermanentItemPilotEditor: View {
                     .lineLimit(2...5)
             }
             Section("Location — tap map or use GPS") {
-                HStack {
-                    Button("Use Current GPS") {
-                        if let coordinate = locationService.location?.coordinate,
-                           CLLocationCoordinate2DIsValid(coordinate) {
-                            setLocation(coordinate)
-                        } else {
-                            locationService.requestPermission()
-                            locationService.startUpdating()
-                            message = "Waiting for a GPS fix. Try again, or tap the map."
-                        }
+                Button {
+                    if let coordinate = locationService.location?.coordinate,
+                       CLLocationCoordinate2DIsValid(coordinate) {
+                        setLocation(coordinate)
+                    } else {
+                        locationService.requestPermission()
+                        locationService.startUpdating()
+                        message = "Waiting for a GPS fix. Try again, or tap the map."
                     }
-                    Spacer()
+                } label: {
+                    Label("Drop Permanent Pin Here", systemImage: "location.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(VineyardTheme.actionBlue)
+                HStack {
                     if let location {
                         Text(String(format: "%.5f, %.5f", location.latitude, location.longitude))
                             .font(.caption.monospaced()).foregroundStyle(.secondary)
+                    } else {
+                        Text("No pin dropped").font(.caption).foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Button("Clear Pin", role: .destructive) {
+                        latitude = ""
+                        longitude = ""
+                        message = nil
+                    }
+                    .disabled(location == nil)
                 }
                 MapReader { proxy in
                     Map(position: $camera) {
+                        ForEach(paddocks) { block in
+                            if block.polygonPoints.count >= 3 {
+                                MapPolygon(coordinates: block.polygonPoints.map {
+                                    CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+                                })
+                                .foregroundStyle(.yellow.opacity(0.10))
+                                .stroke(.yellow.opacity(0.9), lineWidth: 2)
+                            }
+                        }
                         if let location {
                             Annotation("Fixture", coordinate: location) {
-                                Image(systemName: "mappin.circle.fill").font(.largeTitle)
-                                    .foregroundStyle(.indigo)
+                                Image(systemName: "mappin.circle.fill")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(PermanentItemsPilotPolicy.color(
+                                        type, custom: customTypes + addedTypes))
                             }
                         }
                     }
@@ -533,11 +687,18 @@ private struct PermanentItemPilotEditor: View {
                 TextField("Longitude", text: $longitude).keyboardType(.numbersAndPunctuation)
             }
             Section("Photo (optional)") {
-                PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                    Label(imageData == nil ? "Select photo" : "Photo selected", systemImage: "photo")
+                Button {
+                    showPhotoOptions = true
+                } label: {
+                    Label(imageData == nil ? "Add Photo" : "Change Photo",
+                          systemImage: "camera")
+                }
+                if imageData != nil {
+                    Label("Photo ready to attach", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
                 }
                 if existing?.photoPath != nil {
-                    Text("A photo is already attached. Choose another to replace its reference.")
+                    Text("An existing photo is attached. You can take a new one or upload another.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -588,6 +749,81 @@ private struct PermanentItemPilotEditor: View {
                     span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)))
             }
         }
+        .sheet(isPresented: $showNewType) {
+            NavigationStack {
+                Form {
+                    TextField("New custom type name", text: $newTypeName)
+                        .textInputAutocapitalization(.words)
+                    ColorPicker("Pin colour", selection: $newTypeColor, supportsOpacity: false)
+                    if let typeError {
+                        Text(typeError).foregroundStyle(.red).font(.footnote)
+                    }
+                }
+                .navigationTitle("Add Vineyard Type")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showNewType = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Add Type") {
+                            Task {
+                                guard !savingType else { return }
+                                savingType = true
+                                defer { savingType = false }
+                                let normalized = newTypeName.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard (1...60).contains(normalized.count) else {
+                                    typeError = "Enter a type name of up to 60 characters."
+                                    return
+                                }
+                                let uiColor = UIColor(newTypeColor)
+                                var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+                                guard uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+                                    typeError = "Choose a valid colour."
+                                    return
+                                }
+                                let hex = String(format: "#%02X%02X%02X",
+                                                 Int(red * 255), Int(green * 255), Int(blue * 255))
+                                do {
+                                    let created = try await onCreateType(normalized, hex)
+                                    addedTypes.append(created)
+                                    type = created.typeKey
+                                    newTypeName = ""
+                                    typeError = nil
+                                    showNewType = false
+                                } catch {
+                                    typeError = error.localizedDescription
+                                }
+                            }
+                        }
+                        .disabled(savingType || newTypeName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+            }
+        }
+        .confirmationDialog("Attach a photo", isPresented: $showPhotoOptions) {
+            Button("Take Photo") {
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    showCamera = true
+                } else {
+                    message = "Camera unavailable on this device. Choose a photo instead."
+                }
+            }
+            Button("Choose from Library") { showLibrary = true }
+            Button("Cancel", role: .cancel) {}
+        }
+        .photosPicker(isPresented: $showLibrary, selection: $selectedPhoto, matching: .images)
+        .sheet(isPresented: $showCamera) {
+            PermanentItemCameraPicker { captured in
+                guard let captured,
+                      let jpeg = PinPhotoStorage.compress(captured, maxEdge: 1600, quality: 0.75),
+                      jpeg.count <= 5 * 1024 * 1024 else {
+                    message = "Could not prepare camera photo (5 MiB maximum)."
+                    return
+                }
+                imageData = jpeg
+                message = nil
+            }
+        }
         .onChange(of: selectedPhoto) { _, newPhoto in
             guard let newPhoto else { return }
             Task {
@@ -611,5 +847,35 @@ private struct PermanentItemPilotEditor: View {
         camera = .region(MKCoordinateRegion(
             center: coordinate,
             span: MKCoordinateSpan(latitudeDelta: 0.002, longitudeDelta: 0.002)))
+    }
+}
+
+
+/// Camera capture is intentionally isolated to the Permanent Items editor.
+private struct PermanentItemCameraPicker: UIViewControllerRepresentable {
+    let onCapture: (Data?) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        var parent: PermanentItemCameraPicker
+        init(_ parent: PermanentItemCameraPicker) { self.parent = parent }
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            let data = (info[.originalImage] as? UIImage)?.jpegData(compressionQuality: 0.85)
+            parent.onCapture(data)
+            parent.dismiss()
+        }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
     }
 }

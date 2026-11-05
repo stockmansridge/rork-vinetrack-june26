@@ -22,5 +22,9 @@ class PermanentItemPilotPolicyTest {
         assertFalse(PermanentItemPilotPolicy.valid("Valve", "pump", 91.0, 138.0))
         assertFalse(PermanentItemPilotPolicy.valid("Valve", "pump", -34.0, 181.0))
         assertFalse(PermanentItemPilotPolicy.valid("Valve", "pump", Double.NaN, 138.0))
+        assertTrue(PermanentItemPilotPolicy.valid("Valve", "custom_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", -34.0, 138.0))
+        assertFalse(PermanentItemPilotPolicy.valid("Valve", "custom_invalid", -34.0, 138.0))
+        assertTrue(PermanentItemPilotPolicy.COLORS.values.toSet().size == 8)
+        assertTrue(PermanentItemPilotPolicy.hex("gate", emptyList()) == "#D97706")
     }
 }
