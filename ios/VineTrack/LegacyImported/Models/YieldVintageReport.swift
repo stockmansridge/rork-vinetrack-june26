@@ -364,6 +364,7 @@ nonisolated enum BunchCountTripLogic {
                 .map { site in
                     var stripped = site
                     stripped.bunchCountEntry = nil
+                    stripped.panelCountEntry = nil
                     return stripped
                 }
             collected.append(contentsOf: sites)
