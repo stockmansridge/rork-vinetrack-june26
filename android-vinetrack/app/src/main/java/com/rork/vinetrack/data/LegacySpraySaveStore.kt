@@ -54,7 +54,7 @@ class LegacySpraySaveStore(context: Context) {
     }
     private val access = FieldStoreAccess(context)
     private val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-    private val json = Json { encodeDefaults = true; ignoreUnknownKeys = false }
+    private val json = CODEC
     private fun read(): List<Attempt> {
         val raw = prefs.getString("attempts", null) ?: return emptyList()
         strictRead(raw)?.let { return it }
@@ -75,13 +75,13 @@ class LegacySpraySaveStore(context: Context) {
     }
 
     private fun strictRead(raw: String): List<Attempt>? = runCatching {
-        val items = json.decodeFromString<List<Attempt>>(raw)
+        val items = (Json.parseToJsonElement(raw) as JsonArray).map(::decodeValidated)
         check(items.map { it.recordId }.distinct().size == items.size && items.map { it.trip.id }.distinct().size == items.size)
         items.forEach(::validate)
         items
     }.getOrNull()
 
-    private fun decodeValidated(row: JsonElement): Attempt = json.decodeFromJsonElement<Attempt>(row).also(::validate)
+    private fun decodeValidated(row: JsonElement): Attempt = decodeLossless(row).also(::validate)
 
     /** Support-safe lines describing rows set aside from this store (no payload content). */
     fun quarantineDiagnostics(): List<String> = access.admitted { synchronized(this) {
@@ -257,9 +257,7 @@ class LegacySpraySaveStore(context: Context) {
      */
     fun replayInspection(): LegacyReplayIsolation.Inspection = access.admitted { synchronized(this) {
         val accepted: (JsonElement) -> Boolean = { row ->
-            val item = json.decodeFromJsonElement<Attempt>(row)
-            validate(item)
-            !item.isHeld
+            !decodeValidated(row).isHeld
         }
         val current = LegacyReplayIsolation.inspect(prefs.getString("attempts", null), accepted)
         // Rows set aside from Start still hold dependent sync exactly as before (Issue #41):
@@ -298,6 +296,25 @@ class LegacySpraySaveStore(context: Context) {
             }
             check(same(expected, actual)) { MESSAGE }
         }
+        /**
+         * Chemical codecs only preserve label wording they don't recognise (e.g. a "%"
+         * concentration unit or an extra registered-use / rate field) when unknown keys
+         * are allowed; in strict mode they refuse to read back what they themselves
+         * wrote. That made every Free Drive spray Start with such a chemical fail
+         * (written, then unreadable). Reads stay lossless: [decodeLossless] re-encodes
+         * each row and refuses it if any original field or value would be dropped.
+         */
+        internal val CODEC = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+
+        /** Lenient decode, then proof that re-encoding keeps every original field and value. */
+        internal fun decodeLossless(row: JsonElement): Attempt {
+            val item = CODEC.decodeFromJsonElement<Attempt>(row)
+            val original = row as? JsonObject ?: throw kotlinx.serialization.SerializationException("Legacy save row is not an object")
+            try { requireEcho(original, CODEC.encodeToJsonElement(Attempt.serializer(), item).jsonObject) }
+            catch (_: IllegalStateException) { throw kotlinx.serialization.SerializationException("Legacy save row would lose data on rewrite") }
+            return item
+        }
+
         const val PREFERENCES = "vinetrack_legacy_spray_saves_v1"
         /** Same preferences file, so account-transition handling covers it unchanged. */
         const val QUARANTINE_KEY = "attempts_set_aside_v1"
