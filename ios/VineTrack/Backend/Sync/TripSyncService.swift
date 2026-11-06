@@ -321,10 +321,11 @@ final class TripSyncService {
 
     /// Only GuidedNeverUploadedRepair calls this, after it has verified that no
     /// server Trip with this ID is visible, refused any linked Actual Use or
-    /// completion, and read back a complete local evidence archive. Retires
-    /// this one ID's upload queue entry; never a deletion or another ID.
-    func retireReviewedNeverCreatedTrip(_ id: UUID) {
-        metadata.clearDirty([id])
+    /// completion, and read back a complete local evidence archive (and, for a
+    /// recorded deletion, acknowledged it with the server absence receipt).
+    /// Retires only this one ID's upload/delete queue entries.
+    func retireReviewedNeverCreatedTrip(_ id: UUID) throws {
+        try metadata.acknowledgeVerifiedCancellation(id)
         SyncIssueCenter.shared.clearIssues([id])
         SyncIssueCenter.shared.notePending(entity: "Trips", count: metadata.pendingUpserts.count)
     }

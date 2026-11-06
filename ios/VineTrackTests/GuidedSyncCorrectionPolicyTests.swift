@@ -62,6 +62,15 @@ final class GuidedSyncCorrectionPolicyTests: XCTestCase {
         XCTAssertEqual(GuidedSyncCorrectionPolicy.available(
             for: handoff, server: .notVisible, neverUploadedEvidence: true),
             [.retireNeverUploadedTrip, .privateReview])
+        // A deletion recorded on this phone for a Trip the server never had.
+        let deletion = item(kind: .tripDeletion)
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(
+            for: deletion, server: .notVisible, neverUploadedEvidence: true),
+            [.retireNeverUploadedTrip, .privateReview])
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: deletion, server: .notVisible), [.privateReview])
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(
+            for: deletion, server: .deleted, neverUploadedEvidence: true).contains(.retireNeverUploadedTrip),
+            "A server tombstone uses verify/reconcile, never the absence retire")
         // A Trip saved on this phone (scoped upload) is never retired this way.
         XCTAssertFalse(GuidedSyncCorrectionPolicy.available(
             for: item(kind: .tripUpload), server: .notVisible, neverUploadedEvidence: true)
