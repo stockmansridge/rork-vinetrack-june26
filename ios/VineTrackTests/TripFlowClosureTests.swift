@@ -305,9 +305,19 @@ final class LiveTripBatchedWriteTests: XCTestCase {
         return (store, trip)
     }
 
+    /// What a fresh launch would load (history with the live file overlaid).
     private func onDisk(_ id: UUID) -> Trip? {
+        TripRepository(persistence: PersistenceStore(directory: directory)).loadAll().first { $0.id == id }
+    }
+
+    private func historyFile(_ id: UUID) -> Trip? {
         (PersistenceStore(directory: directory).load(key: TripRepository.storageKey) as [Trip]?)?
             .first { $0.id == id }
+    }
+
+    private var liveFileExists: Bool {
+        FileManager.default.fileExists(atPath: directory
+            .appendingPathComponent(TripRepository.liveStorageKey + ".json").path)
     }
 
     private func withPoints(_ trip: Trip, _ count: Int) -> Trip {
@@ -326,6 +336,39 @@ final class LiveTripBatchedWriteTests: XCTestCase {
         XCTAssertEqual(onDisk(trip.id)?.pathPoints.count, 1, "Later fixes are batched")
         store.flushLiveTripWrite()
         XCTAssertEqual(onDisk(trip.id)?.pathPoints.count, 3)
+        XCTAssertEqual(historyFile(trip.id)?.pathPoints.count, 0, "GPS saves never rewrite the history file")
+        XCTAssertTrue(liveFileExists)
+    }
+
+    func testRelaunchRecoversLivePointsAndEndFoldsThemIntoHistory() throws {
+        let (store, trip) = makeStore(interval: 60)
+        store.updateDeviceOwnedTrip(withPoints(trip, 1))
+        store.updateDeviceOwnedTrip(withPoints(trip, 6))
+        store.flushLiveTripWrite()
+
+        let relaunched = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        relaunched.selectedVineyardId = trip.vineyardId
+        relaunched.reloadCurrentVineyardData()
+        XCTAssertEqual(relaunched.trips.first { $0.id == trip.id }?.pathPoints.count, 6)
+
+        var ended = try XCTUnwrap(store.trips.first { $0.id == trip.id })
+        ended.isActive = false
+        ended.endTime = Date()
+        try store.updateTripOrThrow(ended)
+        XCTAssertFalse(liveFileExists, "A history write folds the live file back in")
+        XCTAssertEqual(historyFile(trip.id)?.pathPoints.count, 6)
+        XCTAssertEqual(historyFile(trip.id)?.isActive, false)
+    }
+
+    func testLiveFileNeverResurrectsADeletedTrip() throws {
+        let (store, trip) = makeStore(interval: 60)
+        store.updateDeviceOwnedTrip(withPoints(trip, 1))
+        XCTAssertTrue(liveFileExists)
+        // History rewritten without the Trip by a path that bypasses the store.
+        try PersistenceStore(directory: directory).saveOrThrow([Trip](), key: TripRepository.storageKey)
+        XCTAssertNil(onDisk(trip.id))
+        XCTAssertFalse(liveFileExists)
+        _ = store
     }
 
     func testAnyTripFileReadWritesBatchedPointsFirst() throws {

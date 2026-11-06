@@ -278,7 +278,8 @@ final class PersistenceStore {
                 // Only the audited Trip array may use the compact encoder.
                 // All other keys, journals, request hashes and receipts retain
                 // their established encoder and exact-byte contracts.
-                if compactTrip && key == TripRepository.storageKey && T.self == [Trip].self {
+                if compactTrip && ((key == TripRepository.storageKey && T.self == [Trip].self) ||
+                                   (key == TripRepository.liveStorageKey && T.self == Trip.self)) {
                     data = try tripEncoder.encode(value)
                 } else {
                     data = try encoder.encode(value)

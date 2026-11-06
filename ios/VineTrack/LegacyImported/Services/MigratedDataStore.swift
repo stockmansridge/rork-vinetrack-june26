@@ -1658,13 +1658,14 @@ final class MigratedDataStore {
 
     // MARK: - Batched live-Trip writes
 
-    /// GPS fixes arrive about once a second. Rewriting the whole Trip file on
-    /// every fix (on the main actor) made the live Trip screen lag, worse as
-    /// history grew. The in-memory Trip still updates on every fix; the file
-    /// is written at most once per interval, before any Trip file read, on
-    /// backgrounding, on vineyard change/sign-out, and by every durable Trip
-    /// save (pause, fill, tank, end), which writes the same in-memory slice.
-    /// 0 restores a write per fix (persistence benchmarks).
+    /// GPS fixes arrive about once a second. Rewriting the whole Trip history
+    /// file on every fix (on the main actor) made the live Trip screen lag,
+    /// worse as history grew. The in-memory Trip still updates on every fix;
+    /// only the recording Trip is written, to its own small file, at most once
+    /// per interval, before any Trip file read, on backgrounding and on
+    /// vineyard change/sign-out. Every durable Trip save (pause, fill, tank,
+    /// end) writes the full history from memory and folds that file back in.
+    /// 0 restores a history write per fix (persistence benchmarks).
     @ObservationIgnored var liveTripWriteInterval: TimeInterval = 5
     @ObservationIgnored private var pendingLiveTripWrite: (trip: UUID, vineyard: UUID)?
     @ObservationIgnored private var liveTripWriteTask: Task<Void, Never>?
@@ -1691,10 +1692,12 @@ final class MigratedDataStore {
         guard let pending = pendingLiveTripWrite else { return }
         pendingLiveTripWrite = nil
         lastLiveTripWriteAt = Date()
-        // Only write a slice that still holds the live Trip: never replace a
-        // vineyard's file with an emptied or different in-memory array.
-        guard trips.contains(where: { $0.id == pending.trip && $0.vineyardId == pending.vineyard }) else { return }
-        tripRepo.saveSlice(trips.filter { $0.vineyardId == pending.vineyard }, for: pending.vineyard)
+        // Only the recording Trip goes to its own small file; the history file
+        // is not rewritten. Never write a Trip no longer held in memory.
+        guard pending.trip == deviceActiveTripId,
+              let live = trips.first(where: { $0.id == pending.trip && $0.vineyardId == pending.vineyard }),
+              live.isActive else { return }
+        tripRepo.saveLive(live)
     }
 
     func updateTrip(_ trip: Trip) {

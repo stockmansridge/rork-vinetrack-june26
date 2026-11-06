@@ -22,7 +22,33 @@ final class TripRepository {
 
     func loadAll() -> [Trip] {
         beforeRead?()
-        return persistence.load(key: Self.storageKey) ?? []
+        var all: [Trip] = persistence.load(key: Self.storageKey) ?? []
+        if let live: Trip = persistence.load(key: Self.liveStorageKey) {
+            if let index = all.firstIndex(where: { $0.id == live.id && $0.vineyardId == live.vineyardId }) {
+                all[index] = live
+            } else {
+                // Never resurrects or invents a Trip the history no longer has.
+                persistence.remove(key: Self.liveStorageKey)
+            }
+        }
+        return all
+    }
+
+    // MARK: - Live Trip file
+
+    /// The Trip this device is recording, written on its own so a GPS save
+    /// costs the same however much Trip history the device holds. Every read
+    /// of the history overlays it onto the Trip with the same ID; every
+    /// history write (which always starts from that overlaid or newer
+    /// in-memory data) folds it back in and removes this file.
+    static let liveStorageKey = "vinetrack_live_trip_v1"
+
+    func saveLive(_ trip: Trip) {
+        persistence.save(trip, key: Self.liveStorageKey)
+    }
+
+    private func foldLiveIntoHistory() {
+        persistence.remove(key: Self.liveStorageKey)
     }
 
     func load(for vineyardId: UUID) -> [Trip] {
@@ -35,7 +61,8 @@ final class TripRepository {
         var all = loadAll()
         all.removeAll { $0.vineyardId == vineyardId }
         all.append(contentsOf: items)
-        persistence.save(all, key: Self.storageKey)
+        // Fold the live file in only once the history write succeeded.
+        if (try? persistence.saveOrThrow(all, key: Self.storageKey)) != nil { foldLiveIntoHistory() }
     }
 
     func saveSliceOrThrow(_ items: [Trip], for vineyardId: UUID) throws {
@@ -43,6 +70,7 @@ final class TripRepository {
         all.removeAll { $0.vineyardId == vineyardId }
         all.append(contentsOf: items)
         try persistence.saveOrThrow(all, key: Self.storageKey)
+        foldLiveIntoHistory()
     }
 
     // MARK: - Sync
@@ -51,7 +79,8 @@ final class TripRepository {
         var all = loadAll()
         all.removeAll { $0.vineyardId == vineyardId }
         all.append(contentsOf: remote)
-        persistence.save(all, key: Self.storageKey)
+        // Fold the live file in only once the history write succeeded.
+        if (try? persistence.saveOrThrow(all, key: Self.storageKey)) != nil { foldLiveIntoHistory() }
     }
 
     /// Add-if-not-exists merge for trips.
@@ -63,7 +92,8 @@ final class TripRepository {
                 all.append(item)
             }
         }
-        persistence.save(all, key: Self.storageKey)
+        // Fold the live file in only once the history write succeeded.
+        if (try? persistence.saveOrThrow(all, key: Self.storageKey)) != nil { foldLiveIntoHistory() }
         return all.filter { $0.vineyardId == vineyardId }
     }
 }
