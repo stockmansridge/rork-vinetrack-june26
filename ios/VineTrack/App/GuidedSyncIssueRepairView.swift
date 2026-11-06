@@ -789,6 +789,9 @@ private struct GuidedSyncIssueDetailView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .onChange(of: selected) { _, correction in
+                    restoreUnresolvedInputs(for: correction)
+                }
                 Text(selected.explanation).font(.footnote).foregroundStyle(.secondary)
 
                 if selected == .manualVerifiedTank {
@@ -1046,17 +1049,22 @@ private struct GuidedSyncIssueDetailView: View {
         }
     }
 
-    private func restoreUnresolvedInputs() {
+    /// With `correction`, resumes only that correction's own unresolved
+    /// operation, so choosing it again reuses its frozen inputs and ID
+    /// instead of being refused as a competing correction.
+    private func restoreUnresolvedInputs(for correction: GuidedSyncCorrection? = nil) {
         guard let entry = auditHistory.first(where: {
-            !$0.stages.contains(where: { $0.code == "VERIFIED" })
+            !$0.stages.contains(where: { $0.code == "VERIFIED" }) &&
+                (correction == nil || $0.correction == correction?.rawValue)
         }) else { return }
+        if let correction, activeAuditOperation == entry.id, selected == correction { return }
         guard let input = entry.reviewInput,
-              let correction = GuidedSyncCorrection(rawValue: entry.correction) else {
+              let resumed = GuidedSyncCorrection(rawValue: entry.correction) else {
             activeAuditOperation = entry.id
             outcome = GuidedRepairAuditLedger.LegacyInputsUnavailable().localizedDescription
             return
         }
-        selected = correction
+        selected = resumed
         activeAuditOperation = entry.id
         evidenceNote = input.reason
         if let value = input.water { waterText = value }

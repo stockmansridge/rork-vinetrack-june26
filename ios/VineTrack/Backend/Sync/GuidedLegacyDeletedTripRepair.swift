@@ -56,6 +56,17 @@ enum GuidedLegacyDeletedTripRepair {
         return true
     }
 
+    /// Archives persist dates as whole-second ISO8601, while live records
+    /// (for example Actual Use merged from the server) keep fractional
+    /// seconds, so plain equality never matched and every reconcile was
+    /// refused. Compare at the precision the archive actually stores.
+    private static func atStoredPrecision<T: Encodable>(_ values: [T]) throws -> Set<Data> {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        return Set(try values.map { try encoder.encode($0) })
+    }
+
     static func reconcile(
         tripId: UUID, vineyard: UUID, owner: UUID,
         applied: Bool, reason: String, operationId: UUID,
@@ -192,12 +203,12 @@ enum GuidedLegacyDeletedTripRepair {
         guard case .decoded(let savedArchive) = readback,
               savedArchive.clientEvidence == frozen.clientEvidence,
               Set(savedArchive.retainedInitialMixDrafts ?? []) == Set(frozen.retainedInitialMixDrafts ?? []),
-              Set(savedArchive.retainedActuals) == Set(frozen.retainedActuals),
+              try atStoredPrecision(savedArchive.retainedActuals) == atStoredPrecision(frozen.retainedActuals),
               savedArchive.originalOccurrenceJournal == frozen.originalOccurrenceJournal,
               archiveConfirmed(operationId: operationId, tripId: tripId, vineyard: vineyard, owner: owner),
               let evidence = frozen.clientEvidence,
               Set(drafts).isSubset(of: Set(frozen.retainedInitialMixDrafts ?? [])),
-              Set(actuals).isSubset(of: Set(frozen.retainedActuals)) else {
+              try atStoredPrecision(actuals).isSubset(of: atStoredPrecision(frozen.retainedActuals)) else {
             throw Refused(explanation: "Current original tank evidence is not fully present in the frozen archive. No request or cleanup is permitted.")
         }
 
@@ -302,10 +313,11 @@ enum GuidedLegacyDeletedTripRepair {
         }
         let currentCompletionIntents = try TrackedSprayCompletionSync.shared.intents().filter { $0.tripId == tripId }
         guard currentActuals.allSatisfy({ $0.confirmedBy == owner }),
-              Set(currentActuals).isSubset(of: Set(frozen.retainedActuals)),
+              try atStoredPrecision(currentActuals).isSubset(of: atStoredPrecision(frozen.retainedActuals)),
               currentDrafts.allSatisfy({ $0.ownerId == owner }),
               Set(currentDrafts).isSubset(of: Set(frozen.retainedInitialMixDrafts ?? [])),
-              Set(store.sprayRecords.filter { $0.canonicalTripId == tripId }).isSubset(of: Set(frozen.linkedSprays)),
+              try atStoredPrecision(store.sprayRecords.filter { $0.canonicalTripId == tripId })
+                .isSubset(of: atStoredPrecision(frozen.linkedSprays)),
               store.tripRepo.loadAll().filter({ $0.id == tripId }).allSatisfy({ $0 == frozen.retainedTrip }),
               currentJournal == nil || currentJournal == frozen.originalOccurrenceJournal,
               currentCompletionIntents.allSatisfy({ frozen.originalSprayCompletionIntents.contains($0) }),
