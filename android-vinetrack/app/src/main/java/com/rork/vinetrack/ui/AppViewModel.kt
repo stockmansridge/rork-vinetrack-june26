@@ -3043,7 +3043,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 runCatching { legacySpraySaves.inspectionAttempts(vineyard) }.onSuccess { attempts ->
                     attempts.forEach { item -> lines += "legacy_trip_id: ${safeId(item.trip.id)}; spray_record_id: ${safeId(item.recordId)}; operation_id: ${safeId(item.rpc?.operation)}; local_stage: ${item.stage}; start_requested: ${item.startRequested}; start_completed: ${item.startCompleted}; verified_receipt: ${item.verified?.status ?: "unknown"}; original_epoch_matches: ${item.identityEpoch == session.retentionGuard.identityEpoch.value}; retry: reconcile_original_only; last_attempted: unknown_not_persisted" }
-                }.onFailure { lines += "failure_code: LEGACY_EVIDENCE_INSPECTION_HELD; original_bytes_retained" }
+                }.onFailure { lines += "failure_code: LEGACY_EVIDENCE_INSPECTION_HELD; original_bytes_retained; cause: ${com.rork.vinetrack.data.LegacySprayJournalQuarantine.describe(it)}" }
+                runCatching { legacySpraySaves.quarantineDiagnostics() }.onSuccess { lines += it }
+                    .onFailure { lines += "legacy_journal_set_aside: unreadable (${it.javaClass.simpleName})" }
                 runCatching { sprayTankActualStore.pendingOwned(access).filter { it.vineyardId == vineyard } }.onSuccess { actuals ->
                     lines += "owned_pending_actual_rows: ${actuals.size}; excludes_foreign_or_correction_evidence"
                     val snapshotTrip = runCatching { activeTripStore.load() }.getOrNull()

@@ -14,6 +14,9 @@ on:
       - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/HeldTripRecoveryTest.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TankSessionLifecycle.kt'
       - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/TripEndTankClosureTest.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/LegacySpraySaveStore.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/LegacySprayJournalQuarantine.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/LegacySprayJournalQuarantineTest.kt'
   workflow_dispatch:
 
 permissions:
@@ -67,6 +70,10 @@ jobs:
             --tests "com.rork.vinetrack.data.HeldTripRecoveryTest" \
             --tests "com.rork.vinetrack.data.TripEndTankClosureTest" \
             --tests "com.rork.vinetrack.data.TankSessionLifecycleTest" \
+            --tests "com.rork.vinetrack.data.LegacySprayJournalQuarantineTest" \
+            --tests "com.rork.vinetrack.data.LegacyReplayIsolationTest" \
+            --tests "com.rork.vinetrack.data.SyncCrashIsolationTest" \
+            --tests "com.rork.vinetrack.data.SelectiveRecoveryReplayTest" \
             --tests "com.rork.vinetrack.data.ActiveTripStoreTest" \
             --tests "com.rork.vinetrack.data.RetainedStartupTest" \
             --tests "com.rork.vinetrack.ui.DeviceTripOwnershipTest" \
