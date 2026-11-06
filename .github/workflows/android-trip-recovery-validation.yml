@@ -17,6 +17,8 @@ on:
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/LegacySpraySaveStore.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/LegacySprayJournalQuarantine.kt'
       - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/LegacySprayJournalQuarantineTest.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/OccurrenceTraversalTracker.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/OccurrenceTraversalTrackerTest.kt'
   workflow_dispatch:
 
 permissions:
@@ -71,6 +73,7 @@ jobs:
             --tests "com.rork.vinetrack.data.TripEndTankClosureTest" \
             --tests "com.rork.vinetrack.data.TankSessionLifecycleTest" \
             --tests "com.rork.vinetrack.data.LegacySprayJournalQuarantineTest" \
+            --tests "com.rork.vinetrack.data.OccurrenceTraversalTrackerTest" \
             --tests "com.rork.vinetrack.data.LegacyReplayIsolationTest" \
             --tests "com.rork.vinetrack.data.SyncCrashIsolationTest" \
             --tests "com.rork.vinetrack.data.SelectiveRecoveryReplayTest" \

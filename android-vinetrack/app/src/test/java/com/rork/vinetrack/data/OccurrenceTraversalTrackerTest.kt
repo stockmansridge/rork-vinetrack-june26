@@ -64,7 +64,7 @@ class OccurrenceTraversalTrackerTest {
         }
     }
     @Test fun adjacentPoorAccuracyAndOverlappingBlocksAreRejected() {
-        assertNull(traverse(OccurrenceTraversalTracker(),x=5.0));assertNull(traverse(OccurrenceTraversalTracker(),accuracy=8.0))
+        assertNull(traverse(OccurrenceTraversalTracker(),x=5.0));assertNull(traverse(OccurrenceTraversalTracker(),accuracy=12.0))
         assertNull(traverse(OccurrenceTraversalTracker(),document(differentBlock=true)))
     }
     @Test fun staleJumpedReversedAndUnorderedEvidenceResets() {
@@ -144,5 +144,37 @@ class OccurrenceTraversalTrackerTest {
         assertEquals(30L,t.remainingSeconds(TripOccurrenceCoverage.requireDocument(document()),115000))
         assertEquals(15L,t.remainingSeconds(TripOccurrenceCoverage.requireDocument(document(skipped=true)),115000))
         assertNull(t.remainingSeconds(TripOccurrenceCoverage.requireDocument(document()),400000))
+    }
+
+    /** Drive the target aisle (x = 0) at 2 m/s with 1 Hz fixes; returns evidence when it completes. */
+    private fun drive(t: OccurrenceTraversalTracker, length: Double, xs: (Int) -> Double, fractions: List<Double>, accuracy: (Int) -> Double): JsonObject? {
+        val d=TripOccurrenceCoverage.requireDocument(document(length))
+        var result: JsonObject?=null
+        fractions.forEachIndexed { i,f ->
+            val p=OccurrenceTraversalTracker.Fix(length*f/111320,xs(i)/111320,accuracy(i),200000L+i*1000)
+            result=t.observe(d,p,p.timeMs,true) ?: result
+        }
+        return result
+    }
+    @Test fun ordinaryPhoneGpsCompletesAPassEndToEnd() {
+        // 100 m pass, 4-6 m reported accuracy, +/-1.5 m sideways wobble, backward jitter and one jump.
+        val fractions = (0..50).map { it*0.02 }.toMutableList()
+        fractions[10] = 0.15; fractions[20] = 0.9; fractions[30] = 0.55
+        val e = drive(OccurrenceTraversalTracker(), 100.0, { i -> listOf(1.5,-1.2,0.4,-1.5,0.9)[i%5] }, fractions) { i -> 4.0 + (i%3) }
+        assertNotNull("phone-grade GPS completes the pass", e)
+        assertTrue(e!!["entryFraction"]!!.jsonPrimitive.double<=0.1 && e["exitFraction"]!!.jsonPrimitive.double>=0.9)
+        assertTrue(e["longitudinalSpan"]!!.jsonPrimitive.double>=0.8 && e["qualifiedSamples"]!!.jsonPrimitive.int>=4)
+    }
+    @Test fun drivingTheNextAisleNeverCompletesTheTarget() {
+        // Rows sit at x = -4 and +4: the neighbouring aisle centre is x = 8.
+        assertNull(drive(OccurrenceTraversalTracker(), 100.0, { 8.0 }, (0..50).map { it*0.02 }) { 4.0 })
+    }
+    @Test fun aBriefReadingInAnotherAisleDoesNotBreakTheInRowLock() {
+        val fractions = (0..50).map { it*0.02 }
+        assertNotNull(drive(OccurrenceTraversalTracker(), 100.0, { i -> if (i in 25..27) 20.0 else 0.0 }, fractions) { 4.0 })
+    }
+    @Test fun sustainedEvidenceOfAnotherAisleReleasesTheLock() {
+        val fractions = (0..50).map { it*0.02 }
+        assertNull(drive(OccurrenceTraversalTracker(), 100.0, { i -> if (i in 25..29) 20.0 else 0.0 }, fractions) { 4.0 })
     }
 }
