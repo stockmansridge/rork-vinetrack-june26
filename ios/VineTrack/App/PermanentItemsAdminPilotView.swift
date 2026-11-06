@@ -1175,6 +1175,8 @@ private struct PermanentItemCameraPicker: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+        deinit {}
         var parent: PermanentItemCameraPicker
         init(_ parent: PermanentItemCameraPicker) { self.parent = parent }
         func imagePickerController(_ picker: UIImagePickerController,

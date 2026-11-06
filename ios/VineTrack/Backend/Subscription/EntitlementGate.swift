@@ -126,6 +126,8 @@ nonisolated struct EntitlementDecision {
 @Observable
 @MainActor
 final class EntitlementGate {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     /// Coalesces bursty SwiftUI-driven refreshes (foreground + task modifiers).
     static let minimumRefreshInterval: TimeInterval = 15

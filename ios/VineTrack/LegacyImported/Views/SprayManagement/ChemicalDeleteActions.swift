@@ -8,6 +8,8 @@ import SwiftUI
 @MainActor
 @Observable
 final class ChemicalDeleteCoordinator {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     /// The chemical the user has chosen to act on. Setting this triggers the
     /// confirmation dialog.
     var pending: SavedChemical?

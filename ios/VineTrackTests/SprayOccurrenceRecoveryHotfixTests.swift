@@ -718,6 +718,8 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
 }
 
 @MainActor private final class OrphanRecoverySyncProbe: SprayRecordSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var rows: [BackendSprayRecord] = []
     var writes: [UUID] = []
     var deletes: [UUID] = []

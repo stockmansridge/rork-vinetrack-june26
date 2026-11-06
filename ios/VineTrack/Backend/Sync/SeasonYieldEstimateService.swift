@@ -11,6 +11,8 @@ import Observation
 @Observable
 @MainActor
 final class SeasonYieldEstimateService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let repository = SupabaseSeasonYieldRepository()
 
     private(set) var overview: BackendSeasonYieldOverview?

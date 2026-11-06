@@ -152,6 +152,8 @@ nonisolated private struct RevokeParams: Encodable, Sendable {
 /// All RPCs enforce `public.is_system_admin()` server-side; this repository is
 /// a thin transport layer. No Stripe / Apple / RevenueCat involvement.
 final class SupabaseBillingGrantsRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
 
     init(provider: SupabaseClientProvider = .shared) {

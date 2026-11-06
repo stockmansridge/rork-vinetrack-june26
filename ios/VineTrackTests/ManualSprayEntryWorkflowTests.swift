@@ -230,6 +230,8 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
 }
 
 @MainActor private final class ManualSprayRepositoryDouble: ManualSprayEntryRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     struct Call: Sendable { let operationId: UUID; let payload: ManualSprayPayload }
     private var remainingSaveFailures: Int
     private var remainingDeleteFailures: Int
@@ -252,6 +254,8 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
 }
 
 @MainActor private final class ManualSprayTerminalRepositoryDouble: ManualSprayEntryRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let error: ManualSprayMutationError
     init(error: ManualSprayMutationError) { self.error = error }
     func save(operationId: UUID, payload: ManualSprayPayload, expectedVersion: Int?) async throws -> ManualSpraySaveResponse { throw error }

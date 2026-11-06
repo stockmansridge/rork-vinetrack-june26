@@ -8,6 +8,8 @@ import Supabase
 @Observable
 @MainActor
 final class TripTrackingService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let startTankCommitCoordinator = StartTankCommitCoordinator()
     #if DEBUG
     /// Only the explicit isolated UI process may supply a simulated authenticated tank operator.

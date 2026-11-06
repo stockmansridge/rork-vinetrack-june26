@@ -9,6 +9,8 @@ import UIKit
 @Observable
 @MainActor
 final class GrowthStageImageSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     typealias Status = ManagementSyncStatus
 
@@ -223,6 +225,8 @@ final class GrowthStageImageSyncService {
 
 @MainActor
 final class GrowthStageImagePendingStore {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let persistence: PersistenceStore
     private let key: String = "vinetrack_growth_stage_image_pending"
     private var state: State

@@ -300,6 +300,8 @@ nonisolated private struct SummaryParams: Encodable, Sendable {
 /// Irrigation Records (SQL 125). All calculation authority lives server-side;
 /// this repository is a thin RPC layer plus the offline pending-session queue.
 final class SupabaseIrrigationRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = SupabaseIrrigationRepository()
 
     private let provider: SupabaseClientProvider

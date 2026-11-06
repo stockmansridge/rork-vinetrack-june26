@@ -3,6 +3,8 @@ import Foundation
 /// Cancellation evidence is independent of both cache removal and queue acknowledgement.
 /// Every mutation reloads disk: suspended writers cannot overwrite newer cancellation revisions.
 @MainActor final class TripDeletionJournal {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let key = "vinetrack_trip_deletion_journal_v1"
     nonisolated struct Scope: Codable, Equatable, Sendable {
         let account: UUID

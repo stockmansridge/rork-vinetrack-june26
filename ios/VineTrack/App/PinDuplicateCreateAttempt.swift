@@ -4,6 +4,8 @@ import Foundation
 /// view-existing resolves the attempt without creating.
 @MainActor
 final class PinDuplicateCreateAttempt {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let create: () -> Void
     private(set) var isResolved: Bool = false
 

@@ -119,6 +119,8 @@ private struct KeyboardValidationNativeInput: UIViewRepresentable {
     func updateUIView(_ uiView: UITextField, context: Context) { uiView.text = text; context.coordinator.parent = self }
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
     final class Coordinator: NSObject {
+        // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+        deinit {}
         var parent: KeyboardValidationNativeInput
         init(parent: KeyboardValidationNativeInput) { self.parent = parent }
         @objc func changed(_ sender: UITextField) { parent.text = sender.text ?? "" }

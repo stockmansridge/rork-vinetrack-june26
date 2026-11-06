@@ -56,6 +56,8 @@ nonisolated struct EntitlementVerificationSnapshot: Codable, Equatable {
 /// keyed by user id so a different account never inherits a stale grace.
 @MainActor
 final class EntitlementVerificationStore {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = EntitlementVerificationStore()
 
     enum AccessDetailsUpdate {

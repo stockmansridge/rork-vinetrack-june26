@@ -6,6 +6,8 @@ import Supabase
 /// Same RPC, request body, receipt contract and error codes as Android `TripRepository.cancelTripActivity`.
 @MainActor
 final class SupabaseTripCancellationRemote: TripCancellationRemote {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias C = TripActivityCancellation
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
@@ -86,6 +88,8 @@ final class SupabaseTripCancellationRemote: TripCancellationRemote {
 /// Local queues, actuals, journal and claim for exactly one Trip. Never clears by count.
 @MainActor
 final class LiveTripCancellationLocal: TripCancellationLocal {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias C = TripActivityCancellation
     private let tripSync: TripSyncService
     private let spraySync: SprayRecordSyncService
@@ -199,6 +203,8 @@ final class LiveTripCancellationLocal: TripCancellationLocal {
 @Observable
 @MainActor
 final class TripActivityCancellationService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias C = TripActivityCancellation
     static let shared = TripActivityCancellationService()
 

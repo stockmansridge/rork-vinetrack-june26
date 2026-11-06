@@ -9,6 +9,8 @@ final class TripActivityCancellationTests: XCTestCase {
     typealias C = TripActivityCancellation
 
     @MainActor private final class FakeRemote: TripCancellationRemote {
+        // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+        deinit {}
         var cancelCalls: [C.Intent] = []
         var cancelResult: (C.Intent) throws -> C.JSON = { _ in throw URLError(.timedOut) }
         var stored: C.JSON?
@@ -26,6 +28,8 @@ final class TripActivityCancellationTests: XCTestCase {
     }
 
     @MainActor private final class FakeLocal: TripCancellationLocal {
+        // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+        deinit {}
         var writeInFlight = false
         var entries: [C.QueueEntry] = []
         var actuals: [SprayTankActual] = []

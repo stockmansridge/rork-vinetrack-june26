@@ -672,6 +672,8 @@ final class TripSyncStageFailureTests: XCTestCase {
 // MARK: - Part 2: shipping TripSyncService with a fake repository
 
 @MainActor private final class ThrottleProbeRepository: TripSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private(set) var upsertCalls: [[UUID]] = []
     private(set) var accepted: [UUID] = []
     private(set) var establishCalls: [Set<String>] = []

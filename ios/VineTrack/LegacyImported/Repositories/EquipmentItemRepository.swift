@@ -3,6 +3,8 @@ import Foundation
 /// Persistence for the vineyard-scoped "Other" equipment items catalog.
 @MainActor
 final class EquipmentItemRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     static let storageKey = "vinetrack_equipment_items"
 

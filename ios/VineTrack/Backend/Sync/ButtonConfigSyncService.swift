@@ -8,6 +8,8 @@ import Observation
 @Observable
 @MainActor
 final class ButtonConfigSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     enum Status: Equatable, Sendable {
         case idle
@@ -200,6 +202,8 @@ final class ButtonConfigSyncService {
 
 @MainActor
 final class ButtonConfigSyncMetadata {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let persistence: PersistenceStore
     private let key: String = "vinetrack_button_config_sync_metadata"
     private var state: State

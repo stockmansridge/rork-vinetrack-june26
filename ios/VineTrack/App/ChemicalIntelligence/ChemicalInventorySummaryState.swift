@@ -4,6 +4,8 @@ import Observation
 /// Screen-local read cache. A single worker serializes RPCs, including scope replacements.
 @MainActor @Observable
 final class ChemicalInventorySummaryState {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private(set) var summaries: [UUID: CatalogueWire] = [:]
     private(set) var loading: Bool = false
     private(set) var error: String?

@@ -9,6 +9,8 @@ import Supabase
 @Observable
 @MainActor
 final class TripSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     enum Status: Equatable, Sendable {
         case idle
@@ -2113,6 +2115,8 @@ final class TripSyncService {
 
 @MainActor
 final class TripSyncMetadata {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let persistence: PersistenceStore
     private let key: String = "vinetrack_trip_sync_metadata"
     private var state: State

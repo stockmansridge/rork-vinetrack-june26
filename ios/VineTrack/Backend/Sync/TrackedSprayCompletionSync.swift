@@ -4,6 +4,8 @@ import Observation
 /// Only an explicit new End can create an intent. Never discovers historical work.
 @MainActor @Observable
 final class TrackedSprayCompletionSync {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = TrackedSprayCompletionSync(persistence: .shared)
     static let persistenceKey = "vinetrack_tracked_spray_completion_v1"
 

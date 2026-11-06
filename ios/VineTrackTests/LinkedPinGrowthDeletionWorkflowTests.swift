@@ -186,6 +186,8 @@ private nonisolated struct DeletionFixtureError: LocalizedError, CustomStringCon
 }
 
 @MainActor private final class DeletionPinRepository: PinSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private var deletes = 0
     private var missingDeletes: Int
 
@@ -210,6 +212,8 @@ private nonisolated struct DeletionFixtureError: LocalizedError, CustomStringCon
 }
 
 @MainActor private final class DeletionGrowthRepository: GrowthStageRecordSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private var deletes = 0
     private(set) var writeCount = 0
     private let failure: (any Error)?
@@ -228,6 +232,8 @@ private nonisolated struct DeletionFixtureError: LocalizedError, CustomStringCon
 }
 
 @MainActor private final class DeletionPhotoStorage: PinPhotoStorageProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private(set) var uploadCount = 0
     func uploadPhoto(vineyardId: UUID, pinId: UUID, revision: UUID, imageData: Data) async throws -> String { uploadCount += 1; return "pin.jpg" }
     func uploadGrowthPhoto(vineyardId: UUID, recordId: UUID, revision: UUID, imageData: Data) async throws -> String { uploadCount += 1; return "growth.jpg" }

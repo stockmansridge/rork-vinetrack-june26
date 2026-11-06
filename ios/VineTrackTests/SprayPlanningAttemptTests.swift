@@ -201,6 +201,8 @@ final class SprayPlanningAttemptTests: XCTestCase {
             migrationId: "synthetic", validationSuiteId: "synthetic", digestAlgorithm: W.digestAlgorithm, operations: W.Kind.allCases, occurrenceVersion: 1, tankVersion: 1))
     }
     @MainActor private final class Transport: SprayPlanningTransport {
+        // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+        deinit {}
         let handler: (String, Data) throws -> (Int, Data)
         init(_ handler: @escaping (String, Data) throws -> (Int, Data)) { self.handler = handler }
         func call(_ rpc: String, body: Data) async throws -> (status: Int, data: Data) { let r = try handler(rpc, body); return (r.0, r.1) }

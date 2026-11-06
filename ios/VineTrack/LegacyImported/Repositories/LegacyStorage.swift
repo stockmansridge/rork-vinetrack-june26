@@ -20,6 +20,8 @@ enum LegacyStorage {
 
 @MainActor
 final class PersistenceStore {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = PersistenceStore()
 
     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"

@@ -216,6 +216,8 @@ nonisolated struct VineyardRootstockRow: Codable, Sendable, Hashable, Identifiab
 /// Mirrors `SupabaseGrapeVarietyCatalogRepository` — same RPC surface, same
 /// vineyard-scoped custom pattern.
 final class SupabaseCloneRootstockCatalogRepository: Sendable {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     private let cloneReads = CatalogReadSingleFlight<[SharedGrapeCloneCatalogEntry]>()
     private let rootstockReads = CatalogReadSingleFlight<[SharedRootstockCatalogEntry]>()
@@ -353,6 +355,8 @@ final class SupabaseCloneRootstockCatalogRepository: Sendable {
 @Observable
 @MainActor
 final class CloneRootstockCatalogStore {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = CloneRootstockCatalogStore()
 
     private let repository: SupabaseCloneRootstockCatalogRepository

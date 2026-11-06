@@ -117,6 +117,8 @@ private nonisolated struct TripEndStateRow: Decodable, Sendable {
 }
 
 final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     private let deletionAuthority: VineyardWriteAuthority
     struct DeletionSession {

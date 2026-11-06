@@ -497,6 +497,8 @@ struct SprayPlanningIntentTests {
 }
 
 @MainActor private final class PlanningReplayRepository: SprayRecordSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var writeCalls: Int = 0
     func fetchAllSprayRecords(vineyardId: UUID) async throws -> [BackendSprayRecord] { [] }
     func fetchSprayRecords(vineyardId: UUID, since: Date?) async throws -> [BackendSprayRecord] { [] }

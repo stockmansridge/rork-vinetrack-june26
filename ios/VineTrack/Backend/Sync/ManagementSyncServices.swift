@@ -5,6 +5,8 @@ import Observation
 
 @MainActor
 final class ManagementSyncMetadata {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let persistence: PersistenceStore
     private let key: String
     private var state: State
@@ -280,6 +282,8 @@ nonisolated func planFullPullReconciliation<Row: Sendable>(
 @Observable
 @MainActor
 final class SavedChemicalSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle
@@ -454,6 +458,8 @@ final class SavedChemicalSyncService {
 @Observable
 @MainActor
 final class SavedSprayPresetSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle
@@ -603,6 +609,8 @@ final class SavedSprayPresetSyncService {
 @Observable
 @MainActor
 final class SprayEquipmentSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle
@@ -751,6 +759,8 @@ final class SprayEquipmentSyncService {
 @Observable
 @MainActor
 final class TractorSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle
@@ -934,6 +944,8 @@ final class TractorSyncService {
 @Observable
 @MainActor
 final class VineyardMachineSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle
@@ -1090,6 +1102,8 @@ final class VineyardMachineSyncService {
 @Observable
 @MainActor
 final class FuelPurchaseSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle
@@ -1248,6 +1262,8 @@ final class FuelPurchaseSyncService {
 @Observable
 @MainActor
 final class TractorFuelLogSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle
@@ -1400,6 +1416,8 @@ final class TractorFuelLogSyncService {
 @Observable
 @MainActor
 final class OperatorCategorySyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle
@@ -1666,6 +1684,8 @@ final class OperatorCategorySyncService {
 @Observable
 @MainActor
 final class WorkTaskTypeSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle
@@ -1833,6 +1853,8 @@ final class WorkTaskTypeSyncService {
 @Observable
 @MainActor
 final class EquipmentItemSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle
@@ -2000,6 +2022,8 @@ final class EquipmentItemSyncService {
 @Observable
 @MainActor
 final class SavedInputSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle

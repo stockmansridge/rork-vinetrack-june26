@@ -11,6 +11,8 @@ import Observation
 @Observable
 @MainActor
 final class GrowthStageRecordSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     enum Status: Equatable, Sendable {
         case idle
@@ -891,6 +893,8 @@ final class GrowthStageRecordSyncService {
 
 @MainActor
 final class GrowthStageRecordSyncMetadata {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let persistence: PersistenceStore
     private let key: String = "vinetrack_growth_stage_record_sync_metadata"
     private var state: State

@@ -11,6 +11,8 @@ private func opsIso(_ date: Date) -> String { ISO8601DateFormatter().string(from
 // MARK: - Work Tasks
 
 final class SupabaseWorkTaskSyncRepository: WorkTaskSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -45,6 +47,8 @@ final class SupabaseWorkTaskSyncRepository: WorkTaskSyncRepositoryProtocol {
 // MARK: - Work Task Labour Lines
 
 final class SupabaseWorkTaskLabourLineSyncRepository: WorkTaskLabourLineSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -101,6 +105,8 @@ final class SupabaseWorkTaskLabourLineSyncRepository: WorkTaskLabourLineSyncRepo
 // MARK: - Work Task Machine Lines
 
 final class SupabaseWorkTaskMachineLineSyncRepository: WorkTaskMachineLineSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -157,6 +163,8 @@ final class SupabaseWorkTaskMachineLineSyncRepository: WorkTaskMachineLineSyncRe
 // MARK: - Work Task Paddocks
 
 final class SupabaseWorkTaskPaddockSyncRepository: WorkTaskPaddockSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -211,6 +219,8 @@ final class SupabaseWorkTaskPaddockSyncRepository: WorkTaskPaddockSyncRepository
 // MARK: - Work Task Piece Rate Rows (sql/188)
 
 final class SupabaseWorkTaskPieceRateRowSyncRepository: WorkTaskPieceRateRowSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -263,6 +273,8 @@ final class SupabaseWorkTaskPieceRateRowSyncRepository: WorkTaskPieceRateRowSync
 // MARK: - Maintenance Logs
 
 final class SupabaseMaintenanceLogSyncRepository: MaintenanceLogSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -309,6 +321,8 @@ final class SupabaseMaintenanceLogSyncRepository: MaintenanceLogSyncRepositoryPr
 // MARK: - Yield Estimation Sessions
 
 final class SupabaseYieldEstimationSessionSyncRepository: YieldEstimationSessionSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -336,6 +350,8 @@ final class SupabaseYieldEstimationSessionSyncRepository: YieldEstimationSession
 // MARK: - Damage Records
 
 final class SupabaseDamageRecordSyncRepository: DamageRecordSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -396,6 +412,8 @@ final class SupabaseDamageRecordSyncRepository: DamageRecordSyncRepositoryProtoc
 // MARK: - Historical Yield Records
 
 final class SupabaseHistoricalYieldRecordSyncRepository: HistoricalYieldRecordSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -423,6 +441,8 @@ final class SupabaseHistoricalYieldRecordSyncRepository: HistoricalYieldRecordSy
 // MARK: - Picking Records (Detailed picking log, sql/180)
 
 final class SupabasePickingRecordSyncRepository: PickingRecordSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -472,6 +492,8 @@ nonisolated struct OpsVineyardIdRequest: Encodable, Sendable {
 /// trip-capable role may write — a changed density becomes the default for
 /// the NEXT trip on every device.
 final class SupabaseYieldSamplingSettingsRepository: Sendable {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -517,6 +539,8 @@ final class SupabaseYieldSamplingSettingsRepository: Sendable {
 // MARK: - Pruning Yield Settings (per-block calculator configuration, sql/181)
 
 final class SupabasePruningYieldSettingsSyncRepository: PruningYieldSettingsSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 

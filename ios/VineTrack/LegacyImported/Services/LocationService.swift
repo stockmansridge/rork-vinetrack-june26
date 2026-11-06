@@ -3,6 +3,8 @@ import CoreLocation
 
 @Observable
 final class LocationService: NSObject, CLLocationManagerDelegate {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let manager = CLLocationManager()
     var location: CLLocation?
     var heading: CLHeading?

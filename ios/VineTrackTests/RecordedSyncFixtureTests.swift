@@ -8,6 +8,8 @@ import zlib
 /// are bundled in the app or retained in this repository. Supply a temporary
 /// PrivateRecordedFixtureLocation.txt resource containing the private ZIP URL.
 @MainActor final class RecordedSyncFixtureTests: XCTestCase {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private func fixtures() async throws -> [String: Data] {
         guard let locator = Bundle(for: Self.self).url(forResource: "PrivateRecordedFixtureLocation", withExtension: "txt") else {
             throw XCTSkip("Private recorded fixture locator not supplied")
@@ -171,6 +173,8 @@ import zlib
 }
 
 @MainActor private final class RecordedButtonTransport: ButtonConfigSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let growthBytes: Data
     let vineyard: UUID
     var acknowledgedRepairs: BackendButtonConfig?

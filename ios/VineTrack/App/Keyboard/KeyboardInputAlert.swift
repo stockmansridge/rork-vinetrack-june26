@@ -31,10 +31,14 @@ struct KeyboardInputAlert: UIViewControllerRepresentable {
         context.coordinator.update(in: presenter)
     }
     final class Presenter: UIViewController {
+        // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+        deinit {}
         var onAppear: (() -> Void)?
         override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); onAppear?() }
     }
     final class Coordinator: NSObject {
+        // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+        deinit {}
         var parent: KeyboardInputAlert
         private weak var prompt: KeyboardInputPromptController?
         init(parent: KeyboardInputAlert) { self.parent = parent }
@@ -89,6 +93,8 @@ struct KeyboardInputAlert: UIViewControllerRepresentable {
 
 /// Done is part of the dialog, not an alert action or transient keyboard window.
 final class KeyboardInputPromptController: UIViewController {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let heading = UILabel()
     let message = UILabel()
     let field = UITextField()

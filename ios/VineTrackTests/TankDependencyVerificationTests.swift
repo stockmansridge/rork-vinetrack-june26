@@ -3,6 +3,8 @@ import XCTest
 @testable import VineTrack
 
 @MainActor private final class TankReadbackRepository: TripSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private(set) var pushed: [BackendTripUpsert] = []
     var serverSessions: Set<String>? = []
     var readbackFails = false

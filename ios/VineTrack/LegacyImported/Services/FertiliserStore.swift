@@ -12,6 +12,8 @@ import Observation
 /// sql/111), which has its own sync service.
 @Observable
 final class FertiliserStore {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = FertiliserStore()
 
     private(set) var records: [FertiliserRecord] = []

@@ -5,6 +5,8 @@ import Supabase
 /// The journal is written atomically before the trip starts and survives offline replay.
 @MainActor
 final class TripLabourSnapshotJournal {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = TripLabourSnapshotJournal()
 
     nonisolated struct Snapshot: Codable, Sendable {

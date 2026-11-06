@@ -351,6 +351,8 @@ import Testing
 }
 
 @MainActor private final class EndFixture {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let account = UUID(), vineyard = UUID(), trip = UUID()
     let endedAt = Date(timeIntervalSince1970: 1_793_664_000) // whole second, as both writers serialise it
     let disk: PersistenceStore
@@ -453,6 +455,8 @@ import Testing
 }
 
 @MainActor private final class EndRepository: TripSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let fixture: EndFixture
     init(fixture: EndFixture) { self.fixture = fixture }
     func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] { fixture.remote }

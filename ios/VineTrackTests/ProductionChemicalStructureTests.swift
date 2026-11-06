@@ -158,6 +158,8 @@ struct ProductionChemicalStructureTests {
 }
 
 @MainActor private final class ChemicalEvidenceReplayRepository: SprayRecordSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var isOffline: Bool = true
     var deliveries: [BackendSprayRecordUpsert] = []
     func fetchAllSprayRecords(vineyardId: UUID) async throws -> [BackendSprayRecord] { [] }

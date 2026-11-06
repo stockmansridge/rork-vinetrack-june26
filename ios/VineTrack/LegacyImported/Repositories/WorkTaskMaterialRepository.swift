@@ -22,6 +22,8 @@ import Foundation
 /// still has a usable picker with the SAME keys the server uses.
 @MainActor
 final class MaterialCatalogueRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     static let storageKey = "vinetrack_material_catalogue"
 
@@ -55,6 +57,8 @@ final class MaterialCatalogueRepository {
 
 @MainActor
 final class VineyardMaterialRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     static let storageKey = "vinetrack_vineyard_materials"
 
@@ -104,6 +108,8 @@ final class VineyardMaterialRepository {
 
 @MainActor
 final class WorkTaskMaterialRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     static let storageKey = "vinetrack_work_task_materials"
 

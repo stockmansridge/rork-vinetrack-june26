@@ -4,6 +4,8 @@ import Observation
 
 /// Account/vineyard/vintage scoped report cache and exact-operation recovery. No generation on load.
 @MainActor @Observable final class VintageReportModel {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private(set) var cache = VintageReportCache()
     private(set) var isBusy: Bool = false
     var message: String?

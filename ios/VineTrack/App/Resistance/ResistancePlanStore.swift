@@ -41,6 +41,8 @@ protocol ResistancePlanLocalStore: AnyObject, Sendable {
 ///
 /// Mirrors `ResistancePlanStore.kt` on Android.
 final class ResistancePlanStore: ResistancePlanLocalStore, @unchecked Sendable {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     private let defaults: UserDefaults
 
@@ -123,6 +125,8 @@ final class ResistancePlanStore: ResistancePlanLocalStore, @unchecked Sendable {
 /// future preview mode use exactly the same cache semantics the repository is tested
 /// against — a test-only fake that drifts from the real store proves nothing.
 final class InMemoryResistancePlanLocalStore: ResistancePlanLocalStore, @unchecked Sendable {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private var plans: [String: [ResistancePlan]] = [:]
     private var pending: [String: Set<String>] = [:]
     private var adopted: Set<String> = []

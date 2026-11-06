@@ -187,6 +187,8 @@ final class SyncCompatibilityTests: XCTestCase {
 }
 
 @MainActor private final class ButtonProbe: ButtonConfigSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var remote: BackendButtonConfig
     var mismatch: Bool = false
     var onSave: (() -> Void)?

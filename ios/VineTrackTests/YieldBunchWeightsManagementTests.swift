@@ -11,6 +11,8 @@ import PostgREST
         .init(id: UUID(), vineyardId: vineyard ?? self.vineyard, paddockId: block, varietyKey: key, varietyName: "Shiraz", grams: grams, updatedAt: nil)
     }
     @MainActor private final class Transport: YieldBunchWeightsTransport {
+        // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+        deinit {}
         var pages: [YieldBunchWeightsRepository.Page] = []
         var offsets: [Int] = []
         var owners: [VineyardMutationAdmission.Ownership] = []

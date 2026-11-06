@@ -193,6 +193,8 @@ nonisolated struct SyntheticYieldPullRepository: YieldEstimationSessionSyncRepos
 
 @MainActor
 final class SyntheticHomeMount {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let window: UIWindow
     init(store: MigratedDataStore) {
         let home = NewHomeTabView(selectedTab: .constant(0))
@@ -226,6 +228,8 @@ final class SyntheticHomeMount {
 /// They deliberately stay separate from the synchronous state acknowledgement.
 @MainActor
 final class SyntheticSwitchDisplayRecorder: NSObject {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private var link: CADisplayLink?
     private weak var store: MigratedDataStore?
     private var target: UUID?

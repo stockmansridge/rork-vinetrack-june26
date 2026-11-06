@@ -3,6 +3,8 @@ import Foundation
 /// Durable transaction journal joining the Trip session and confirmed actual stores.
 @MainActor
 final class StartTankCommitCoordinator {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     nonisolated struct Journal: Codable, Sendable {
         let actualRecordId: UUID
         let tankSessionId: String

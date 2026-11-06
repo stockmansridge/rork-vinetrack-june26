@@ -3,6 +3,8 @@ import Foundation
 /// Owns persistence and merge logic for Vineyard (top-level, not per-vineyard scoped).
 @MainActor
 final class VineyardRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     static let storageKey = "vinetrack_vineyards"
 

@@ -490,6 +490,8 @@ import Testing
 }
 
 @MainActor private final class DeletionRegressionRepository: TripSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var fetchFailure: Error?
     var onFetchTrips: (() -> Void)?
     func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] {

@@ -429,6 +429,8 @@ nonisolated struct PruningActivityAllocationModel: Sendable {
     /// data is wrong — a corrupted legacy mirror or a half-applied sync — and
     /// choosing quietly by sort order would bury it.
     private final class ParentResolution {
+        // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+        deinit {}
         let activityId: UUID
         let ordered: [PruningActivityRow]
         let canonical: PruningActivityParentSource?

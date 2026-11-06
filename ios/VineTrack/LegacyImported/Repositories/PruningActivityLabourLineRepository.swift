@@ -6,6 +6,8 @@ import Foundation
 /// the two tables mirror each other column for column.
 @MainActor
 final class PruningActivityLabourLineRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     static let storageKey = "vinetrack_pruning_activity_labour_lines"
 

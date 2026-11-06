@@ -87,6 +87,8 @@ struct RowPreviewMapView: UIViewRepresentable {
     }
 
     class Coordinator: NSObject, MKMapViewDelegate {
+        // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+        deinit {}
         var hasSetInitialRegion: Bool = false
 
         nonisolated func mapView(_ mapView: MKMapView, rendererFor overlay: any MKOverlay) -> MKOverlayRenderer {
@@ -138,6 +140,8 @@ struct RowPreviewMapView: UIViewRepresentable {
 }
 
 class RowNumberAnnotation: NSObject, MKAnnotation {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let coordinate: CLLocationCoordinate2D
     let rowNumber: Int
 

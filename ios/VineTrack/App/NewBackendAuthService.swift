@@ -4,6 +4,8 @@ import Observation
 @Observable
 @MainActor
 final class NewBackendAuthService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var isLoading: Bool = false
     var isSignedIn: Bool = false
     var userId: UUID?

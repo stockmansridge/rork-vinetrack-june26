@@ -322,6 +322,8 @@ final class SpraySaveForLaterTests: XCTestCase {
 }
 
 @MainActor private final class LegacyRecordSyncProbe: SprayRecordSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var writes: [UUID] = []; var deletes: [UUID] = []
     func fetchSprayRecords(vineyardId: UUID, since: Date?) async throws -> [BackendSprayRecord] { [] }
     func fetchAllSprayRecords(vineyardId: UUID) async throws -> [BackendSprayRecord] { [] }
@@ -331,6 +333,8 @@ final class SpraySaveForLaterTests: XCTestCase {
 }
 
 @MainActor private final class LegacyTripSyncProbe: TripSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var writes: [UUID] = []; var deletes: [UUID] = []
     func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] { [] }
     func fetchAllTrips(vineyardId: UUID) async throws -> [BackendTrip] { [] }

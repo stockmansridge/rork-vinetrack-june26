@@ -6,10 +6,12 @@ import Foundation
 final class CatalogReadSingleFlight<Value: Sendable> {
     private var flights: [UUID: (id: UUID, task: Task<Value, Error>)] = [:]
 
-    // Swift 6.3 Release inliner crashes on generic isolated deinit (swiftlang/swift#90385, #90625).
-    // Keep isolation and normal stored-property destruction; limit the workaround to deinit.
-    @_optimize(none)
-    @MainActor deinit {}
+    // Non-isolated on purpose. An isolated deinit both trips the Swift 6.3 Release
+    // inliner for generic classes (swiftlang/swift#90385, #90625) and aborts at
+    // release on the iOS 18.x–26.3 runtime (swiftlang/swift#88036). Stored
+    // properties are a dictionary of Task handles (Sendable); nothing needs the
+    // main actor to be destroyed.
+    deinit {}
 
     func read(account: UUID, request: @escaping @MainActor @Sendable () async throws -> Value) async throws -> Value {
         if let existing = flights[account] {

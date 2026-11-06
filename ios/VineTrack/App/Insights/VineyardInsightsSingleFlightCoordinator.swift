@@ -3,6 +3,8 @@ import Foundation
 /// Serializes full Insights sync passes independently for each vineyard.
 @MainActor
 final class VineyardInsightsSingleFlightCoordinator {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private struct State {
         var isRunning = false
         var needsAnotherPass = false

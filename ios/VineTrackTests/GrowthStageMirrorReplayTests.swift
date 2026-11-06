@@ -443,6 +443,8 @@ import Foundation
 }
 
 @MainActor private final class MirrorReplayRepository: GrowthStageRecordSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var rows: [BackendGrowthStageRecord]
     var onLookup: (() -> Void)?
     var onUpload: (() -> Void)?
@@ -477,6 +479,8 @@ import Foundation
 }
 
 @MainActor private final class MirrorPhotoStorage: PinPhotoStorageProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var uploads = 0
     var onUpload: (() -> Void)?
     func uploadPhoto(vineyardId: UUID, pinId: UUID, revision: UUID, imageData: Data) async throws -> String {
@@ -492,6 +496,8 @@ import Foundation
 }
 
 @MainActor private final class MirrorIndependentTripRepository: TripSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var uploaded: [BackendTripUpsert] = []
     func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] { [] }
     func fetchAllTrips(vineyardId: UUID) async throws -> [BackendTrip] { [] }

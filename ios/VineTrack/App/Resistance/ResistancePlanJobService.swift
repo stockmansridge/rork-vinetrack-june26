@@ -15,6 +15,8 @@ import Observation
 @Observable
 @MainActor
 final class ResistancePlanJobService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     /// One queued create: the full insert payload plus its proposed coverage.
     struct PendingJobCreate: Codable, Sendable {

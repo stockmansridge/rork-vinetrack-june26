@@ -21,6 +21,8 @@ import Observation
 @Observable
 @MainActor
 final class SprayJobTemplateService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     /// Raw portal template rows for the currently hydrated vineyard.
     private(set) var templates: [BackendSprayJobTemplate] = []

@@ -26,6 +26,8 @@ nonisolated enum MaintenancePhotoStorage {
 
 @MainActor
 final class MaintenancePhotoStorageService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     private let makeAdmission: () throws -> VineyardMutationAdmission
     private let readOwnership: (UUID) async throws -> [VineyardMutationAdmission.Ownership]

@@ -19,6 +19,8 @@ import Supabase
 ///   login or normal app use. Throttled to once per 15 minutes unless the
 ///   metadata signature (version, vineyard, OS) materially changes.
 final class ClientTelemetryService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = ClientTelemetryService()
 
     private let provider = SupabaseClientProvider.shared

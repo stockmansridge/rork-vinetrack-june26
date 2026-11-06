@@ -3,6 +3,8 @@ import Foundation
 /// Legacy local two-file creation WAL. Not the versioned spray-planning protocol or a remote receipt.
 @MainActor
 final class LegacySpraySaveRecovery {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     struct Scope: Codable, Equatable {
         let actor: UUID
         let session: UUID

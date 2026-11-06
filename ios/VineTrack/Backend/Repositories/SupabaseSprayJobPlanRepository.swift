@@ -8,6 +8,8 @@ import Supabase
 /// resistance plan positions. Creation is idempotent — the client mints the
 /// job UUID, so a duplicate-key rejection on replay means "already synced".
 final class SupabaseSprayJobPlanRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
 
     init(provider: SupabaseClientProvider = .shared) {

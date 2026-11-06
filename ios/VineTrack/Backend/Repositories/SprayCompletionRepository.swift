@@ -3,6 +3,8 @@ import Supabase
 
 @MainActor
 final class SprayCompletionRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     func fetchRecord(id: UUID) async throws -> BackendSprayRecord {
         try await SupabaseClientProvider.shared.client.from("spray_records")
             .select().eq("id", value: id.uuidString).single().execute().value

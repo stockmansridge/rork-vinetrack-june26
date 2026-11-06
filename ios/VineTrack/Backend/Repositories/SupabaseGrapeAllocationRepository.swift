@@ -5,6 +5,8 @@ import Supabase
 /// deletes through the soft-delete RPC, and owner/manager money through the
 /// `get_grape_allocation_financials` RPC (42501 for lower roles).
 final class SupabaseGrapeAllocationRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 

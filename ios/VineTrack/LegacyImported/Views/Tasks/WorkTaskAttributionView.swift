@@ -49,6 +49,8 @@ struct WorkTaskAttributionView: View {
 /// Coalesces card reads within an account/vineyard; short-lived and never used for write permission.
 @MainActor
 private final class WorkTaskIdentityDirectory {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = WorkTaskIdentityDirectory()
     private var requests: [String: (Date, Task<([BackendVineyardMember], [VineyardExternalResource]), Error>)] = [:]
     func load(user: UUID, vineyard: UUID) async throws -> ([BackendVineyardMember], [VineyardExternalResource]) {

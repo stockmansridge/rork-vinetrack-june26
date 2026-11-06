@@ -7,6 +7,8 @@ import CryptoKit
 /// Authenticated Spray Report v1 and hourly-weather server paths.
 @MainActor
 final class SprayReportRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared: SprayReportRepository = SprayReportRepository()
 
     private nonisolated struct FetchRequest: Encodable, Sendable {

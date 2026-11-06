@@ -6,6 +6,8 @@ import Supabase
 @Observable
 @MainActor
 final class AppReleasePolicyService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private(set) var prompt: AppReleasePolicy?
     private(set) var decision: AppReleasePolicy.Decision = .none
     private let provider: SupabaseClientProvider

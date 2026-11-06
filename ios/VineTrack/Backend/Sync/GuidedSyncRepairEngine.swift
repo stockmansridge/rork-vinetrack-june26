@@ -70,6 +70,8 @@ nonisolated struct GuidedRepairReviewInput: Codable, Equatable, Sendable {
 /// have their own authoritative amendment rows (SQL correct_*_v1).
 @MainActor
 final class GuidedRepairAuditLedger {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = GuidedRepairAuditLedger(persistence: .shared)
     static let key = "vinetrack_guided_sync_repair_audit_v1"
 

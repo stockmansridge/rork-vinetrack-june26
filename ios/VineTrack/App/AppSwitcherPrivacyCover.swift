@@ -4,6 +4,8 @@ import UIKit
 /// A separate non-key window sits above sheets and navigation during OS snapshots.
 @MainActor
 final class AppSwitcherPrivacyCover {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private var window: UIWindow?
 
     func show() {

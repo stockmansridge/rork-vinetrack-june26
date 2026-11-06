@@ -323,6 +323,8 @@ nonisolated struct WeatherProviderConfig: Codable, Sendable, Equatable {
 
 @MainActor
 final class WeatherProviderStore {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = WeatherProviderStore()
 
     private let defaults = UserDefaults.standard

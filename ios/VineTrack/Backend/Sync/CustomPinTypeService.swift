@@ -18,6 +18,8 @@ import SwiftUI
 /// optimistic local `VinePin` so an offline save shows immediately.
 @Observable
 final class CustomPinTypeService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     private let repository: CustomPinTypeRepository
     weak var store: MigratedDataStore?

@@ -5,6 +5,8 @@ import PostgREST
 
 /// Only successful, authenticated resolver responses enter this account/vineyard-scoped cache.
 @MainActor @Observable final class YieldMasterWeightCache {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = YieldMasterWeightCache()
     private var snapshots: [String: [String: YieldMasterWeight]] = [:]
     private var requests: [String: UUID] = [:]

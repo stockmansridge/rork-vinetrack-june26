@@ -3,6 +3,8 @@ import Foundation
 /// One atomic, account-incarnation/vineyard document owns every original request and its receipt.
 /// No Trip/tank/coverage side effects are performed by this journal.
 @MainActor final class SprayPlanningAttemptJournal {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Wire = SprayPlanningProtocol
     enum Stage: String, Codable { case intentDurable, outcomeUnknown, receiptVerified, localStateRepaired, complete, held, quarantined }
     struct Attempt: Codable, Equatable {
@@ -117,6 +119,8 @@ import Foundation
 
 /// Recovery never fabricates missing receipts or repairs a current projection from an older acknowledgement.
 @MainActor final class SprayPlanningClient {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Wire = SprayPlanningProtocol
     private let journal: SprayPlanningAttemptJournal
     private let transport: any SprayPlanningTransport

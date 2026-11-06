@@ -2,6 +2,8 @@ import Foundation
 
 /// Presentation only. Never changes task identity, membership or labour authority.
 final class WorkTaskAssignmentNames {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = WorkTaskAssignmentNames(defaults: .standard)
     private let defaults: UserDefaults
     init(defaults: UserDefaults) { self.defaults = defaults }

@@ -20,6 +20,8 @@ nonisolated struct FertiliserPushBundle: Encodable, Sendable {
 @Observable
 @MainActor
 final class FertiliserSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = ManagementSyncStatus
 
     var syncStatus: Status = .idle

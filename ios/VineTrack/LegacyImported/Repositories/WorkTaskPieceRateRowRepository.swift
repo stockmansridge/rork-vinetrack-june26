@@ -6,6 +6,8 @@ import Foundation
 /// piece-rate job's historical vine quantities survive offline and relaunch.
 @MainActor
 final class WorkTaskPieceRateRowRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     static let storageKey = "vinetrack_work_task_piece_rate_rows"
 

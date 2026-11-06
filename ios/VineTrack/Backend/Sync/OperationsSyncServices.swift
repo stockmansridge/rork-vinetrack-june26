@@ -5,6 +5,8 @@ import Observation
 
 @MainActor
 final class OperationsSyncMetadata {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let persistence: PersistenceStore
     private let key: String
     private var state: State
@@ -225,6 +227,8 @@ nonisolated enum OperationsSyncStatus: Equatable, Sendable {
 @Observable
 @MainActor
 final class WorkTaskSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle
@@ -504,6 +508,8 @@ final class WorkTaskSyncService {
 @Observable
 @MainActor
 final class WorkTaskLabourLineSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle
@@ -736,6 +742,8 @@ final class WorkTaskLabourLineSyncService {
 @Observable
 @MainActor
 final class WorkTaskMachineLineSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle
@@ -904,6 +912,8 @@ final class WorkTaskMachineLineSyncService {
 @Observable
 @MainActor
 final class WorkTaskPaddockSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle
@@ -1100,6 +1110,8 @@ final class WorkTaskPaddockSyncService {
 @Observable
 @MainActor
 final class WorkTaskPieceRateRowSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle
@@ -1268,6 +1280,8 @@ final class WorkTaskPieceRateRowSyncService {
 @Observable
 @MainActor
 final class MaintenanceLogSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle
@@ -1561,6 +1575,8 @@ final class MaintenanceLogSyncService {
 @Observable
 @MainActor
 final class YieldEstimationSessionSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle
@@ -1787,6 +1803,8 @@ final class YieldEstimationSessionSyncService {
 @Observable
 @MainActor
 final class DamageRecordSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle
@@ -2005,6 +2023,8 @@ final class DamageRecordSyncService {
 @Observable
 @MainActor
 final class HistoricalYieldRecordSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle

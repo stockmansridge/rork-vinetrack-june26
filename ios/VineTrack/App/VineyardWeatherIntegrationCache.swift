@@ -10,6 +10,8 @@ import Foundation
 /// the `davis-proxy` Edge Function.
 @MainActor
 final class VineyardWeatherIntegrationCache {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = VineyardWeatherIntegrationCache()
 
     private let repository: any VineyardWeatherIntegrationRepositoryProtocol

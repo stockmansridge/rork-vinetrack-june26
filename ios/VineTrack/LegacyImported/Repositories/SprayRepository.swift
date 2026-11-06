@@ -4,6 +4,8 @@ import Foundation
 /// SprayRecord, SavedChemical, SavedSprayPreset, SavedEquipmentOption, SprayEquipmentItem.
 @MainActor
 final class SprayRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     static let recordsKey = "vinetrack_spray_records"
     static let savedChemicalsKey = "vinetrack_saved_chemicals"

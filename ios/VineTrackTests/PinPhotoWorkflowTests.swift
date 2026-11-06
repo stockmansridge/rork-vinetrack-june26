@@ -205,6 +205,8 @@ final class PinPhotoWorkflowTests: XCTestCase {
 }
 
 @MainActor private final class PinRepositoryDouble: PinSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private var upserts: Int = 0
     private var path: String?
     private var remainingPhotoFailures: Int
@@ -233,6 +235,8 @@ final class PinPhotoWorkflowTests: XCTestCase {
 }
 
 @MainActor private final class PhotoStorageDouble: PinPhotoStorageProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let shouldFail: Bool
     private var uploads: Int = 0
     var onUpload: (() -> Void)?

@@ -6,6 +6,8 @@ import XCTest
 /// `Trip parent -> Spray Record -> Tank Actuals -> final Trip state` is asserted
 /// against real pushed payloads rather than helper return values.
 @MainActor final class FakeTripSyncRepository: TripSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private(set) var batches: [[BackendTripUpsert]] = []
     var remoteTrips: [BackendTrip] = []
     /// Persistent, because SyncQueuePush retries each item individually after a

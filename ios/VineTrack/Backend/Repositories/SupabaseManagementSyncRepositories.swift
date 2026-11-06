@@ -15,6 +15,8 @@ private func iso(_ date: Date) -> String {
 // MARK: - Saved Chemicals
 
 final class SupabaseSavedChemicalSyncRepository: SavedChemicalSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -105,6 +107,8 @@ final class SupabaseSavedChemicalSyncRepository: SavedChemicalSyncRepositoryProt
 // MARK: - Saved Spray Presets
 
 final class SupabaseSavedSprayPresetSyncRepository: SavedSprayPresetSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -146,6 +150,8 @@ final class SupabaseSavedSprayPresetSyncRepository: SavedSprayPresetSyncReposito
 // MARK: - Spray Equipment
 
 final class SupabaseSprayEquipmentSyncRepository: SprayEquipmentSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -187,6 +193,8 @@ final class SupabaseSprayEquipmentSyncRepository: SprayEquipmentSyncRepositoryPr
 // MARK: - Tractors
 
 final class SupabaseTractorSyncRepository: TractorSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -228,6 +236,8 @@ final class SupabaseTractorSyncRepository: TractorSyncRepositoryProtocol {
 // MARK: - Vineyard Machines
 
 final class SupabaseVineyardMachineSyncRepository: VineyardMachineSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -269,6 +279,8 @@ final class SupabaseVineyardMachineSyncRepository: VineyardMachineSyncRepository
 // MARK: - Fuel Purchases
 
 final class SupabaseFuelPurchaseSyncRepository: FuelPurchaseSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -310,6 +322,8 @@ final class SupabaseFuelPurchaseSyncRepository: FuelPurchaseSyncRepositoryProtoc
 // MARK: - Tractor Fuel Logs
 
 final class SupabaseTractorFuelLogSyncRepository: TractorFuelLogSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -356,6 +370,8 @@ private enum WorkerTypeCatalogueError: LocalizedError {
 }
 
 final class SupabaseOperatorCategorySyncRepository: OperatorCategorySyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -419,6 +435,8 @@ final class SupabaseOperatorCategorySyncRepository: OperatorCategorySyncReposito
 // MARK: - Work Task Types
 
 final class SupabaseWorkTaskTypeSyncRepository: WorkTaskTypeSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -478,6 +496,8 @@ final class SupabaseWorkTaskTypeSyncRepository: WorkTaskTypeSyncRepositoryProtoc
 // MARK: - Saved Inputs
 
 final class SupabaseSavedInputSyncRepository: SavedInputSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -519,6 +539,8 @@ final class SupabaseSavedInputSyncRepository: SavedInputSyncRepositoryProtocol {
 // MARK: - Equipment Items ("Other")
 
 final class SupabaseEquipmentItemSyncRepository: EquipmentItemSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 

@@ -135,6 +135,8 @@ nonisolated enum ResistancePlanSyncState: String, Sendable, Hashable {
 @Observable
 @MainActor
 final class ResistancePlanRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     /// Live (non-deleted) plans for the loaded vineyard, newest first.
     private(set) var plans: [ResistancePlan] = []

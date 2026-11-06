@@ -3,6 +3,8 @@ import Foundation
 /// Uses captured credentials for one authenticated incarnation. Scope is rechecked by the client after every await.
 /// Not registered with the production Save/Start paths while the independent operational gate is closed.
 @MainActor final class SprayPlanningHTTPTransport: SprayPlanningTransport {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let baseURL: URL
     private let apiKey: String
     private let accessToken: String

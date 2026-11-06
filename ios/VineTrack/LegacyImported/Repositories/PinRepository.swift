@@ -14,6 +14,8 @@ nonisolated enum PinNotesUpdateOutcome: Equatable, Sendable {
 /// Durable holding area for notes that have not yet merged into the pin cache.
 @MainActor
 final class PinNotesDraftStore {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let storageKey = "vinetrack_pending_pin_notes"
 
     private let persistence: PersistenceStore
@@ -44,6 +46,8 @@ final class PinNotesDraftStore {
 /// Owns persistence and merge/replace logic for VinePin.
 @MainActor
 final class PinRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     static let storageKey = "vinetrack_pins"
 

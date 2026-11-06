@@ -76,6 +76,8 @@ nonisolated private struct UpsertSoilProfileParams: Encodable, Sendable {
 // MARK: - Repository
 
 final class SupabaseSoilProfileRepository: SoilProfileRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
 
     init(provider: SupabaseClientProvider = .shared) {

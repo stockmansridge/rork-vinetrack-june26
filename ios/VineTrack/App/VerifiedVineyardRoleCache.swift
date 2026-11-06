@@ -3,6 +3,8 @@ import Foundation
 /// Last server-verified membership, usable only within the retained authenticated session.
 @MainActor
 final class VerifiedVineyardRoleCache {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     nonisolated struct Entry: Codable, Sendable {
         let userId: UUID
         let vineyardId: UUID

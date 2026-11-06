@@ -4,6 +4,8 @@ import UIKit
 /// Presents the unlock UI above sheets without removing the authenticated navigation tree.
 @MainActor
 final class AppBiometricLockCover {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private var window: UIWindow?
 
     func show(auth: NewBackendAuthService, biometric: BiometricAuthService) {

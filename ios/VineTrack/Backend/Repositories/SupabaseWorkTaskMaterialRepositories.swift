@@ -65,6 +65,8 @@ protocol WorkTaskMaterialSyncRepositoryProtocol: Sendable {
 // MARK: - Base catalogue
 
 final class SupabaseMaterialCatalogueRepository: MaterialCatalogueRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -83,6 +85,8 @@ final class SupabaseMaterialCatalogueRepository: MaterialCatalogueRepositoryProt
 // MARK: - Vineyard materials
 
 final class SupabaseVineyardMaterialSyncRepository: VineyardMaterialSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 
@@ -117,6 +121,8 @@ final class SupabaseVineyardMaterialSyncRepository: VineyardMaterialSyncReposito
 // MARK: - Work Task materials
 
 final class SupabaseWorkTaskMaterialSyncRepository: WorkTaskMaterialSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 

@@ -4,6 +4,8 @@ import Supabase
 /// Saved grape purchasers (sql/219): RLS-guarded table access + the
 /// soft-delete RPC. Purchasers are never hard-deleted.
 final class SupabaseGrapePurchaserRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 

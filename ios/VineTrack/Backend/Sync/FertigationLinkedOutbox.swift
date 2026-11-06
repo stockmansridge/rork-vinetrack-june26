@@ -4,6 +4,8 @@ import Supabase
 /// Persisted dependent write. The irrigation payload and frozen Fertigation draft share one atomic file.
 @MainActor
 final class FertigationLinkedOutbox {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     nonisolated enum Phase: String, Codable, Sendable { case irrigationPending, fertigationPending, acknowledged, permanentError }
     nonisolated struct Entry: Codable, Sendable, Identifiable {
         let id: UUID

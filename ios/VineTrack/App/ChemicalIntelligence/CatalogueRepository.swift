@@ -3,6 +3,8 @@ import Supabase
 
 @MainActor
 final class CatalogueRepository: CatalogueBackendProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private var client: SupabaseClient { SupabaseClientProvider.shared.client }
     func rpc(_ name: String, _ params: [String: SprayReportPayloadV1.JSONValue]) async throws -> [CatalogueWire] {
         try await client.rpc(name, params: params).execute().value

@@ -35,6 +35,8 @@ nonisolated struct ScoutPhotoFix: Equatable, Sendable {
 @Observable
 @MainActor
 final class VineyardInsightsService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     private(set) var visits: [ScoutVisit] = []
     private var failedVisitDrafts: [UUID: ScoutVisit] = [:]

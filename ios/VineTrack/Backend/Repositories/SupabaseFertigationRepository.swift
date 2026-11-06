@@ -4,6 +4,8 @@ import Supabase
 /// Canonical SQL 266 RPC boundary. No Fertigation table access or spray execution.
 @MainActor
 final class SupabaseFertigationRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Object = FertigationDomain.Object
     private let adminCheck: () async throws -> Bool
     private let transport: (String, Object) async throws -> Data

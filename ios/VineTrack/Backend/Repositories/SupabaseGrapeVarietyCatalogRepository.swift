@@ -126,6 +126,8 @@ nonisolated struct VineyardGrapeVarietyRow: Codable, Sendable, Hashable, Identif
 // MARK: - Repository
 
 final class SupabaseGrapeVarietyCatalogRepository: Sendable {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
 
     init(provider: SupabaseClientProvider = .shared) {
@@ -343,6 +345,8 @@ nonisolated enum CustomGrapeVarietyDeletionOutcome: Sendable, Hashable {
 /// the network read fails.
 @MainActor
 final class SharedGrapeVarietyCatalogCache {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = SharedGrapeVarietyCatalogCache()
 
     private let fileURL: URL

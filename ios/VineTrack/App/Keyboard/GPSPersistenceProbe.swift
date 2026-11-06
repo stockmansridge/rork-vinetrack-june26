@@ -15,6 +15,8 @@ nonisolated struct GPSFixMeasurement: Sendable {
 /// acceptance fixture. The active maintenance Trip is explicitly seeded.
 @MainActor
 final class GPSPersistenceFixture {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let directory: URL
     let persistence: PersistenceStore
     let store: MigratedDataStore
@@ -156,6 +158,8 @@ final class GPSPersistenceFixture {
 /// contact Supabase or mutate server state. Production sync admission/retries run.
 @MainActor
 final class GPSProbeOfflineRepository: TripSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     var delayMilliseconds: Int = 120
     private(set) var attempts = 0
     private(set) var inFlight = 0

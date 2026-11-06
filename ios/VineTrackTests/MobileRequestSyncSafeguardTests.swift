@@ -137,6 +137,8 @@ private nonisolated struct SafeguardResponseError: LocalizedError {
 }
 
 @MainActor private final class SafeguardWorkerRepository: OperatorCategorySyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let outcome: String
     private(set) var deleteCalls = 0
     init(outcome: String) { self.outcome = outcome }
@@ -149,6 +151,8 @@ private nonisolated struct SafeguardResponseError: LocalizedError {
 }
 
 @MainActor private final class SafeguardGrowthRepository: GrowthStageRecordSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private(set) var uploaded: [BackendGrowthStageRecordUpsert] = []
     func fetchGrowthStageRecords(vineyardId: UUID, since: Date?) async throws -> [BackendGrowthStageRecord] { [] }
     func upsertGrowthStageRecord(_ record: BackendGrowthStageRecordUpsert) async throws { uploaded.append(record) }

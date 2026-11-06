@@ -4,6 +4,8 @@ import Foundation
 /// YieldEstimationSession, DamageRecord, HistoricalYieldRecord.
 @MainActor
 final class YieldRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     static let sessionsKey = "vinetrack_yield_sessions"
     static let damageKey = "vinetrack_damage_records"

@@ -35,6 +35,8 @@ import Observation
 @Observable
 @MainActor
 final class MaterialCatalogueSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle
@@ -87,6 +89,8 @@ final class MaterialCatalogueSyncService {
 @Observable
 @MainActor
 final class VineyardMaterialSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle
@@ -229,6 +233,8 @@ final class VineyardMaterialSyncService {
 @Observable
 @MainActor
 final class WorkTaskMaterialSyncService {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     typealias Status = OperationsSyncStatus
 
     var syncStatus: Status = .idle

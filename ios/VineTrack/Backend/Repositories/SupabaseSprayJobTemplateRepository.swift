@@ -19,6 +19,8 @@ import Supabase
 /// client's — `spray_jobs_update_managers` (sql/032) already restricts UPDATE to
 /// owner/manager, and a denied write returns zero rows rather than an error.
 final class SupabaseSprayJobTemplateRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
 
     init(provider: SupabaseClientProvider = .shared) {

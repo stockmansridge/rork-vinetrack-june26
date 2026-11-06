@@ -8,6 +8,8 @@ import Supabase
 /// `refresh_pruning_yield_estimates`, which re-derives the vintage's pruning
 /// rows server-side and never downgrades a bunch_count or manual estimate.
 final class SupabaseSeasonYieldRepository {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
 

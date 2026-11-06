@@ -28,6 +28,8 @@ enum SprayLifecycleSandbox {
 /// Uses real receipt validation; only the remote boundary is simulated.
 @MainActor @Observable
 final class SprayLifecycleServer {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     struct Snapshot: Codable {
         var requests: [String: Data] = [:]
         var trips: [Trip] = []

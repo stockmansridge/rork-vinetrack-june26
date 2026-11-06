@@ -20,6 +20,8 @@ protocol ManualSprayEntryStoring: Sendable {
 }
 
 final class ManualSprayEntryStore: ManualSprayEntryStoring, @unchecked Sendable {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let defaults: UserDefaults
     private let key: String
     private let encoder: JSONEncoder
@@ -47,6 +49,8 @@ final class ManualSprayEntryStore: ManualSprayEntryStoring, @unchecked Sendable 
 }
 
 final class ManualSprayDraftStore: @unchecked Sendable {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = ManualSprayDraftStore()
     private let defaults: UserDefaults
     private let encoder: JSONEncoder
@@ -64,6 +68,8 @@ final class ManualSprayDraftStore: @unchecked Sendable {
 
 @MainActor
 final class ManualSprayEntryCoordinator {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared: ManualSprayEntryCoordinator = ManualSprayEntryCoordinator(
         repository: ManualSprayEntryRepository(),
         store: ManualSprayEntryStore()

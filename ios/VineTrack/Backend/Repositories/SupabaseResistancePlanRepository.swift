@@ -190,6 +190,8 @@ private nonisolated struct ResistancePlanSoftDeleteRequest: Encodable, Sendable 
 /// Supabase implementation of `ResistancePlanRemote` against `public.resistance_plans`
 /// (sql/196). Mirrors `SupabaseResistancePlanRemote.kt` on Android.
 final class SupabaseResistancePlanRepository: ResistancePlanRemote {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private let provider: SupabaseClientProvider
     private let currentUserId: @Sendable () -> String?
 

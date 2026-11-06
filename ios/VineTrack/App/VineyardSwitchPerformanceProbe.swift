@@ -4,6 +4,8 @@ import Foundation
 /// Opt-in, bounded stage evidence. Fixed labels only; never logs record contents or identities.
 @MainActor
 final class VineyardSwitchPerformanceProbe {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     struct Sample {
         let stage: String
         let milliseconds: Double

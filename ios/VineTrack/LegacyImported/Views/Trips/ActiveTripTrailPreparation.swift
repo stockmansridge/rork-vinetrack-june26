@@ -6,6 +6,8 @@ import Observation
 /// comparisons on each timer tick. A disappeared view invalidates all publication.
 @MainActor @Observable
 final class ActiveTripTrailPreparation {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private struct Signature: Equatable {
         let tripID: UUID
         let count: Int

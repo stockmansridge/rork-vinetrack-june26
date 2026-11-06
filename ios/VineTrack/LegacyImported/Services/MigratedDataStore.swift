@@ -10,6 +10,8 @@ import Observation
 @Observable
 @MainActor
 final class MigratedDataStore {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     @ObservationIgnored var operationalWriteAuthority: VineyardWriteAuthority = .shared
     private func admitSelectedMutation() -> Bool {

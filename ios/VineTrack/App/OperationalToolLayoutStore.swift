@@ -14,6 +14,8 @@ import Observation
 ///   at display time only, so restoring access restores the saved position.
 @Observable
 final class OperationalToolLayoutStore {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
 
     /// Message shown after a save that only reached this device.
     static let offlineSaveMessage =

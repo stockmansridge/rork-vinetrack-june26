@@ -204,6 +204,8 @@ import Testing
 }
 
 @MainActor private final class AbsenceFixture {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let disk: PersistenceStore
     let scope = TripDeletionJournal.Scope(account: UUID(), vineyard: UUID(), trip: UUID())
     let authority: VineyardWriteAuthority
@@ -273,6 +275,8 @@ import Testing
 }
 
 @MainActor private final class AbsenceRepository: TripSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let delegate: SupabaseTripSyncRepository
     init(delegate: SupabaseTripSyncRepository) { self.delegate = delegate }
     func resolveDeletion(_ scope: TripDeletionJournal.Scope, isCurrent: () -> Bool) async throws -> String { try await delegate.resolveDeletion(scope, isCurrent: isCurrent) }

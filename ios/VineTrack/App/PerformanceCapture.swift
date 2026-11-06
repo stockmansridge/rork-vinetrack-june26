@@ -5,6 +5,8 @@ import Supabase
 /// Opt-in, bounded timing evidence. No record values, keys, IDs, URLs or error messages are accepted.
 @MainActor
 final class PerformanceCapture {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     static let shared = PerformanceCapture()
     private let preference = "adminPerformanceCaptureRequested"
     private let earlyPreference = "adminPerformanceEarlyCaptureOwner"

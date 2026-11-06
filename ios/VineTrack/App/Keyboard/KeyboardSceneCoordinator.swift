@@ -2,6 +2,8 @@ import UIKit
 
 /// Observes only the app's own scene window. No swizzling, field delegates, Return handlers or data bindings.
 final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     private weak var window: UIWindow?
     private weak var activeInput: UIView?
     private var keyboardFrame: CGRect = .null

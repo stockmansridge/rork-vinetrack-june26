@@ -312,6 +312,8 @@ struct SprayProgramRound2Tests {
 }
 
 @MainActor private final class CompletionReplayRepository: SprayRecordSyncRepositoryProtocol {
+    // Explicit deinit keeps this non-isolated: Swift's implicit isolated deinit aborts on iOS 18.x–26.3 (swiftlang/swift#88036).
+    deinit {}
     let server: BackendSprayRecord
     let fails: Bool
     var pushed: [BackendSprayRecordUpsert] = []
