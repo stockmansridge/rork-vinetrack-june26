@@ -317,6 +317,18 @@ final class TripSyncService {
         SyncIssueCenter.shared.notePending(entity: "Trips", count: metadata.pendingUpserts.count)
     }
 
+    func isQueuedUploadMarkedFailed(_ id: UUID) -> Bool { metadata.isUpsertFailed(id) }
+
+    /// Only GuidedNeverUploadedRepair calls this, after it has verified that no
+    /// server Trip with this ID is visible, refused any linked Actual Use or
+    /// completion, and read back a complete local evidence archive. Retires
+    /// this one ID's upload queue entry; never a deletion or another ID.
+    func retireReviewedNeverCreatedTrip(_ id: UUID) {
+        metadata.clearDirty([id])
+        SyncIssueCenter.shared.clearIssues([id])
+        SyncIssueCenter.shared.notePending(entity: "Trips", count: metadata.pendingUpserts.count)
+    }
+
     /// True while a full sweep is actively pushing/pulling trips.
     var isSyncing: Bool { syncStatus == .syncing }
 

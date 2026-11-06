@@ -43,7 +43,7 @@ nonisolated enum GuidedLegacyServerScope: String, Sendable {
 }
 
 nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Sendable {
-    case recoverRecordedTank, manualVerifiedTank, amendActualUse, correctPendingActualUse, verifyCompleted, verifyCancellation, reviewLegacyDeleted, retryExisting, privateReview
+    case recoverRecordedTank, manualVerifiedTank, amendActualUse, correctPendingActualUse, verifyCompleted, verifyCancellation, reviewLegacyDeleted, retireNeverUploadedTrip, discardUnlinkedSpray, retryExisting, privateReview
     var id: Self { self }
     var label: String {
         switch self {
@@ -54,6 +54,8 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
         case .verifyCompleted: "Verify original Trip completion"
         case .verifyCancellation: "Verify original deletion"
         case .reviewLegacyDeleted: "Reconcile deleted Trip and linked records"
+        case .retireNeverUploadedTrip: "Retire Trip that never reached the server"
+        case .discardUnlinkedSpray: "Discard unlinked Spray Record"
         case .retryExisting: "Retry existing operations for this vineyard"
         case .privateReview: "Copy issue for owner review"
         }
@@ -74,6 +76,10 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
             "Only replays an already-recorded, original-account cancellation journal and independently verifies its server tombstone. Does not delete a different Trip."
         case .reviewLegacyDeleted:
             "The original server Trip is already deleted. After you confirm Applied or Not applied and supply an evidence note, the backend archives original compliance evidence, soft-deletes its remaining linked rows, and issues an exact cancellation receipt before any local queue is retired. It never restores the deleted Trip."
+        case .retireNeverUploadedTrip:
+            "The server has no Trip with this ID for your account, and nothing recorded (tank Actual Use or a Spray completion) is linked to it. Its saved journal and tank contents are archived on this phone first, then only this Trip's upload queue entry and leftover tank contents are retired. Nothing is uploaded, invented or deleted on the server."
+        case .discardUnlinkedSpray:
+            "This Spray Record was recovered without its original Trip, and that Trip never reached the server, so it can never be linked. It is archived on this phone first, then deleted on the server (if still live) and removed from this phone's queue. Use only for a spray that should not be kept."
         case .retryExisting:
             "Runs the existing sync for this vineyard. Other eligible records in the same vineyard can also be retried. Original IDs and pending evidence are retained until the server accepts them."
         case .privateReview:
@@ -87,10 +93,23 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
 nonisolated enum GuidedSyncCorrectionPolicy {
     static func available(for issue: GuidedSyncRepairIssue, server: GuidedSyncRecordState,
                           actualAccepted: Bool = false,
-                          actualPending: Bool = false) -> [GuidedSyncCorrection] {
+                          actualPending: Bool = false,
+                          neverUploadedEvidence: Bool = false) -> [GuidedSyncCorrection] {
         guard issue.verifiedCurrentScope else {
-            return issue.kind == .protectedQueue && server == .deleted
-                ? [.reviewLegacyDeleted, .privateReview] : [.privateReview]
+            if issue.kind == .protectedQueue && server == .deleted {
+                return [.reviewLegacyDeleted, .privateReview]
+            }
+            // No server Trip is visible, but scoped local evidence (journal or
+            // tank handoff for this account and vineyard) ties the ID here.
+            if [.protectedQueue, .initialMixDraft].contains(issue.kind) &&
+                server == .notVisible && neverUploadedEvidence {
+                return [.retireNeverUploadedTrip, .privateReview]
+            }
+            return [.privateReview]
+        }
+        if issue.kind == .sprayRecord && neverUploadedEvidence &&
+            [.notVisible, .standalone, .deleted].contains(server) {
+            return [.discardUnlinkedSpray, .privateReview]
         }
         switch server {
         case .notChecked, .notVisible:
@@ -544,6 +563,9 @@ private struct GuidedSyncIssueDetailView: View {
     /// Latched once the server confirms an old Trip is already deleted: the
     /// screen then shows one short clean-up step instead of the full tool.
     @State private var simpleMode = false
+    /// Scoped local evidence for the never-uploaded repairs, captured by
+    /// inspect() (reads saved files; not evaluated on every render).
+    @State private var neverUploadedEvidence = false
 
     private var contextKey: String {
         (auth.userId?.uuidString ?? "none") + "|" + (store.selectedVineyardId?.uuidString ?? "none")
@@ -618,7 +640,8 @@ private struct GuidedSyncIssueDetailView: View {
         guard originatingContext == contextKey,
               (issue.verifiedCurrentScope ||
                (issue.kind == .protectedQueue && selected == .reviewLegacyDeleted &&
-                server == .deleted)),
+                server == .deleted) ||
+               (selected == .retireNeverUploadedTrip && server == .notVisible && neverUploadedEvidence)),
               !isWorking, !syncStatus.isSyncing,
               !tripSync.isSyncing, !spraySync.isSyncing,
               !TripActivityCancellationService.shared.isWorking,
@@ -632,11 +655,17 @@ private struct GuidedSyncIssueDetailView: View {
     private var options: [GuidedSyncCorrection] {
         GuidedSyncCorrectionPolicy.available(
             for: issue, server: server, actualAccepted: actualAccepted,
-            actualPending: SprayTankActualStore.shared.pendingIds.contains(issue.recordId))
+            actualPending: SprayTankActualStore.shared.pendingIds.contains(issue.recordId),
+            neverUploadedEvidence: neverUploadedEvidence)
+    }
+    /// The queued Trip ID a never-uploaded retire applies to.
+    private var neverUploadedTripId: UUID {
+        issue.kind == .protectedQueue ? issue.recordId : (issue.relatedTripId ?? issue.recordId)
     }
     private var reasonRequired: Bool {
         selected == .manualVerifiedTank || selected == .amendActualUse ||
-            selected == .correctPendingActualUse || selected == .reviewLegacyDeleted
+            selected == .correctPendingActualUse || selected == .reviewLegacyDeleted ||
+            selected == .retireNeverUploadedTrip || selected == .discardUnlinkedSpray
     }
     private var canVerifyProtectedCancellation: Bool {
         guard issue.kind == .protectedQueue, originatingContext == contextKey,
@@ -1060,6 +1089,17 @@ private struct GuidedSyncIssueDetailView: View {
         defer { isWorking = false }
         independentReceipt = nil
         actualAccepted = false
+        switch issue.kind {
+        case .protectedQueue, .initialMixDraft:
+            neverUploadedEvidence = tripSync.isPendingUpsert(neverUploadedTripId) &&
+                GuidedNeverUploadedRepair.neverCreatedTripLocalEvidence(
+                    tripId: neverUploadedTripId, vineyard: vineyard, owner: owner, store: store)
+        case .sprayRecord:
+            neverUploadedEvidence = GuidedNeverUploadedRepair.unlinkedSprayLocalEvidence(
+                recordId: issue.recordId, vineyard: vineyard, store: store)
+        default:
+            neverUploadedEvidence = false
+        }
         do {
             // For protected IDs the exact query can classify a tombstone but
             // never establishes ownership or authorises mutation by itself.
@@ -1334,6 +1374,26 @@ private struct GuidedSyncIssueDetailView: View {
                       "Original server tombstone, compliance archive and linked cancellation receipts verified.")
                 outcome = accepted
                 await verifyAfterCorrection(owner: owner, vineyard: vineyard)
+            case .retireNeverUploadedTrip:
+                guard server == .notVisible, neverUploadedEvidence else {
+                    outcome = "Inspect the server record first. Retire is only offered when no server Trip is visible."
+                    return
+                }
+                outcome = try await GuidedNeverUploadedRepair.retireNeverCreatedTrip(
+                    tripId: neverUploadedTripId, vineyard: vineyard, owner: owner,
+                    reason: evidenceNote, store: store, tripSync: tripSync, spraySync: spraySync)
+                stage("NEVER_CREATED_TRIP_RETIRED",
+                      "No server Trip visible; local evidence archived and read back; upload queue entry retired.")
+            case .discardUnlinkedSpray:
+                guard issue.kind == .sprayRecord, neverUploadedEvidence else {
+                    outcome = "Inspect the server record first."
+                    return
+                }
+                outcome = try await GuidedNeverUploadedRepair.discardUnlinkedSpray(
+                    recordId: issue.recordId, vineyard: vineyard, owner: owner,
+                    reason: evidenceNote, store: store, tripSync: tripSync, spraySync: spraySync)
+                stage("UNLINKED_SPRAY_DISCARDED",
+                      "Original Trip absent on server; Spray archived and read back; server row deleted; queue retired.")
             case .retryExisting:
                 guard server != .notChecked && server != .notVisible && server != .deleted else {
                     outcome = "The original server state has not been verified as writable."; return
