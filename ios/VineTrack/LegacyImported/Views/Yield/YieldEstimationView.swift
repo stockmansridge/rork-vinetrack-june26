@@ -419,7 +419,8 @@ struct YieldEstimationView: View {
     @ViewBuilder
     private func countEntrySheet(site: SampleSite) -> some View {
         if viewModel.isPanelCount {
-            PanelCountEntrySheet(site: site) { measurement, recordedBy in
+            PanelCountEntrySheet(site: site,
+                blockPanelLengthMetres: paddocks.first { $0.id == site.paddockId }?.intermediatePostSpacing) { measurement, recordedBy in
                 viewModel.savePanelCount(siteId: site.id, measurement: measurement,
                                          recordedBy: recordedBy, persist: saveSession)
             }

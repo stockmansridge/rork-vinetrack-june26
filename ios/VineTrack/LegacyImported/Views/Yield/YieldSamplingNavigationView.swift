@@ -152,7 +152,8 @@ struct YieldSamplingNavigationView: View {
         }
         .sheet(isPresented: $showPanelEntry) {
             if let site = currentSite {
-                PanelCountEntrySheet(site: site) { measurement, recordedBy in
+                PanelCountEntrySheet(site: site,
+                    blockPanelLengthMetres: paddocks.first { $0.id == site.paddockId }?.intermediatePostSpacing) { measurement, recordedBy in
                     let accepted = viewModel.savePanelCount(
                         siteId: site.id, measurement: measurement,
                         recordedBy: recordedBy, persist: saveSession

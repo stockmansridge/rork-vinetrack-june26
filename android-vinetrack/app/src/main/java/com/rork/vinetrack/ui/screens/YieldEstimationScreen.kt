@@ -1778,7 +1778,10 @@ private fun CountMethodDialog(
     onPanelSave: (PanelCountMeasurement) -> Boolean,
 ) {
     if (session.isPanelCount) {
-        PanelCountDialog(site = site, saveLabel = saveLabel, onDismiss = onDismiss, onSave = onPanelSave)
+        val blockPanelLength = state.paddocks
+            .firstOrNull { it.id.equals(site.paddockId, true) }?.intermediatePostSpacing
+        PanelCountDialog(site = site, saveLabel = saveLabel, blockPanelLengthMetres = blockPanelLength,
+            onDismiss = onDismiss, onSave = onPanelSave)
         return
     }
     if (!session.isQuadrantCount) {
