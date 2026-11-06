@@ -1463,6 +1463,11 @@ final class MigratedDataStore {
         stagedPaddocks.removeAll { deleteIds.contains($0.id) }
         var allIndex = Dictionary(uniqueKeysWithValues: all.indices.map { (all[$0].id, $0) })
         var memoryIndex = Dictionary(uniqueKeysWithValues: stagedPaddocks.indices.map { (stagedPaddocks[$0].id, $0) })
+        // A pull that only re-delivers stored blocks changes nothing: no
+        // rewrite and no republished block list (which redraws maps/lists).
+        if deleteIds.isEmpty, incoming.allSatisfy({ paddock in
+            allIndex[paddock.id].map { all[$0] == paddock || Self.matchesStored(all[$0], paddock) } ?? false
+        }) { return }
         for paddock in incoming {
             if let idx = allIndex[paddock.id] {
                 all[idx] = paddock
@@ -1583,6 +1588,7 @@ final class MigratedDataStore {
     func applyRemotePaddockUpsert(_ paddock: Paddock) {
         if selectedVineyardId == paddock.vineyardId {
             if let idx = paddocks.firstIndex(where: { $0.id == paddock.id }) {
+                if paddocks[idx] == paddock || Self.matchesStored(paddocks[idx], paddock) { return }
                 paddocks[idx] = paddock
             } else {
                 paddocks.append(paddock)
@@ -1860,11 +1866,24 @@ final class MigratedDataStore {
 
     /// Apply a trip upsert that originated from a remote sync pull. Does NOT
     /// trigger `onTripChanged` (avoids re-marking the trip dirty).
+    /// True when two records are identical as stored on disk. Persistence
+    /// keeps whole-second ISO8601 dates while server rows carry fractional
+    /// seconds, so an unchanged server row never compared equal to its saved
+    /// copy and every pull rewrote whole files and redrew the screens that
+    /// show them. An encoding failure counts as different (the write happens).
+    nonisolated static func matchesStored<T: Encodable>(_ a: T, _ b: T) -> Bool {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        guard let first = try? encoder.encode(a), let second = try? encoder.encode(b) else { return false }
+        return first == second
+    }
+
     func applyRemoteTripUpsert(_ trip: Trip) {
         guard (try? tripDeletionJournal.isCancelled(trip.id)) == false else { return }
         // Skip redundant GPS-heavy disk writes and observable publications.
         if selectedVineyardId == trip.vineyardId, deviceActiveTripId != trip.id,
-           trips.contains(where: { $0.id == trip.id && $0 == trip }) { return }
+           trips.contains(where: { $0.id == trip.id && ($0 == trip || Self.matchesStored($0, trip)) }) { return }
         // Parent activation may arrive before orphan-link acceptance. Keep the
         // original queued projection/time for retry, even across a restart.
         let preserved = sprayRecords + sprayRepo.loadRecords(for: trip.vineyardId)
@@ -1893,6 +1912,8 @@ final class MigratedDataStore {
             // surfaces when switching vineyards.
             var all = tripRepo.loadAll()
             if let idx = all.firstIndex(where: { $0.id == trip.id }) {
+                if deviceActiveTripId != trip.id, all[idx].vineyardId == trip.vineyardId,
+                   all[idx] == trip || Self.matchesStored(all[idx], trip) { return }
                 all[idx] = trip
             } else {
                 all.append(trip)
@@ -2325,6 +2346,7 @@ final class MigratedDataStore {
                     incoming.recoveredFromServerOrphan = true
                     incoming.recoveredOrphanLinkAccepted = existing.recoveredOrphanLinkAccepted
                 }
+                if existing == incoming || Self.matchesStored(existing, incoming) { return }
                 sprayRecords[idx] = incoming
             } else {
                 sprayRecords.append(record)
@@ -2341,6 +2363,7 @@ final class MigratedDataStore {
                 var incoming = record
                 incoming.recoveredFromServerOrphan = existing.recoveredFromServerOrphan
                 incoming.recoveredOrphanLinkAccepted = existing.recoveredOrphanLinkAccepted
+                if existing == incoming || Self.matchesStored(existing, incoming) { return }
                 all[idx] = incoming
             } else {
                 all.append(record)

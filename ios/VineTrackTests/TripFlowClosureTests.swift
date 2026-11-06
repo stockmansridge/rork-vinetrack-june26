@@ -401,3 +401,39 @@ final class LiveTripBatchedWriteTests: XCTestCase {
         XCTAssertEqual(onDisk(trip.id)?.pathPoints.count, 2)
     }
 }
+
+/// Unchanged server rows must not rewrite files or redraw screens.
+@MainActor
+final class RemoteUnchangedSkipTests: XCTestCase {
+    func testServerFractionalSecondsMatchTheStoredWholeSecondCopy() throws {
+        let start = Date(timeIntervalSince1970: 1_700_000_000.734)
+        let stored = Trip(vineyardId: UUID(), startTime: Date(timeIntervalSince1970: 1_700_000_000), isActive: false)
+        var server = stored
+        server.startTime = start
+        XCTAssertNotEqual(stored, server, "Plain equality sees a difference that disk cannot store")
+        XCTAssertTrue(MigratedDataStore.matchesStored(stored, server))
+        server.totalDistance = 12
+        XCTAssertFalse(MigratedDataStore.matchesStored(stored, server), "Real changes are still applied")
+    }
+
+    func testUnchangedRemoteTripDoesNotRewriteOrRepublish() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        let vineyard = UUID()
+        store.selectedVineyardId = vineyard
+        let trip = Trip(vineyardId: vineyard, startTime: Date(timeIntervalSince1970: 1_700_000_000), isActive: false)
+        store.applyRemoteTripUpsert(trip)
+        XCTAssertEqual(store.trips.count, 1)
+        let file = directory.appendingPathComponent(TripRepository.storageKey + ".json")
+        let before = try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date
+        var again = trip
+        again.startTime = Date(timeIntervalSince1970: 1_700_000_000.5)
+        Thread.sleep(forTimeInterval: 1.1)
+        store.applyRemoteTripUpsert(again)
+        let after = try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date
+        XCTAssertEqual(before, after, "An unchanged server row must not rewrite the Trip file")
+        XCTAssertEqual(store.trips.first?.startTime, trip.startTime)
+    }
+}

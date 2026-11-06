@@ -234,16 +234,16 @@ struct NewMainTabView: View {
             // (network-independent) so the template picker works offline.
             sprayJobTemplateService.loadCached(for: store.selectedVineyardId)
             await accessControl.refresh(for: store.selectedVineyardId, auth: auth)
-            await automaticSweep(alertRefresh: .generate)
+            await automaticSweep(alertRefresh: .generate, queuesRepeat: true)
             await prefetchOptimalRipenessWeather()
         }
-        // Periodic active sync: every 3 minutes while the app is foregrounded
+        // Periodic active sync: every 5 minutes while the app is foregrounded
         // and a vineyard is selected. Task is cancelled automatically when
         // scenePhase changes (e.g. backgrounded) or the vineyard switches.
         .task(id: ScenePhaseVineyardKey(scenePhase: scenePhase, vineyardId: store.selectedVineyardId)) {
             guard scenePhase == .active, store.selectedVineyardId != nil else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(180))
+                try? await Task.sleep(for: .seconds(Self.periodicSyncInterval))
                 if Task.isCancelled { return }
                 if scenePhase != .active { return }
                 await automaticSweep(alertRefresh: .refresh)
@@ -292,7 +292,7 @@ struct NewMainTabView: View {
                 return
             }
             Task {
-                await automaticSweep(alertRefresh: .refresh)
+                await automaticSweep(alertRefresh: .refresh, queuesRepeat: true)
                 await prefetchOptimalRipenessWeather()
             }
         }
@@ -401,9 +401,17 @@ struct NewMainTabView: View {
     static let liveTripQuietStart: TimeInterval = 5 * 60
     static let liveTripSyncInterval: TimeInterval = 10 * 60
 
-    private func automaticSweep(alertRefresh: AlertRefreshMode) async {
+    /// Automatic sync cadence while the app is open and no Trip is recording.
+    static let periodicSyncInterval: TimeInterval = 5 * 60
+
+    /// `queuesRepeat`: whether a request arriving while a sweep is running
+    /// runs a second full sweep straight after it. Only requests that carry
+    /// new work do (launch/vineyard change, reconnect, Sync now, Trip end);
+    /// a periodic or foreground request is already covered by the running
+    /// sweep and the next periodic one, instead of doubling the work.
+    private func automaticSweep(alertRefresh: AlertRefreshMode, queuesRepeat: Bool = false) async {
         guard let trip = store.deviceOwnedTrip else {
-            await runFullSweep(alertRefresh: alertRefresh)
+            await runFullSweep(alertRefresh: alertRefresh, queuesRepeat: queuesRepeat)
             return
         }
         let now = Date()
@@ -420,10 +428,11 @@ struct NewMainTabView: View {
 
     private func runFullSweep(
         alertRefresh: AlertRefreshMode,
-        startsManualDiagnostic: Bool = false
+        startsManualDiagnostic: Bool = false,
+        queuesRepeat: Bool = true
     ) async {
         guard !isSweeping else {
-            isSweepRequested = true
+            if queuesRepeat || startsManualDiagnostic { isSweepRequested = true }
             isManualDiagnosticRequested = isManualDiagnosticRequested || startsManualDiagnostic
             return
         }
@@ -2014,7 +2023,7 @@ private struct TripLifecycleSyncTriggers: ViewModifier {
                 tripTracking.resumeIfNeeded()
             }
             // Upload a Trip start or a durably saved Trip end straight away
-            // rather than waiting up to three minutes for the periodic sweep.
+            // rather than waiting up to five minutes for the periodic sweep.
             .onChange(of: store.deviceActiveTripId) { old, new in
                 guard old != new, network.isOnline, scenePhase == .active else { return }
                 if new != nil {

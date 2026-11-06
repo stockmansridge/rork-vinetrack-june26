@@ -9,6 +9,9 @@ on:
     paths:
       - 'ios/VineTrack/Backend/Sync/PinSyncService.swift'
       - 'ios/VineTrack/LegacyImported/Services/LegacySpraySaveRecovery.swift'
+      - 'ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift'
+      - 'ios/VineTrack/App/NewMainTabView.swift'
+      - 'ios/VineTrackTests/TripFlowClosureTests.swift'
       - '.github/workflows/ios-sync-performance-native.yml'
   workflow_dispatch:
 
@@ -53,7 +56,11 @@ jobs:
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.id }}" \
             -resultBundlePath "$RUNNER_TEMP/iOSSyncPerformance.xcresult" \
             -parallel-testing-enabled NO \
+            -only-testing:VineTrackTests/RemoteUnchangedSkipTests \
+            -only-testing:VineTrackTests/LiveTripBatchedWriteTests \
             -only-testing:VineTrackTests/PinRemoteMergeBatchTests \
+            -only-testing:VineTrackTests/DeviceTripOwnershipTests \
+            -only-testing:VineTrackTests/TripSyncStageFailureTests \
             -only-testing:VineTrackTests/PinPhotoWorkflowTests \
             -only-testing:VineTrackTests/LinkedPinGrowthDeletionWorkflowTests \
             -only-testing:VineTrackTests/OfflineQuickActionsTests \
