@@ -10,6 +10,9 @@ struct ConfirmActualTankMixView: View {
     @Environment(MigratedDataStore.self) private var store
     @State private var inputFormatter: RegionFormatter?
     @State private var waterSeed: String = ""
+    /// Pre-filled planned chemical text. An untouched field records the exact
+    /// planned amount, so the 3-decimal display never rounds what is saved.
+    @State private var chemicalSeeds: [UUID: String] = [:]
     private var fmt: RegionFormatter { inputFormatter ?? store.settings.regionFormatter }
     @State private var waterText: String
     @State private var chemicalTexts: [UUID: String]
@@ -23,9 +26,11 @@ struct ConfirmActualTankMixView: View {
         self.tankCount = tankCount
         self.onConfirm = onConfirm
         _waterText = State(initialValue: Self.input(tank.waterVolume))
-        _chemicalTexts = State(initialValue: Dictionary(uniqueKeysWithValues: tank.chemicals.map {
+        let seeds = Dictionary(uniqueKeysWithValues: tank.chemicals.map {
             ($0.id, Self.input(SprayInitialTankInput.plannedDisplayAmount($0)))
-        }))
+        })
+        _chemicalTexts = State(initialValue: seeds)
+        _chemicalSeeds = State(initialValue: seeds)
     }
 
     var body: some View {
@@ -91,9 +96,12 @@ struct ConfirmActualTankMixView: View {
                retained.ownerId == store.currentUserIdProvider?(),
                retained.sprayRecordId == record.id, retained.tank == tank {
                 retainedInitialAmounts = retained.amounts
-                let input = SprayInitialTankInput(amounts: retained.amounts, tank: tank, formatter: formatter)
-                waterText = input.waterText
-                chemicalTexts = input.chemicalTexts
+                // Read-only display; confirm() records retainedInitialAmounts
+                // exactly, never these (3-decimal) strings.
+                waterText = Self.input(formatter.volumeValue(litres: retained.amounts.waterLitres))
+                chemicalTexts = Dictionary(uniqueKeysWithValues: tank.chemicals.compactMap { chemical in
+                    retained.amounts.chemicalBaseAmounts[chemical.id].map { (chemical.id, Self.input(chemical.unit.fromBase($0))) }
+                })
             }
         }
         .interactiveDismissDisabled(isSaving)
@@ -120,7 +128,11 @@ struct ConfirmActualTankMixView: View {
         let water = waterText == waterSeed ? tank.waterVolume : fmt.volumeToCanonical(displayWater)
         isSaving = true
         let amounts = Dictionary(uniqueKeysWithValues: tank.chemicals.compactMap { chemical -> (UUID, Double)? in
-            guard let display = parsed(chemicalTexts[chemical.id] ?? "") else { return nil }
+            let text = chemicalTexts[chemical.id] ?? ""
+            if let seed = chemicalSeeds[chemical.id], text == seed {
+                return (chemical.id, chemical.unit.toBase(SprayInitialTankInput.plannedDisplayAmount(chemical)))
+            }
+            guard let display = parsed(text) else { return nil }
             return (chemical.id, chemical.unit.toBase(display))
         })
         if onConfirm(water, amounts) { dismiss() } else { errorMessage = "The mix could not be saved locally. The tank was not started." }
@@ -175,7 +187,9 @@ struct ConfirmActualTankMixView: View {
         SprayEditingNumber.completeValue(text)
     }
 
+    /// Pre-fill shows at most 3 decimals. Untouched fields still record the
+    /// exact planned value (see waterSeed / chemicalSeeds).
     private static func input(_ value: Double) -> String {
-        value.formatted(.number.locale(.current).grouping(.never).precision(.fractionLength(0...12)))
+        value.formatted(.number.locale(.current).grouping(.never).precision(.fractionLength(0...3)))
     }
 }
