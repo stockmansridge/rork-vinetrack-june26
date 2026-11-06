@@ -33,6 +33,9 @@ struct EndTripReviewSheet: View {
     /// in fact still running.
     @State private var finishBlockedMessage: String?
     @State private var finishBlockedByFill: Bool = false
+    /// Spray with planned tanks but none sprayed: ask before ending.
+    @State private var showNoTankConfirmation: Bool = false
+    @State private var noTankConfirmed: Bool = false
 
     private struct DisplayRow: Identifiable {
         let id: Int
@@ -212,12 +215,21 @@ struct EndTripReviewSheet: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            .alert("No tank recorded", isPresented: $showNoTankConfirmation) {
+                Button("End Anyway", role: .destructive) {
+                    noTankConfirmed = true
+                    applyAndFinish()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("No tank was recorded for this spray. Ending now saves it without tank times or amounts.")
+            }
             .alert("Can't end the trip yet", isPresented: Binding(
                 get: { finishBlockedMessage != nil },
                 set: { if !$0 { finishBlockedMessage = nil } }
             )) {
                 if finishBlockedByFill {
-                    Button("Stop Fill & End Trip", role: .destructive) {
+                    Button(tracking.endWouldRecordNoSprayedTank ? "Stop Fill & End Anyway" : "Stop Fill & End Trip", role: .destructive) {
                         finishBlockedMessage = nil
                         finishBlockedByFill = false
                         Task { @MainActor in applyAndFinish(stoppingFill: true) }
@@ -233,7 +245,11 @@ struct EndTripReviewSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Finish Trip") {
-                        applyAndFinish()
+                        if tracking.endWouldRecordNoSprayedTank && !noTankConfirmed {
+                            showNoTankConfirmation = true
+                        } else {
+                            applyAndFinish()
+                        }
                     }
                     .fontWeight(.semibold)
                 }

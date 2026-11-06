@@ -189,6 +189,48 @@ final class TripFlowClosureTests: XCTestCase {
         XCTAssertNotNil(saved.endTime)
     }
 
+    func testFilledButNeverSprayedTankIsClosedAtItsFillEndOnTripEnd() async throws {
+        let (_, tracking, trip) = makeActiveTrip()
+        tracking.startFillTimer()
+        tracking.stopFillTimer()
+        let fillEnd = try XCTUnwrap(tracking.activeTrip?.tankSessions.first?.fillEndTime)
+        XCTAssertEqual(tracking.endTrip(), .ended)
+
+        let saved = try XCTUnwrap(persisted(trip.id, vineyard: trip.vineyardId))
+        let session = try XCTUnwrap(saved.tankSessions.first)
+        XCTAssertNotNil(session.endTime, "Server and Portal treat a start time with no end time as an unfinished tank")
+        XCTAssertEqual(try XCTUnwrap(session.endTime).timeIntervalSince1970, fillEnd.timeIntervalSince1970, accuracy: 1.0)
+        XCTAssertNil(session.startRow, "Still recognisable as a fill that was never sprayed")
+        XCTAssertFalse(TankSessionLifecycle.wasSprayed(session))
+        XCTAssertNotNil(session.fillEndTime)
+    }
+
+    func testSprayWithPlannedTanksButNoneSprayedAsksBeforeEnding() async throws {
+        let (store, tracking, _) = makeActiveTrip { trip in
+            trip.tripFunction = TripFunction.spraying.rawValue
+            trip.totalTanks = 2
+        }
+        XCTAssertTrue(tracking.endWouldRecordNoSprayedTank, state(store, tracking))
+        tracking.startFillTimer()
+        tracking.stopFillTimer()
+        XCTAssertTrue(tracking.endWouldRecordNoSprayedTank, "A fill alone is not a sprayed tank")
+    }
+
+    func testSprayWithASprayedTankEndsWithoutTheNoTankPrompt() async throws {
+        let (_, tracking, _) = makeActiveTrip { trip in
+            trip.tripFunction = TripFunction.spraying.rawValue
+            trip.totalTanks = 1
+            trip.tankSessions = [TankSession(tankNumber: 1, startTime: Date().addingTimeInterval(-300), startRow: 1.5)]
+            trip.activeTankNumber = 1
+        }
+        XCTAssertFalse(tracking.endWouldRecordNoSprayedTank)
+    }
+
+    func testNonSprayTripsNeverShowTheNoTankPrompt() async throws {
+        let (_, tracking, _) = makeActiveTrip()
+        XCTAssertFalse(tracking.endWouldRecordNoSprayedTank)
+    }
+
     func testEndTripClearsLiveStateForTheNextTrip() async throws {
         let (store, tracking, _) = makeActiveTrip()
         XCTAssertNotNil(tracking.activeTrip, "before end: " + state(store, tracking))

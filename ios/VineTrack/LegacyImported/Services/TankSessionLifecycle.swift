@@ -132,6 +132,30 @@ nonisolated enum TankSessionLifecycle {
         return repaired
     }
 
+    /// True for a tank that was (or is being) sprayed, as opposed to a tank
+    /// that was only filled. Same rule `isOpenSpray` uses for running tanks.
+    static func wasSprayed(_ session: TankSession) -> Bool {
+        session.fillStartTime == nil || session.startRow != nil ||
+            (session.fillEndTime.map { session.startTime >= $0 } ?? false)
+    }
+
+    /// End Trip closure for tanks that were filled but never sprayed. Such a
+    /// session has a start time and no end time, which the server and Portal
+    /// treat as an unfinished tank. It is closed at its own recorded fill end
+    /// (never a new time), so the fill duration is kept and it stays visibly
+    /// a fill-only tank. A running fill is never closed here.
+    static func closingFillOnlySessionsBeforeTripEnd(trip: Trip) -> Trip {
+        guard trip.isActive, trip.endTime == nil, !trip.isFillingTank else { return trip }
+        var updated = trip
+        for index in updated.tankSessions.indices {
+            let session = updated.tankSessions[index]
+            guard session.endTime == nil, !wasSprayed(session),
+                  let fillEnd = session.fillEndTime, fillEnd >= session.startTime else { continue }
+            updated.tankSessions[index].endTime = fillEnd
+        }
+        return updated
+    }
+
     static func isOpenSpray(_ session: TankSession) -> Bool {
         guard session.endTime == nil else { return false }
         return session.fillStartTime == nil || session.startRow != nil ||

@@ -1014,6 +1014,19 @@ final class TripTrackingService {
             errorMessage = blocker.message
             return .blocked(blocker)
         }
+        // Only once End is allowed: close tanks that were filled but never sprayed.
+        let fillOnlyClosed = TankSessionLifecycle.closingFillOnlySessionsBeforeTripEnd(trip: readyTrip)
+        if fillOnlyClosed != readyTrip {
+            do {
+                try store?.updateTripOrThrow(fillOnlyClosed)
+                readyTrip = fillOnlyClosed
+                breadcrumb("End Trip closed fill-only tank at its fill end")
+            } catch {
+                let detail = (error as NSError).localizedDescription
+                errorMessage = TripEndOutcome.persistenceFailed(detail).operatorMessage
+                return .persistenceFailed(detail)
+            }
+        }
         // Final completion pass — credit the current/last locked row if
         // it was clearly driven but never produced a normal row-end
         // transition (typical for the last planned row, where there is
@@ -1145,6 +1158,16 @@ final class TripTrackingService {
         } catch {
             return false
         }
+    }
+
+    /// True when ending now would save a spray Trip with planned tanks but no
+    /// sprayed tank. The server's own completion rule refuses that, so the UI
+    /// asks the operator to confirm instead of ending silently.
+    var endWouldRecordNoSprayedTank: Bool {
+        guard let trip = activeTrip,
+              trip.tripFunction == TripFunction.spraying.rawValue,
+              trip.totalTanks > 0 else { return false }
+        return !trip.tankSessions.contains(where: TankSessionLifecycle.wasSprayed)
     }
 
     /// One explicit operator action for "Stop Fill & End Trip". The end gate
@@ -2768,6 +2791,18 @@ final class TripTrackingService {
             }
         }
         if case let .blocked(blocker) = TripEndGate.evaluate(trip: readyTrip) { errorMessage = blocker.message; return .blocked(blocker) }
+        // Only once End is allowed: close tanks that were filled but never sprayed.
+        let fillOnlyClosed = TankSessionLifecycle.closingFillOnlySessionsBeforeTripEnd(trip: readyTrip)
+        if fillOnlyClosed != readyTrip {
+            do {
+                try store.updateTripOrThrow(fillOnlyClosed)
+                readyTrip = fillOnlyClosed
+                breadcrumb("End occurrence Trip closed fill-only tank at its fill end")
+            } catch {
+                errorMessage = error.localizedDescription
+                return .persistenceFailed(error.localizedDescription)
+            }
+        }
         guard persistManualCorrections(into: &readyTrip) else {
             let detail = "The trip's correction history could not be saved."
             errorMessage = TripEndOutcome.persistenceFailed(detail).operatorMessage

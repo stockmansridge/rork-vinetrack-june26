@@ -1932,14 +1932,16 @@ struct ActiveTripView: View {
             .accessibilityLabel("End Trip")
             .accessibilityIdentifier("trip.end")
             .confirmationDialog("End Trip?", isPresented: $showEndConfirmation) {
-                Button("End Trip", role: .destructive) {
+                Button(tracking.endWouldRecordNoSprayedTank ? "End Anyway" : "End Trip", role: .destructive) {
                     handleEndOutcome(tracking.endTrip())
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text((tracking.activeTrip ?? trip).activeTankNumber != nil
+                Text(tracking.endWouldRecordNoSprayedTank
+                    ? "No tank was recorded for this spray. Ending now saves it without tank times or amounts."
+                    : ((tracking.activeTrip ?? trip).activeTankNumber != nil
                     ? "This will finish the active tank first, then stop tracking and end the trip. Tank actuals are not invented; completion will sync when available."
-                    : "This will stop tracking and end the trip. Completion will sync when available.")
+                    : "This will stop tracking and end the trip. Completion will sync when available."))
             }
             .alert(
                 "Can't end the trip yet",
@@ -1950,7 +1952,7 @@ struct ActiveTripView: View {
                 presenting: endTripBlockedMessage
             ) { _ in
                 if endTripBlockedByFill {
-                    Button("Stop Fill & End Trip", role: .destructive) {
+                    Button(tracking.endWouldRecordNoSprayedTank ? "Stop Fill & End Anyway" : "Stop Fill & End Trip", role: .destructive) {
                         endTripBlockedMessage = nil
                         endTripBlockedByFill = false
                         // Present any follow-up block after this alert closes.
