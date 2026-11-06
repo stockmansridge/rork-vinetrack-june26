@@ -153,6 +153,22 @@ import Foundation
         try persistence.saveOrThrow(state, key: Self.key)
         return true // Tombstone and original evidence deliberately remain after acknowledgement.
     }
+    /// Owner-reviewed acknowledgement for a held deletion of a Trip that never
+    /// reached the server. Only GuidedNeverUploadedRepair calls this, after an
+    /// authenticated confirm_trip_absence_v1 receipt and a read-back archive.
+    /// The original hold reason is kept for forensics.
+    func acknowledgeReviewedAbsence(_ intent: Intent, owner: UUID, vineyard: UUID, evidence: String) throws {
+        var state = try load()
+        guard Self.matches(state.intents[intent.trip], intent),
+              intent.scope?.account == owner, intent.scope?.vineyard == vineyard,
+              intent.scope?.trip == intent.trip, intent.acknowledgement == nil,
+              evidence.hasPrefix("SERVER_ABSENCE_VERIFIED:") else {
+            throw Held(reason: "TRIP_REVIEW_ABSENCE_ACK_SCOPE_UNVERIFIED")
+        }
+        state.intents[intent.trip]?.acknowledgement = "REVIEWED_" + evidence
+        try persistence.saveOrThrow(state, key: Self.key)
+    }
+
     /// The explicitly reviewed legacy path is NOT an original-device receipt.
     /// Store that provenance separately; never delete the original unscoped
     /// or held evidence. Only the reviewed reconciliation coordinator invokes

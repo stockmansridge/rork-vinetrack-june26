@@ -70,6 +70,12 @@ enum GuidedNeverUploadedRepair {
         tripId: UUID, vineyard: UUID, owner: UUID, store: MigratedDataStore
     ) -> Bool {
         guard !(store.trips + store.tripRepo.loadAll()).contains(where: { $0.id == tripId }) else { return false }
+        // A deletion recorded on this phone for this exact account/vineyard is
+        // itself scoped evidence (the Trip was deleted before it ever uploaded).
+        if let intent = try? store.tripDeletionJournal.load().intents[tripId] {
+            return intent.acknowledgement == nil && intent.scope?.account == owner &&
+                intent.scope?.vineyard == vineyard && intent.scope?.trip == tripId
+        }
         let drafts = SprayTankActualStore.shared.initialMixDrafts.filter { $0.tripId == tripId }
         if !drafts.isEmpty {
             return drafts.allSatisfy { $0.ownerId == owner && $0.vineyardId == vineyard }
@@ -151,12 +157,15 @@ enum GuidedNeverUploadedRepair {
         guard !(store.trips + store.tripRepo.loadAll()).contains(where: { $0.id == tripId }) else {
             throw Refused(explanation: "A saved copy of this Trip exists on this phone. It must upload or be reviewed normally.")
         }
-        guard tripSync.isPendingUpsert(tripId) else {
-            throw Refused(explanation: "This Trip is not waiting to upload. Nothing to retire.")
+        let deletionIntent = try store.tripDeletionJournal.load().intents[tripId]
+        guard tripSync.isPendingUpsert(tripId) || tripSync.isPendingDelete(tripId) || deletionIntent != nil else {
+            throw Refused(explanation: "This Trip is not waiting to upload or delete. Nothing to retire.")
         }
-        guard !tripSync.isPendingDelete(tripId),
-              (try store.tripDeletionJournal.load().intents[tripId]) == nil else {
-            throw Refused(explanation: "A deletion is recorded for this Trip. Use 'Verify original deletion' instead.")
+        if let intent = deletionIntent {
+            guard intent.acknowledgement == nil, intent.scope?.account == owner,
+                  intent.scope?.vineyard == vineyard, intent.scope?.trip == tripId else {
+                throw Refused(explanation: "The recorded deletion belongs to another account or vineyard, or is already confirmed. Nothing was changed.")
+            }
         }
         if let open = try TripCancellationIntentStore.shared.find(tripId: tripId.uuidString.lowercased()), open.isOpen {
             throw Refused(explanation: "An original cancellation is still pending for this Trip. It must finish first.")
@@ -178,7 +187,7 @@ enum GuidedNeverUploadedRepair {
         guard journalMatch != false else {
             throw Refused(explanation: "The saved Trip journal belongs to another account or vineyard. Nothing was changed.")
         }
-        guard journalMatch == true || !drafts.isEmpty else {
+        guard journalMatch == true || !drafts.isEmpty || deletionIntent != nil else {
             throw Refused(explanation: "No saved evidence ties this Trip to your account and this vineyard. Nothing was changed.")
         }
 
@@ -190,6 +199,19 @@ enum GuidedNeverUploadedRepair {
             throw Refused(explanation: serverTrips.contains(where: { $0.deleted_at != nil })
                 ? "This Trip exists on the server as deleted. Use 'Reconcile deleted Trip and linked records' instead."
                 : "This Trip exists on the server. It must upload or be reviewed normally.")
+        }
+        // For a recorded deletion, the server must also issue its authenticated
+        // absence receipt (confirm_trip_absence_v1) for this exact account.
+        var absenceEvidence: String?
+        if let intent = deletionIntent, let scope = intent.scope {
+            let evidence = try await SupabaseTripSyncRepository().reverifyDeletion(scope) {
+                store.currentUserIdProvider?() == owner && store.selectedVineyardId == vineyard
+            }
+            guard evidence.hasPrefix("SERVER_ABSENCE_VERIFIED:") else {
+                throw Refused(explanation: "The server did not confirm this Trip is absent. Nothing was changed.")
+            }
+            absenceEvidence = evidence
+            try requireContext(owner: owner, vineyard: vineyard, store: store, tripSync: tripSync, spraySync: spraySync)
         }
         let linkedSprayIds = Array(Set(drafts.map(\.sprayRecordId) +
             store.sprayRecords.filter { $0.canonicalTripId == tripId }.map(\.id)))
@@ -204,7 +226,7 @@ enum GuidedNeverUploadedRepair {
         let archive = NeverCreatedTripArchive(
             tripId: tripId, owner: owner, vineyard: vineyard, reason: note, archivedAt: Date(),
             occurrenceJournal: journalData, initialMixDrafts: drafts,
-            queuedUpload: true, queuedUploadFailed: tripSync.isQueuedUploadMarkedFailed(tripId),
+            queuedUpload: tripSync.isPendingUpsert(tripId), queuedUploadFailed: tripSync.isQueuedUploadMarkedFailed(tripId),
             linkedSprayIdsCheckedOnServer: linkedSprayIds.sorted { $0.uuidString < $1.uuidString },
             serverTripRowsVisible: serverTrips.count)
         try saveAndReadBack(archive, key: tripArchiveKey(tripId)) {
@@ -223,8 +245,12 @@ enum GuidedNeverUploadedRepair {
                 createDirectoryIfMissing: false)
             if try journal.load()?.heldReason == nil { try journal.hold("RETIRED_NEVER_CREATED_REVIEWED") }
         }
+        if let intent = deletionIntent, let evidence = absenceEvidence {
+            try store.tripDeletionJournal.acknowledgeReviewedAbsence(
+                intent, owner: owner, vineyard: vineyard, evidence: evidence)
+        }
         try SprayTankActualStore.shared.removeInitialMixDrafts(tripId: tripId, vineyardId: vineyard)
-        tripSync.retireReviewedNeverCreatedTrip(tripId)
+        try tripSync.retireReviewedNeverCreatedTrip(tripId)
         return "Retired. This Trip never reached the server; its saved evidence is archived on this phone and it will no longer be queued."
     }
 
