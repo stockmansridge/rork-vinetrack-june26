@@ -1890,7 +1890,10 @@ struct ActiveTripView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "location.fill")
                         .foregroundStyle(VineyardTheme.leafGreen)
-                    Text(tracking.rowGuidanceAvailable ? "GPS Tracking Active" : "Waiting for GPS")
+                    // "Waiting for GPS" only when there is no fix. Without row guidance but
+                    // with a fix, the tractor is simply outside the mapped rows.
+                    Text(tracking.rowGuidanceAvailable ? "GPS Tracking Active"
+                        : (gpsQuality == .unavailable ? "Waiting for GPS" : "GPS active · outside mapped rows"))
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
@@ -1940,8 +1943,8 @@ struct ActiveTripView: View {
                 Text(tracking.endWouldRecordNoSprayedTank
                     ? "No tank was recorded for this spray. Ending now saves it without tank times or amounts."
                     : ((tracking.activeTrip ?? trip).activeTankNumber != nil
-                    ? "This will finish the active tank first, then stop tracking and end the trip. Tank actuals are not invented; completion will sync when available."
-                    : "This will stop tracking and end the trip. Completion will sync when available."))
+                    ? "This will finish the active tank, stop tracking and end the trip. It uploads automatically when you have signal."
+                    : "This will stop tracking and end the trip. It uploads automatically when you have signal."))
             }
             .alert(
                 "Can't end the trip yet",
