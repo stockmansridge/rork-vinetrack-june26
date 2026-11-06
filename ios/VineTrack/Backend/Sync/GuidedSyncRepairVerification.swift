@@ -298,7 +298,7 @@ enum GuidedSyncRepairVerification {
                           (spraySync.isPendingUpsert($0.id) || spraySync.isPendingDelete($0.id))
                       }) else {
                     return held("CANCEL_DEPENDENTS_PENDING",
-                        "The server Trip is deleted but linked local queues still require cancellation verification.")
+                        "The server Trip is deleted but linked local records are still queued. Verify cannot clear them: choose \"Reconcile deleted Trip and linked records\" instead.")
                 }
                 return Result(verified: true, code: "CANCELLATION_VERIFIED",
                     explanation: "The original server tombstone, cancellation receipt and linked local queues have been checked.",
