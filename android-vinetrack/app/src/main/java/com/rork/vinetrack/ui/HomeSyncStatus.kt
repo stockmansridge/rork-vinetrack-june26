@@ -34,7 +34,8 @@ internal fun homeSyncStatus(
         items.any { it.status == "in_progress" } || photoStatuses.any { it == "in_progress" })
         return HomeSyncStatus("Syncing", HomeSyncTone.Syncing)
     val dependencies = setOf(PendingSyncDisplayState.WaitingForTripStart.label,
-        PendingSyncDisplayState.WaitingForTripChanges.label)
+        PendingSyncDisplayState.WaitingForTripChanges.label,
+        PendingSyncDisplayState.HeldUntilTripEnds.label)
     if (evidenceNeedsAttention || photoStatuses.any { it == "blocked" } ||
         items.any { it.status == "blocked" })
         return HomeSyncStatus("Needs attention", HomeSyncTone.Attention)
