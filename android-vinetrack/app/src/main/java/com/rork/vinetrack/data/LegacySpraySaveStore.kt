@@ -56,11 +56,37 @@ class LegacySpraySaveStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = false }
     private fun read(): List<Attempt> {
-        val items = prefs.getString("attempts", null)?.let { json.decodeFromString<List<Attempt>>(it) } ?: emptyList()
+        val raw = prefs.getString("attempts", null) ?: return emptyList()
+        strictRead(raw)?.let { return it }
+        // One unreadable original (an older app's format, or a record that no
+        // longer passes today's checks) used to make this whole store unreadable,
+        // so every Free Drive spray Start in the vineyard failed with MESSAGE and
+        // nothing could clear it. Set aside only the rows that don't read, keep
+        // the exact original bytes, and carry on with the rows that do.
+        val split = LegacySprayJournalQuarantine.split(raw, ::decodeValidated) { it.trip.id to it.recordId }
+        val entry = LegacySprayJournalQuarantine.Entry(System.currentTimeMillis(), split.reasons, split.kept.size, raw)
+        val quarantine = LegacySprayJournalQuarantine.append(prefs.getString(QUARANTINE_KEY, null), entry)
+        val kept = split.kept
+        val editor = prefs.edit().putString(QUARANTINE_KEY, quarantine)
+        if (kept.isEmpty()) editor.remove("attempts") else editor.putString("attempts", json.encodeToString(kept))
+        check(editor.commit() && prefs.getString(QUARANTINE_KEY, null) == quarantine) { "Legacy save could not be durably retained." }
+        android.util.Log.w("SprayStart", "stage=legacy_journal_set_aside kept=${kept.size} set_aside=${split.reasons.size}")
+        return kept
+    }
+
+    private fun strictRead(raw: String): List<Attempt>? = runCatching {
+        val items = json.decodeFromString<List<Attempt>>(raw)
         check(items.map { it.recordId }.distinct().size == items.size && items.map { it.trip.id }.distinct().size == items.size)
         items.forEach(::validate)
-        return items
-    }
+        items
+    }.getOrNull()
+
+    private fun decodeValidated(row: JsonElement): Attempt = json.decodeFromJsonElement<Attempt>(row).also(::validate)
+
+    /** Support-safe lines describing rows set aside from this store (no payload content). */
+    fun quarantineDiagnostics(): List<String> = access.admitted { synchronized(this) {
+        LegacySprayJournalQuarantine.diagnostics(prefs.getString(QUARANTINE_KEY, null))
+    } }
     private fun validate(item: Attempt) {
         listOf(item.actorId, item.trip.vineyardId, item.trip.id, item.recordId).forEach { java.util.UUID.fromString(it) }
         check(item.actorId == item.trip.actorId && item.input.tripId == item.trip.id && item.trip.rowSequence.isEmpty() &&
@@ -230,10 +256,17 @@ class LegacySpraySaveStore(context: Context) {
      * Strict full-store writers remain unchanged and fail closed if any original is unreadable.
      */
     fun replayInspection(): LegacyReplayIsolation.Inspection = access.admitted { synchronized(this) {
-        LegacyReplayIsolation.inspect(prefs.getString("attempts", null)) { row ->
+        val accepted: (JsonElement) -> Boolean = { row ->
             val item = json.decodeFromJsonElement<Attempt>(row)
             validate(item)
             !item.isHeld
+        }
+        val current = LegacyReplayIsolation.inspect(prefs.getString("attempts", null), accepted)
+        // Rows set aside from Start still hold dependent sync exactly as before (Issue #41):
+        // their original bytes are inspected unchanged.
+        LegacySprayJournalQuarantine.originals(prefs.getString(QUARANTINE_KEY, null)).fold(current) { acc, original ->
+            val set = LegacyReplayIsolation.inspect(original, accepted)
+            LegacyReplayIsolation.Inspection(acc.held + set.held, acc.fingerprint + ":" + set.fingerprint)
         }
     } }
 
@@ -266,6 +299,8 @@ class LegacySpraySaveStore(context: Context) {
             check(same(expected, actual)) { MESSAGE }
         }
         const val PREFERENCES = "vinetrack_legacy_spray_saves_v1"
+        /** Same preferences file, so account-transition handling covers it unchanged. */
+        const val QUARANTINE_KEY = "attempts_set_aside_v1"
         const val UNSENT_MESSAGE = "Spray job saved on this device — not sent yet. The original job will send when online with the same authorised account. Start is unavailable until the original pair has a verified acceptance receipt."
         fun status(items: List<Attempt>, currentEpoch: Long? = null): String? = when {
             items.isEmpty() -> null
