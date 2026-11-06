@@ -23,6 +23,7 @@ on:
       - 'ios/VineTrack/Backend/Sync/GuidedNeverUploadedRepair.swift'
       - 'ios/VineTrack/Backend/Sync/SprayRecordSyncService.swift'
       - 'ios/VineTrack/App/GuidedSyncIssueRepairView.swift'
+      - 'ios/VineTrack/Backend/Sync/GuidedSyncRepairVerification.swift'
       - 'ios/VineTrackTests/GuidedSyncCorrectionPolicyTests.swift'
       - '.github/workflows/ios-trip-flow-closure-native.yml'
   workflow_dispatch:
