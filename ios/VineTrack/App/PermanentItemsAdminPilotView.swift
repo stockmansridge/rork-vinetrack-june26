@@ -204,6 +204,21 @@ private struct PermanentItemTypeCreateParams: Encodable {
     let p_color_hex: String
 }
 
+/// Postgres returns float8 with 15 significant digits (extra_float_digits = 0),
+/// so a GPS value such as -33.29641018308584 reads back as -33.2964101830858.
+/// Exact equality made every successful save look unverified. 1e-9 degrees is
+/// about 0.1 mm, far below GPS precision but still catches a real mismatch.
+enum PermanentItemPilotCoordinate {
+    static let tolerance = 1e-9
+    static func same(_ a: Double?, _ b: Double?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case let (x?, y?): return abs(x - y) <= tolerance
+        default: return false
+        }
+    }
+}
+
 private struct PermanentItemPilotRepository {
     private let client = SupabaseClientProvider.shared.client
 
@@ -280,7 +295,8 @@ private struct PermanentItemPilotRepository {
               (op.p_action == "archive") == (row.archivedAt != nil),
               op.p_action == "archive" ||
               (row.name == op.p_name && row.itemType == op.p_item_type &&
-               row.latitude == op.p_latitude && row.longitude == op.p_longitude &&
+               PermanentItemPilotCoordinate.same(row.latitude, op.p_latitude) &&
+               PermanentItemPilotCoordinate.same(row.longitude, op.p_longitude) &&
                row.paddockId == op.p_paddock_id && row.notes == op.p_notes &&
                row.photoPath == op.p_photo_path) else {
             throw PermanentItemsPilotError.receipt

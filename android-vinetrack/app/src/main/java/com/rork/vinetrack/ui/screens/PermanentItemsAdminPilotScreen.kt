@@ -72,6 +72,7 @@ import com.rork.vinetrack.data.PermanentItemPilotRow
 import com.rork.vinetrack.data.PermanentItemPilotType
 import com.rork.vinetrack.data.PermanentItemsPilotRepository
 import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.ui.components.mapGestureOwnership
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -123,6 +124,8 @@ fun PermanentItemsAdminPilotScreen(
     val repository = remember { PermanentItemsPilotRepository(context) }
     val location = remember { LocationTracker(context) }
     val scope = rememberCoroutineScope()
+    // While a finger is on a map, the scrolling form must not steal the pan/zoom drag.
+    var mapGestureActive by remember { mutableStateOf(false) }
     val user = state.currentUserId
     val vineyard = state.selectedVineyardId
     var allowed by remember(user, vineyard) { mutableStateOf(false) }
@@ -364,7 +367,8 @@ fun PermanentItemsAdminPilotScreen(
             }
         } else if (editing) {
             Column(
-                Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
+                Modifier.fillMaxSize().padding(padding)
+                    .verticalScroll(rememberScrollState(), enabled = !mapGestureActive)
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -444,10 +448,14 @@ fun PermanentItemsAdminPilotScreen(
                     position = CameraPosition.fromLatLngZoom(focus, if (picked != null) 17f else 9f)
                 }
                 GoogleMap(
-                    modifier = Modifier.fillMaxWidth().height(270.dp),
+                    modifier = Modifier.fillMaxWidth().height(270.dp)
+                        .mapGestureOwnership { mapGestureActive = it },
                     cameraPositionState = camera,
                     properties = MapProperties(mapType = MapType.HYBRID),
-                    uiSettings = MapUiSettings(zoomControlsEnabled = true),
+                    uiSettings = MapUiSettings(
+                        zoomControlsEnabled = true, scrollGesturesEnabled = true,
+                        zoomGesturesEnabled = true, rotationGesturesEnabled = true
+                    ),
                     onMapClick = { point ->
                         lat = point.latitude.toString()
                         lon = point.longitude.toString()
@@ -568,9 +576,14 @@ fun PermanentItemsAdminPilotScreen(
                     position = CameraPosition.fromLatLngZoom(center, 14f)
                 }
                 GoogleMap(
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
+                    modifier = Modifier.fillMaxWidth().height(300.dp)
+                        .mapGestureOwnership { mapGestureActive = it },
                     cameraPositionState = mapCamera,
                     properties = MapProperties(mapType = MapType.HYBRID),
+                    uiSettings = MapUiSettings(
+                        zoomControlsEnabled = true, scrollGesturesEnabled = true,
+                        zoomGesturesEnabled = true, rotationGesturesEnabled = true
+                    ),
                 ) {
                     state.paddocks.forEach { block ->
                         val points = block.polygonPoints.orEmpty()

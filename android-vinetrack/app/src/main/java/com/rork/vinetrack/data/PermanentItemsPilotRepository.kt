@@ -346,7 +346,7 @@ class PermanentItemsPilotRepository(context: Context) {
                 verified.serverRevision != receipt.serverRevision ||
                 (op.action == "archive") != (verified.archivedAt != null) ||
                 (op.action != "archive" && (verified.name != op.name || verified.itemType != op.itemType ||
-                verified.latitude != op.latitude || verified.longitude != op.longitude ||
+                !sameCoordinate(verified.latitude, op.latitude) || !sameCoordinate(verified.longitude, op.longitude) ||
                 verified.paddockId != op.paddockId || verified.notes != op.notes ||
                 verified.photoPath != op.photoPath)))
                 error("Server read-back differs; retry the same operation.")
@@ -396,3 +396,11 @@ class PermanentItemsPilotRepository(context: Context) {
         throw BackendError.Server(code, body)
     }
 }
+
+/**
+ * Postgres returns float8 with 15 significant digits (extra_float_digits = 0),
+ * so -33.29641018308584 reads back as -33.2964101830858. Exact equality made
+ * every successful save look unverified. 1e-9 degrees is about 0.1 mm.
+ */
+internal fun sameCoordinate(a: Double?, b: Double?): Boolean =
+    if (a == null || b == null) a == b else kotlin.math.abs(a - b) <= 1e-9
