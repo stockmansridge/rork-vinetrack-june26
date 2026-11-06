@@ -14,10 +14,15 @@ final class TripRepository {
         self.persistence = persistence
     }
 
+    /// Runs before every disk read so a batched live-Trip write is on disk
+    /// before anything reads, merges or rewrites the Trip file.
+    var beforeRead: (() -> Void)?
+
     // MARK: - Load
 
     func loadAll() -> [Trip] {
-        persistence.load(key: Self.storageKey) ?? []
+        beforeRead?()
+        return persistence.load(key: Self.storageKey) ?? []
     }
 
     func load(for vineyardId: UUID) -> [Trip] {

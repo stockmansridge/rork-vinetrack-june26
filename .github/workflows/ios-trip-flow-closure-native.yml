@@ -9,6 +9,8 @@ on:
     paths:
       - 'ios/VineTrack/LegacyImported/Services/TripTrackingService.swift'
       - 'ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift'
+      - 'ios/VineTrack/LegacyImported/Repositories/TripRepository.swift'
+      - 'ios/VineTrack/App/Keyboard/GPSPersistenceProbe.swift'
       - 'ios/VineTrack/LegacyImported/Services/TripEndGate.swift'
       - 'ios/VineTrack/LegacyImported/Services/TankSessionLifecycle.swift'
       - 'ios/VineTrack/LegacyImported/Models/EngineHoursInput.swift'
@@ -73,6 +75,8 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/iOSTripFlowClosure.xcresult" \
             -parallel-testing-enabled NO \
             -only-testing:VineTrackTests/TripFlowClosureTests \
+            -only-testing:VineTrackTests/LiveTripBatchedWriteTests \
+            -only-testing:VineTrackTests/SprayMultiBlockTripTests \
             -only-testing:VineTrackTests/GuidedSyncCorrectionPolicyTests \
             -only-testing:VineTrackTests/EngineHoursInputTests \
             -only-testing:VineTrackTests/TripEndGateTests \

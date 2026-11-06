@@ -108,7 +108,12 @@ final class MigratedDataStore {
         guard operationalWriteAuthority.admit(vineyardId: trip.vineyardId.uuidString) else { return }
         guard isDeviceTripOwner, trip.id == deviceActiveTripId else { return }
         if trip.vineyardId == selectedVineyardId {
-            updateTrip(trip)
+            guard liveTripWriteInterval > 0 else { updateTrip(trip); return }
+            guard let index = trips.firstIndex(where: { $0.id == trip.id }),
+                  trips[index].vineyardId == trip.vineyardId else { return }
+            trips[index] = trip
+            scheduleLiveTripWrite(tripId: trip.id, vineyard: trip.vineyardId)
+            onTripChanged?(trip.id)
         } else {
             var slice = tripRepo.load(for: trip.vineyardId)
             guard let index = slice.firstIndex(where: { $0.id == trip.id }) else { return }
@@ -445,6 +450,7 @@ final class MigratedDataStore {
         self.tripCostAllocationRepo = TripCostAllocationRepository(persistence: persistence)
         self.settingsRepo = SettingsRepository(persistence: persistence)
         self.yieldRepo = YieldRepository(persistence: persistence)
+        tripRepo.beforeRead = { [weak self] in self?.flushLiveTripWrite() }
         load()
     }
 
@@ -750,6 +756,7 @@ final class MigratedDataStore {
 
     /// Clear in-memory state without touching disk.
     func clearInMemoryState() {
+        flushLiveTripWrite()
         vineyardPreparationGeneration &+= 1
         preparingVineyard = nil
         vineyards = []
@@ -1649,6 +1656,47 @@ final class MigratedDataStore {
         onTripChanged?(item.id)
     }
 
+    // MARK: - Batched live-Trip writes
+
+    /// GPS fixes arrive about once a second. Rewriting the whole Trip file on
+    /// every fix (on the main actor) made the live Trip screen lag, worse as
+    /// history grew. The in-memory Trip still updates on every fix; the file
+    /// is written at most once per interval, before any Trip file read, on
+    /// backgrounding, on vineyard change/sign-out, and by every durable Trip
+    /// save (pause, fill, tank, end), which writes the same in-memory slice.
+    /// 0 restores a write per fix (persistence benchmarks).
+    @ObservationIgnored var liveTripWriteInterval: TimeInterval = 5
+    @ObservationIgnored private var pendingLiveTripWrite: (trip: UUID, vineyard: UUID)?
+    @ObservationIgnored private var liveTripWriteTask: Task<Void, Never>?
+    @ObservationIgnored private var lastLiveTripWriteAt: Date = .distantPast
+
+    private func scheduleLiveTripWrite(tripId: UUID, vineyard: UUID) {
+        pendingLiveTripWrite = (tripId, vineyard)
+        let elapsed = Date().timeIntervalSince(lastLiveTripWriteAt)
+        if elapsed >= liveTripWriteInterval { flushLiveTripWrite(); return }
+        guard liveTripWriteTask == nil else { return }
+        let delay = liveTripWriteInterval - elapsed
+        liveTripWriteTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            self.liveTripWriteTask = nil
+            self.flushLiveTripWrite()
+        }
+    }
+
+    /// Writes any batched live-Trip change now. Safe to call at any time.
+    func flushLiveTripWrite() {
+        liveTripWriteTask?.cancel()
+        liveTripWriteTask = nil
+        guard let pending = pendingLiveTripWrite else { return }
+        pendingLiveTripWrite = nil
+        lastLiveTripWriteAt = Date()
+        // Only write a slice that still holds the live Trip: never replace a
+        // vineyard's file with an emptied or different in-memory array.
+        guard trips.contains(where: { $0.id == pending.trip && $0.vineyardId == pending.vineyard }) else { return }
+        tripRepo.saveSlice(trips.filter { $0.vineyardId == pending.vineyard }, for: pending.vineyard)
+    }
+
     func updateTrip(_ trip: Trip) {
         guard let index = trips.firstIndex(where: { $0.id == trip.id }),
               trips[index].vineyardId == trip.vineyardId,
@@ -1759,6 +1807,7 @@ final class MigratedDataStore {
     /// Completes a journal-first cancellation after a crash or failed cache write.
     /// Newer local work or unreadable archives are held, never removed or overwritten.
     func finishTripDeletionLocally(_ intent: TripDeletionJournal.Intent, preserveLinkedRecords: Bool = false) throws {
+        flushLiveTripWrite()
         guard let scope = intent.scope, currentUserIdProvider?() == scope.account,
               selectedVineyardId == scope.vineyard else { throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ORIGINAL_ACCOUNT_OR_VINEYARD_REQUIRED") }
         let all: [Trip]

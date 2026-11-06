@@ -46,6 +46,8 @@ final class GPSPersistenceFixture {
         metadata = TripSyncMetadata(persistence: persistence)
         sync = TripSyncService(repository: transport, metadata: metadata)
         store = MigratedDataStore(persistence: persistence)
+        // This probe measures the per-fix persistence path itself.
+        store.liveTripWriteInterval = 0
         store.selectedVineyardId = vineyard
         let owner = actor
         store.currentUserIdProvider = { owner }

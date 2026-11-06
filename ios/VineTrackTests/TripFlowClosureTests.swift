@@ -276,3 +276,85 @@ final class EngineHoursInputTests: XCTestCase {
         }
     }
 }
+
+/// Live-Trip GPS points are written to disk in batches, never lost.
+@MainActor
+final class LiveTripBatchedWriteTests: XCTestCase {
+    private var directory: URL!
+    private var retained: [AnyObject] = []
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        retained.removeAll()
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func makeStore(interval: TimeInterval) -> (MigratedDataStore, Trip) {
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        store.liveTripWriteInterval = interval
+        let vineyard = UUID()
+        store.selectedVineyardId = vineyard
+        let trip = Trip(vineyardId: vineyard, isActive: true)
+        store.startTrip(trip)
+        store.claimDeviceTrip(trip.id)
+        retained.append(store)
+        return (store, trip)
+    }
+
+    private func onDisk(_ id: UUID) -> Trip? {
+        (PersistenceStore(directory: directory).load(key: TripRepository.storageKey) as [Trip]?)?
+            .first { $0.id == id }
+    }
+
+    private func withPoints(_ trip: Trip, _ count: Int) -> Trip {
+        var next = trip
+        next.pathPoints = (0..<count).map { CoordinatePoint(latitude: -33 + Double($0) * 0.0001, longitude: 149) }
+        return next
+    }
+
+    func testFixesUpdateMemoryImmediatelyAndDiskInBatches() throws {
+        let (store, trip) = makeStore(interval: 60)
+        store.updateDeviceOwnedTrip(withPoints(trip, 1)) // first fix writes at once
+        XCTAssertEqual(onDisk(trip.id)?.pathPoints.count, 1)
+        store.updateDeviceOwnedTrip(withPoints(trip, 2))
+        store.updateDeviceOwnedTrip(withPoints(trip, 3))
+        XCTAssertEqual(store.deviceOwnedTrip?.pathPoints.count, 3, "The live screen sees every fix")
+        XCTAssertEqual(onDisk(trip.id)?.pathPoints.count, 1, "Later fixes are batched")
+        store.flushLiveTripWrite()
+        XCTAssertEqual(onDisk(trip.id)?.pathPoints.count, 3)
+    }
+
+    func testAnyTripFileReadWritesBatchedPointsFirst() throws {
+        let (store, trip) = makeStore(interval: 60)
+        store.updateDeviceOwnedTrip(withPoints(trip, 1))
+        store.updateDeviceOwnedTrip(withPoints(trip, 4))
+        XCTAssertEqual(store.tripRepo.loadAll().first { $0.id == trip.id }?.pathPoints.count, 4)
+        XCTAssertEqual(onDisk(trip.id)?.pathPoints.count, 4)
+    }
+
+    func testDurableSaveAndClearingMemoryKeepBatchedPoints() throws {
+        let (store, trip) = makeStore(interval: 60)
+        store.updateDeviceOwnedTrip(withPoints(trip, 1))
+        store.updateDeviceOwnedTrip(withPoints(trip, 5))
+        var paused = try XCTUnwrap(store.deviceOwnedTrip)
+        paused.isPaused = true
+        try store.updateTripOrThrow(paused)
+        XCTAssertEqual(onDisk(trip.id)?.pathPoints.count, 5)
+        XCTAssertEqual(onDisk(trip.id)?.isPaused, true)
+
+        store.updateDeviceOwnedTrip(withPoints(paused, 7))
+        store.clearInMemoryState()
+        XCTAssertEqual(onDisk(trip.id)?.pathPoints.count, 7, "Sign-out/vineyard reset flushes first")
+    }
+
+    func testZeroIntervalWritesEveryFix() throws {
+        let (store, trip) = makeStore(interval: 0)
+        store.updateDeviceOwnedTrip(withPoints(trip, 1))
+        store.updateDeviceOwnedTrip(withPoints(trip, 2))
+        XCTAssertEqual(onDisk(trip.id)?.pathPoints.count, 2)
+    }
+}

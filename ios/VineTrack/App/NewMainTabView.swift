@@ -65,6 +65,8 @@ struct NewMainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: Int = 0
     @State private var isSweeping: Bool = false
+    /// Last automatic Trip-only sync while this device is recording a Trip.
+    @State private var lastLiveTripSyncAt: Date = .distantPast
     @State private var isSweepRequested: Bool = false
     @State private var isManualDiagnosticRequested: Bool = false
     @State private var portalPromptTrigger: PortalPromptTrigger?
@@ -232,7 +234,7 @@ struct NewMainTabView: View {
             // (network-independent) so the template picker works offline.
             sprayJobTemplateService.loadCached(for: store.selectedVineyardId)
             await accessControl.refresh(for: store.selectedVineyardId, auth: auth)
-            await runFullSweep(alertRefresh: .generate)
+            await automaticSweep(alertRefresh: .generate)
             await prefetchOptimalRipenessWeather()
         }
         // Periodic active sync: every 3 minutes while the app is foregrounded
@@ -244,7 +246,7 @@ struct NewMainTabView: View {
                 try? await Task.sleep(for: .seconds(180))
                 if Task.isCancelled { return }
                 if scenePhase != .active { return }
-                await runFullSweep(alertRefresh: .refresh)
+                await automaticSweep(alertRefresh: .refresh)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .vineTrackGoHome)) { _ in
@@ -267,13 +269,15 @@ struct NewMainTabView: View {
             alertService.pendingNavigation = nil
         }
         .onChange(of: scenePhase) { _, newPhase in
+            // Batched live-Trip GPS points reach disk before iOS can suspend us.
+            if newPhase != .active { store.flushLiveTripWrite() }
             if newPhase == .active {
                 // A device-owned trip must keep recording after a relaunch or
                 // return to foreground even if the operator never reopens the
                 // Trip tab. No-op when nothing is active or already tracking.
                 tripTracking.resumeIfNeeded()
                 Task {
-                    await runFullSweep(alertRefresh: .refresh)
+                    await automaticSweep(alertRefresh: .refresh)
                     await prefetchOptimalRipenessWeather()
                 }
                 Task { await appNoticeService.refresh() }
@@ -288,7 +292,7 @@ struct NewMainTabView: View {
                 return
             }
             Task {
-                await runFullSweep(alertRefresh: .refresh)
+                await automaticSweep(alertRefresh: .refresh)
                 await prefetchOptimalRipenessWeather()
             }
         }
@@ -389,6 +393,31 @@ struct NewMainTabView: View {
     /// Runs a full sync sweep across every wired service. Overlapping calls
     /// are coalesced into one follow-up sweep. A vineyard switch during a sweep
     /// therefore cannot be lost or run in parallel with the previous vineyard.
+    /// Trip mode: while this device records a Trip, automatic syncs stay out
+    /// of the way of the live screen. Nothing syncs automatically for the
+    /// first five minutes; after that only Trip rows sync, at most every ten
+    /// minutes. Everything else is queued locally and goes in the full sweep
+    /// that runs as soon as the Trip ends. "Sync now" is never deferred.
+    static let liveTripQuietStart: TimeInterval = 5 * 60
+    static let liveTripSyncInterval: TimeInterval = 10 * 60
+
+    private func automaticSweep(alertRefresh: AlertRefreshMode) async {
+        guard let trip = store.deviceOwnedTrip else {
+            await runFullSweep(alertRefresh: alertRefresh)
+            return
+        }
+        let now = Date()
+        guard network.isOnline,
+              now.timeIntervalSince(trip.startTime) >= Self.liveTripQuietStart,
+              now.timeIntervalSince(lastLiveTripSyncAt) >= Self.liveTripSyncInterval,
+              !isSweeping, !tripSync.isSyncing else { return }
+        lastLiveTripSyncAt = now
+        let span = PerformanceCapture.shared.begin("trip mode Trip-only sync")
+        defer { PerformanceCapture.shared.end(span) }
+        await tripSync.syncTripsForSelectedVineyard()
+        syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes, heldSprayPairs: heldLegacySprayPairs)
+    }
+
     private func runFullSweep(
         alertRefresh: AlertRefreshMode,
         startsManualDiagnostic: Bool = false
@@ -1989,9 +2018,9 @@ private struct TripLifecycleSyncTriggers: ViewModifier {
             .onChange(of: store.deviceActiveTripId) { old, new in
                 guard old != new, network.isOnline, scenePhase == .active else { return }
                 if new != nil {
-                    // Start: Trip rows only. A full sweep (pins, blocks,
-                    // chemicals, images…) would compete with the first GPS fixes.
-                    Task { await tripSync.syncTripsForSelectedVineyard() }
+                    // Start: no upload. Trip mode keeps the first minutes of
+                    // recording free of network and merge work; the Trip is
+                    // saved locally and uploads on the Trip-mode cadence.
                 } else {
                     // End: the full sweep keeps the dependency order (tank
                     // actuals before the final ended state) and coalesces with
