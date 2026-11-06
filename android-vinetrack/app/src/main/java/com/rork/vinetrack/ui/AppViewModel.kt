@@ -716,6 +716,12 @@ data class AppUiState(
     val rowLockConfidence: Double = 0.0,
     /** True when the row lock meets the iOS 0.6 "confident" threshold. */
     val rowLockIsConfident: Boolean = false,
+    /**
+     * Spray trip driven down rows for a while with no tank running. Rows are
+     * then not credited to a tank (and planned passes don't auto-complete), so
+     * the trip screen prompts the operator to start the tank.
+     */
+    val sprayNoTankWarning: Boolean = false,
     val workTaskError: String? = null,
     val workTaskBusy: Boolean = false,
     /**
@@ -2818,6 +2824,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * only computes/exposes state — it never writes `driving_row_number`.
      */
     private val rowLockTracker = RowLockTracker()
+
+    /** iOS-parity Free Drive automatic row completion (see [com.rork.vinetrack.data.FreeDriveRowCompletion]). */
+    private val freeDriveRows = com.rork.vinetrack.data.FreeDriveRowCompletion()
+    private var sprayNoTankDrivingSinceMs: Long? = null
     private var pointsSinceSave = 0
     private var lastSaveMs = 0L
     // Local-snapshot throttle (Tier-A Stage A): persists the active trip on-device
@@ -10431,6 +10441,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         pointsSinceLocalSave = 0
         lastLocalSaveMs = System.currentTimeMillis()
         rowLockTracker.reset()
+        freeDriveRows.reset()
+        sprayNoTankDrivingSinceMs = null
         _ui.update {
             it.copy(
                 isTracking = true,
@@ -10495,6 +10507,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         boundary.livePath?.let { livePath ->
             rowLockTracker.update(livePath, boundary.isInCorridor, sample.timestampMs)
         }
+        val noTankWarning = updateSprayNoTankWarning(trip, sample)
         _ui.update {
             it.copy(
                 latestBearingDegrees = sample.bearingDegrees,
@@ -10506,8 +10519,48 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 currentDrivingPathNumber = rowLockTracker.drivingPathNumber,
                 rowLockConfidence = rowLockTracker.confidence,
                 rowLockIsConfident = rowLockTracker.isConfident,
+                sprayNoTankWarning = noTankWarning,
             )
         }
+        autoCompleteFreeDriveRow(trip, boundary, sample)
+    }
+
+    /**
+     * iOS parity: Free Drive trips complete rows automatically from GPS. Only for an
+     * active, tracking, unpaused legacy Free Drive trip (no planned sequence); planned
+     * routes use occurrence evidence instead. Saved through [persistCoverage], so the
+     * row is attributed to the running tank and synced like a manual tick.
+     */
+    private fun autoCompleteFreeDriveRow(trip: Trip, boundary: TripRowLockResolution, sample: LocationTracker.MovementSample) {
+        val st = _ui.value
+        if (st.activeTrip?.id != trip.id || !st.isTracking || trip.isPaused || trip.id in st.locallyEndedTripIds ||
+            trip.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY || trip.rowSequence.isNotEmpty()) return
+        val resolution = boundary.resolution ?: return
+        val hit = resolution.rowHit ?: return
+        val livePath = boundary.livePath ?: return
+        val offset = (resolution.globalRowNumber ?: hit.rowNumber) - hit.rowNumber
+        val done = (trip.completedPaths.orEmpty() + trip.skippedPaths.orEmpty()).toSet()
+        val path = freeDriveRows.observe(
+            livePath = livePath, inCorridor = boundary.isInCorridor,
+            perpendicularM = hit.perpendicularDistanceM, rowWidthM = hit.rowWidthM,
+            latitude = sample.latitude, longitude = sample.longitude, timeMs = sample.timestampMs,
+            rows = resolution.paddock.rows.orEmpty(), localOffset = offset, alreadyDone = done,
+        ) ?: return
+        Log.i("VineTrackTrip", "Free Drive auto-completed path $path")
+        persistCoverage(trip.id, trip.completedPaths.orEmpty() + path, trip.skippedPaths.orEmpty(),
+            trip.sequenceIndex, emptyList(), completedNow = path)
+    }
+
+    /**
+     * True once a spray trip has been driven confidently down rows for
+     * [com.rork.vinetrack.data.SprayNoTankWarning.DELAY_MS] with no tank running.
+     */
+    private fun updateSprayNoTankWarning(trip: Trip, sample: LocationTracker.MovementSample): Boolean {
+        val result = com.rork.vinetrack.data.SprayNoTankWarning.evaluate(
+            trip = trip, drivingRow = rowLockTracker.isConfident && (sample.speedMetresPerSecond ?: 0.0) >= 0.5,
+            nowMs = sample.timestampMs, since = sprayNoTankDrivingSinceMs)
+        sprayNoTankDrivingSinceMs = result.since
+        return result.show
     }
 
     private fun updateOccurrenceTraversal(tripId: String, sample: LocationTracker.MovementSample?) {
@@ -10589,6 +10642,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         _ui.update { it.copy(trips = it.trips.map { trip -> if (trip.id == after.id) after else trip }, tripError = null) }
         rowLockTracker.reset()
+        freeDriveRows.reset()
+        sprayNoTankDrivingSinceMs = null
         _ui.update { it.copy(currentDrivingPathNumber = null, rowLockConfidence = 0.0, rowLockIsConfident = false) }
         if (state.isOnline) replayPhase5Writes()
         onResult(true)
@@ -10598,6 +10653,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun clearRowLockState() {
         occurrenceTraversal.reset(System.currentTimeMillis())
         rowLockTracker.reset()
+        freeDriveRows.reset()
+        sprayNoTankDrivingSinceMs = null
         _ui.update {
             it.copy(
                 latestBearingDegrees = null,
@@ -10609,6 +10666,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 currentDrivingPathNumber = null,
                 rowLockConfidence = 0.0,
                 rowLockIsConfident = false,
+                sprayNoTankWarning = false,
             )
         }
     }
