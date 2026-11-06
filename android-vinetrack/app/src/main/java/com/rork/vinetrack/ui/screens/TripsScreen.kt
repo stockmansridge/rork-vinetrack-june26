@@ -245,6 +245,7 @@ import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.data.HeldTripRecovery.Reason as HeldReason
 import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
@@ -356,6 +357,9 @@ fun TripsScreen(
                 onSelectActive = { onSelectedTripIdChange(it.id) },
                 onReturnToTrip = vm.deviceTripVineyardIdOrNull()?.takeIf { it != state.selectedVineyardId }
                     ?.let { ownerVineyard -> { vm.selectVineyard(ownerVineyard) } },
+                held = remember(state.trips, state.deviceActiveTripId, state.locallyEndedTripIds,
+                    state.selectedVineyardId, state.pendingSyncItems) { vm.heldTrip() },
+                vm = vm,
             )
         } else {
             TripDetailView(
@@ -421,7 +425,15 @@ private fun tripFunctionIcon(raw: String): ImageVector = when (raw) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: () -> Unit, onSelectActive: (Trip) -> Unit, onReturnToTrip: (() -> Unit)?) {
+private fun TripListView(
+    state: AppUiState,
+    onSelect: (Trip) -> Unit,
+    onStart: () -> Unit,
+    onSelectActive: (Trip) -> Unit,
+    onReturnToTrip: (() -> Unit)?,
+    held: com.rork.vinetrack.data.HeldTripRecovery.Held? = null,
+    vm: AppViewModel? = null,
+) {
     val vine = LocalVineColors.current
     val active = state.activeTrip
     val finished = remember(state.trips, active?.id) { state.trips.filter { it.id != active?.id } }
@@ -582,7 +594,9 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
             )
         },
         bottomBar = {
-            if (state.deviceActiveTripId == null && state.trips.isNotEmpty()) {
+            // A Trip held on this device refuses every new start, so don't offer one;
+            // the recovery card explains what to do instead.
+            if (state.deviceActiveTripId == null && state.trips.isNotEmpty() && held == null) {
                 Surface(color = vine.appBackground) {
                     Button(
                         onClick = onStart,
@@ -599,7 +613,15 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
                 }
             }
         },
-    ) { padding ->
+    ) { scaffoldPadding ->
+      Column(Modifier.fillMaxSize().padding(scaffoldPadding)) {
+        if (held != null && vm != null) {
+            HeldTripCard(held = held, state = state, vm = vm,
+                tripInList = held.tripId?.let { id -> state.trips.firstOrNull { it.id == id } },
+                onOpenTrip = onSelect)
+        }
+        val padding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+        Box(Modifier.fillMaxWidth().weight(1f)) {
         when {
             state.isLoadingVineyardData && state.trips.isEmpty() -> {
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
@@ -724,8 +746,78 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
                 }
             }
         }
+        }
+      }
     }
 }
+
+/**
+ * Shown when this device holds a Trip that blocks Start Trip but isn't the
+ * visible active Trip (ended here and still syncing, another vineyard, not
+ * restored, unreadable). Every action is non-destructive: nothing here clears
+ * the saved Trip or its queued changes.
+ */
+@Composable
+private fun HeldTripCard(
+    held: com.rork.vinetrack.data.HeldTripRecovery.Held,
+    state: AppUiState,
+    vm: AppViewModel,
+    tripInList: Trip?,
+    onOpenTrip: (Trip) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val clipboard = LocalClipboardManager.current
+    var copied by remember(held) { mutableStateOf(false) }
+    val reason = held.reason
+    VineyardCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(if (reason == HeldReason.END_SYNCING) Icons.Filled.Schedule else Icons.Filled.DirectionsCar,
+                    contentDescription = null, tint = VineColors.Warning)
+                Text(com.rork.vinetrack.data.HeldTripRecovery.cardTitle(reason),
+                    fontWeight = FontWeight.Bold, fontSize = 16.sp, color = vine.textPrimary)
+            }
+            val label = listOfNotNull(held.tripLabel, held.startTime?.let { "started ${formatTripStart(it)}" })
+                .joinToString(" · ")
+            if (label.isNotBlank()) Text(label, fontSize = 13.sp, color = vine.textSecondary)
+            Text(com.rork.vinetrack.data.HeldTripRecovery.cardMessage(reason, vm.heldTripVineyardName(held)),
+                fontSize = 13.sp, color = vine.textPrimary)
+            if (reason == HeldReason.END_SYNCING && !state.isOnline) {
+                Text("You're offline. It will sync automatically when connection returns.",
+                    fontSize = 12.sp, color = vine.textSecondary)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                when (reason) {
+                    HeldReason.END_SYNCING -> {
+                        Button(onClick = { vm.syncHeldTrip() }, enabled = state.isOnline && !state.isRetryingSync,
+                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary)) {
+                            Text(if (state.isRetryingSync) "Syncing…" else "Sync now")
+                        }
+                        if (tripInList != null) {
+                            TextButton(onClick = { onOpenTrip(tripInList) }) { Text("View Trip") }
+                        }
+                    }
+                    HeldReason.OTHER_VINEYARD, HeldReason.NOT_SHOWN -> {
+                        Button(onClick = {
+                            if (reason == HeldReason.NOT_SHOWN && tripInList != null) onOpenTrip(tripInList) else vm.openHeldTrip(held)
+                        }, colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary)) { Text("Open Trip") }
+                    }
+                    HeldReason.OTHER_ACCOUNT, HeldReason.UNREADABLE -> Unit
+                }
+                TextButton(onClick = {
+                    clipboard.setText(AnnotatedString(vm.heldTripDiagnostics(held)))
+                    copied = true
+                }) { Text(if (copied) "Copied" else "Copy diagnostics") }
+            }
+        }
+    }
+}
+
+private fun formatTripStart(iso: String): String = runCatching {
+    val instant = java.time.OffsetDateTime.parse(iso).toInstant()
+    java.time.format.DateTimeFormatter.ofPattern("d MMM, h:mm a")
+        .withZone(java.time.ZoneId.systemDefault()).format(instant)
+}.getOrDefault(iso)
 
 @Composable
 private fun TypeChip(label: String, selected: Boolean, onClick: () -> Unit) {
@@ -4801,6 +4893,9 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
     // tripError and returned, but tripError is only rendered on an empty trip
     // list, so a blocked finish looked like a completely dead button.
     var finishBlocked by remember { mutableStateOf<String?>(null) }
+    // Spray with planned tanks but none sprayed: ask before ending (iOS parity).
+    var showNoTankConfirmation by remember { mutableStateOf(false) }
+    var noTankConfirmed by remember { mutableStateOf(false) }
 
     val endEngineHours = endEngineHoursText.trim().replace(",", ".").toDoubleOrNull()
     // Block finishing only when both readings exist and the end reading is below
@@ -4903,30 +4998,49 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
                 )
             }
 
+            fun startFinish() {
+                saving = true
+                finishBlocked = null
+                val extra = reviewCompletes.toList()
+                val savedEndHours = if (trip.shouldCaptureEndEngineHours) endEngineHours else null
+                val finish: ((Boolean) -> Unit) -> Unit = { callback ->
+                    if (trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY)
+                        vm.endTrip(notes.trim().ifBlank { null }, savedEndHours, callback)
+                    else vm.endTripWithRowReview(extra, notes.trim().ifBlank { null }, savedEndHours, callback)
+                }
+                finish { ok ->
+                    saving = false
+                    if (ok) {
+                        onEnded()
+                    } else {
+                        // Keep the sheet open carrying the exact reason and
+                        // required action, rather than closing over a trip
+                        // that is in fact still running.
+                        finishBlocked = vm.ui.value.tripError
+                            ?: "Couldn't finish the trip. Please try again."
+                    }
+                }
+            }
+
+            if (showNoTankConfirmation) {
+                AlertDialog(
+                    onDismissRequest = { showNoTankConfirmation = false },
+                    title = { Text("No tank recorded") },
+                    text = { Text("No tank was recorded for this spray. Ending now saves it without tank times or amounts.") },
+                    confirmButton = {
+                        TextButton(onClick = { showNoTankConfirmation = false; noTankConfirmed = true; startFinish() }) {
+                            Text("End Anyway", color = VineColors.Destructive)
+                        }
+                    },
+                    dismissButton = { TextButton(onClick = { showNoTankConfirmation = false }) { Text("Cancel") } },
+                )
+            }
+
             Spacer(Modifier.height(16.dp))
             Button(
                 onClick = {
-                    saving = true
-                    finishBlocked = null
-                    val extra = reviewCompletes.toList()
-                    val savedEndHours = if (trip.shouldCaptureEndEngineHours) endEngineHours else null
-                    val finish: ((Boolean) -> Unit) -> Unit = { callback ->
-                        if (trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY)
-                            vm.endTrip(notes.trim().ifBlank { null }, savedEndHours, callback)
-                        else vm.endTripWithRowReview(extra, notes.trim().ifBlank { null }, savedEndHours, callback)
-                    }
-                    finish { ok ->
-                        saving = false
-                        if (ok) {
-                            onEnded()
-                        } else {
-                            // Keep the sheet open carrying the exact reason and
-                            // required action, rather than closing over a trip
-                            // that is in fact still running.
-                            finishBlocked = vm.ui.value.tripError
-                                ?: "Couldn't finish the trip. Please try again."
-                        }
-                    }
+                    if (vm.endWouldRecordNoSprayedTank() && !noTankConfirmed) showNoTankConfirmation = true
+                    else startFinish()
                 },
                 enabled = !saving && !engineHoursInvalid,
                 modifier = Modifier.fillMaxWidth(),

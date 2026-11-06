@@ -385,6 +385,12 @@ enum class PendingSyncDisplayState(val label: String) {
     WaitingForTripStart("Waiting for trip start"),
     /** A trip-end marker is held until same-trip GPS/row/tank/metadata changes sync. */
     WaitingForTripChanges("Waiting for trip changes"),
+    /**
+     * Trip labour facts are captured at trip start and deliberately kept
+     * pending until the trip ends and the server finalises them. This is the
+     * normal lifecycle, not a stuck item.
+     */
+    HeldUntilTripEnds("Held until trip ends"),
     /** A real transient failure that will be retried automatically. */
     Retrying("Retrying"),
     /** Genuinely blocked — needs the user's attention. */
@@ -3588,6 +3594,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             entityType == PendingEntityType.GROWTH_RECORD && opType == PendingOpType.DELETE -> "Growth delete"
             entityType == PendingEntityType.PIN && opType == PendingOpType.UPDATE -> "Pin update"
             entityType == PendingEntityType.PIN -> "New pin"
+            entityType == PendingEntityType.TRIP_LABOUR -> "Trip labour"
             else -> "Pending change"
         }
         val displayState = deriveDisplayState(unresolvedStartTripIds, unresolvedTripChangeIds)
@@ -3681,7 +3688,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         unresolvedStartTripIds: Set<String>,
         unresolvedTripChangeIds: Set<String>,
     ): PendingSyncDisplayState = when (status) {
-        PendingWriteStatus.PENDING -> PendingSyncDisplayState.Pending
+        PendingWriteStatus.PENDING ->
+            if (entityType == PendingEntityType.TRIP_LABOUR) PendingSyncDisplayState.HeldUntilTripEnds
+            else PendingSyncDisplayState.Pending
         PendingWriteStatus.IN_PROGRESS -> PendingSyncDisplayState.Syncing
         PendingWriteStatus.BLOCKED -> PendingSyncDisplayState.NeedsAttention
         PendingWriteStatus.FAILED -> {
@@ -3717,6 +3726,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             PendingSyncDisplayState.WaitingForTripStart,
             PendingSyncDisplayState.WaitingForTripChanges ->
                 return "Waiting for earlier trip changes to sync first."
+            PendingSyncDisplayState.HeldUntilTripEnds ->
+                return "Labour for this trip is saved. It finishes syncing after the trip is ended and the end has synced."
             else -> Unit
         }
         if (lastError.isNullOrBlank()) {
@@ -9241,17 +9252,88 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val owned = snapshot?.takeIf { it.trip.isActive }
         val hasRetainedClaim = runCatching { activeTripStore.hasActiveClaim() }.getOrDefault(true)
         if (!hasRetainedClaim && _ui.value.deviceActiveTripId == null) return true
-        if (snapshot == null && hasRetainedClaim) {
-            onBlocked("Saved Trip evidence could not be read. Keep this installation and recover/sync the original Trip before starting another.")
+        // Never refuse silently: a retained claim the operator can't see (ended
+        // locally and still syncing, another vineyard, not restored) gets a
+        // message that names the reason and points at the Trips recovery card.
+        heldTripFrom(hasRetainedClaim, snapshot)?.let { held ->
+            onBlocked(com.rork.vinetrack.data.HeldTripRecovery.startBlockedMessage(held, vineyardName(held.vineyardId)))
             return false
         }
-        if (owned != null && owned.ownerUserId != session.userId) {
-            onBlocked("Trip already in progress. This device already has an active trip. Sign back in as the operator who started it, or finish that trip before starting another.")
-            return false
-        }
-        val name = _ui.value.vineyards.firstOrNull { it.id == owned?.vineyardId }?.name ?: "another vineyard"
+        val name = vineyardName(owned?.vineyardId) ?: "another vineyard"
         onBlocked("Trip already in progress. You already have an active trip in $name. Finish or return to that trip before starting another.")
         return false
+    }
+
+    private fun vineyardName(id: String?): String? =
+        id?.let { vid -> _ui.value.vineyards.firstOrNull { it.id == vid }?.name }
+
+    private fun tripEndedLocally(tripId: String?): Boolean = tripId != null &&
+        (tripId in _ui.value.locallyEndedTripIds || runCatching {
+            pendingWrites.list().any { it.clientId == tripId &&
+                it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_END &&
+                it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }
+        }.getOrDefault(false))
+
+    private fun heldTripFrom(hasClaim: Boolean, snapshot: ActiveTripStore.Snapshot?): com.rork.vinetrack.data.HeldTripRecovery.Held? =
+        com.rork.vinetrack.data.HeldTripRecovery.classify(
+            hasClaim = hasClaim,
+            snapshot = snapshot,
+            signedInUserId = session.userId,
+            selectedVineyardId = _ui.value.selectedVineyardId,
+            visibleActiveTripId = _ui.value.activeTrip?.id,
+            endedLocally = tripEndedLocally(snapshot?.trip?.id),
+        )
+
+    /**
+     * The on-device Trip that blocks Start Trip but isn't the visible active
+     * Trip, or null. Read-only; drives the Trips screen recovery card.
+     */
+    fun heldTrip(): com.rork.vinetrack.data.HeldTripRecovery.Held? = runCatching {
+        heldTripFrom(activeTripStore.hasActiveClaim(), activeTripStore.load())
+    }.getOrElse { com.rork.vinetrack.data.HeldTripRecovery.Held(
+        com.rork.vinetrack.data.HeldTripRecovery.Reason.UNREADABLE, null, null, null, null, null) }
+
+    fun heldTripVineyardName(held: com.rork.vinetrack.data.HeldTripRecovery.Held): String? = vineyardName(held.vineyardId)
+
+    /**
+     * Recovery card "Open Trip": switch to the Trip's own vineyard, or reload the
+     * selected vineyard so [restoreActiveTrip] runs again. Never clears the claim.
+     */
+    fun openHeldTrip(held: com.rork.vinetrack.data.HeldTripRecovery.Held) {
+        val vineyardId = held.vineyardId
+        if (vineyardId != null && vineyardId != _ui.value.selectedVineyardId) selectVineyard(vineyardId)
+        else refresh()
+    }
+
+    /** Recovery card "Sync now": the full ordered replay pipeline, nothing selective. */
+    fun syncHeldTrip() {
+        if (!_ui.value.isOnline) {
+            _ui.update { it.copy(tripError = "You're offline. The Trip is saved on this device and will sync when connection returns.") }
+            return
+        }
+        retryPendingSync()
+    }
+
+    /** Support-safe text: ids, states and timestamps only. No payloads, tokens or rates. */
+    fun heldTripDiagnostics(held: com.rork.vinetrack.data.HeldTripRecovery.Held?): String = buildString {
+        fun ts(ms: Long?) = if (ms != null && ms > 0L) java.time.Instant.ofEpochMilli(ms).toString() else "—"
+        appendLine("VineTrack Android ${com.rork.vinetrack.BuildConfig.VERSION_NAME} (${com.rork.vinetrack.BuildConfig.VERSION_CODE})")
+        appendLine("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE}")
+        appendLine("Online: ${_ui.value.isOnline}")
+        appendLine("Held reason: ${held?.reason ?: "none"}")
+        appendLine("Saved Trip id: ${held?.tripId ?: "—"}")
+        appendLine("Saved Trip vineyard is selected: ${held?.vineyardId != null && held.vineyardId == _ui.value.selectedVineyardId}")
+        appendLine("Saved Trip start: ${held?.startTime ?: "—"}")
+        appendLine("Saved Trip last saved: ${ts(held?.savedAtMs)}")
+        appendLine("Device-owned Trip id: ${_ui.value.deviceActiveTripId ?: "none"}")
+        appendLine("Visible active Trip id: ${_ui.value.activeTrip?.id ?: "none"}")
+        val writes = runCatching { pendingWrites.list() }.getOrDefault(emptyList())
+        val forTrip = writes.filter { held?.tripId != null && it.clientId == held.tripId }
+        appendLine("Pending items for this Trip: ${forTrip.size} (all pending: ${writes.size})")
+        forTrip.sortedBy { it.createdAt }.forEach {
+            appendLine("- ${it.entityType}/${it.opType} status=${it.status} attempts=${it.attemptCount} updated=${ts(it.updatedAt)} error=${if (it.lastError.isNullOrBlank()) "none" else "recorded"}")
+        }
+        append(com.rork.vinetrack.data.CrashLog.summary(getApplication<android.app.Application>()))
     }
 
     private fun claimDeviceTrip(trip: Trip): Boolean {
@@ -9724,13 +9806,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             onResult(false)
             return
         }
-        val tripId = repaired.id
-        val capturedPoints = tracker?.points?.toList() ?: repaired.pathPoints ?: emptyList()
+        // Only once End is allowed: close tanks that were filled but never sprayed.
+        val ending = closeFillOnlyTanksForEnd(repaired) ?: run { onResult(false); return }
+        val tripId = ending.id
+        val capturedPoints = tracker?.points?.toList() ?: ending.pathPoints ?: emptyList()
         val capturedDistance = tracker?.distanceMetres ?: trip.totalDistance ?: 0.0
         val owner = session.userId
         val vineyard = _ui.value.selectedVineyardId
         if (owner == null || vineyard == null || runCatching { activeTripStore.saveDurably(
-                owner, vineyard, trip.copy(pathPoints = capturedPoints, totalDistance = capturedDistance)) }.getOrDefault(false) == false) {
+                owner, vineyard, ending.copy(pathPoints = capturedPoints, totalDistance = capturedDistance)) }.getOrDefault(false) == false) {
             _ui.update { it.copy(tripError = "Couldn't save the finished trip to this device. It's still running; please free up storage and retry.") }
             onResult(false)
             return
@@ -13287,6 +13371,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             emptyList(), source = "endReview") }
     }
 
+    /**
+     * iOS parity (End Trip fill-only closure): durably closes tanks that were
+     * filled but never sprayed at their own fill end, publishes them and queues
+     * the TRIP_TANK marker (which TRIP_END replay waits behind). Returns the trip
+     * to end, unchanged when nothing needed closing, or null when the closure
+     * could not be saved (the Trip keeps running).
+     */
+    private fun closeFillOnlyTanksForEnd(trip: Trip): Trip? {
+        val closed = TankSessionLifecycle.closingFillOnlySessionsBeforeTripEnd(trip)
+        if (closed == trip) return trip
+        val owner = session.userId
+        if (owner == null || !runCatching { activeTripStore.saveDurably(owner, trip.vineyardId, closed) }.getOrDefault(false)) {
+            _ui.update { it.copy(tripError = "Couldn't save the tank closure on this device. The trip is still running; free up storage and retry.") }
+            return null
+        }
+        _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) closed else it }) }
+        tripTankSync.enqueue(closed)
+        Log.i("VineTrackTrip", "End Trip closed fill-only tank at its fill end")
+        return closed
+    }
+
+    /** True when finishing the active Trip now would save a spray with planned tanks but none sprayed. */
+    fun endWouldRecordNoSprayedTank(): Boolean =
+        _ui.value.activeTrip?.let(TankSessionLifecycle::endWouldRecordNoSprayedTank) == true
+
     private fun endOccurrenceTrip(trip: Trip, notes: String?, hours: Double?, onResult: (Boolean) -> Unit) {
         try {
             check(trip.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE) { trip.coverageMessage ?: "Update required." }
@@ -13296,6 +13405,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             require(hours == null || (hours.isFinite() && hours >= (trip.startEngineHours ?: 0.0)))
             val owner = session.userId ?: error("Account access required.")
+            // Only once End is allowed: close tanks that were filled but never sprayed.
+            val trip = closeFillOnlyTanksForEnd(trip) ?: error("Couldn't save the tank closure on this device. Trip is retained.")
             val proposedEndTime = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS).toString()
             val captured = trip.copy(pathPoints = tracker?.points?.toList() ?: trip.pathPoints,
                 totalDistance = tracker?.distanceMetres ?: trip.totalDistance, completionNotes = notes, endEngineHours = hours)

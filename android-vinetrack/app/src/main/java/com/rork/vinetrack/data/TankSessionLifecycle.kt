@@ -95,6 +95,48 @@ object TankSessionLifecycle {
         return trip.copy(activeTankNumber = null, isFillingTank = false, fillingTankNumber = null)
     }
 
+    /**
+     * True for a tank that was (or is being) sprayed, as opposed to one that was
+     * only filled. Same rule [isOpenSpray] uses for running tanks (iOS parity).
+     */
+    fun wasSprayed(session: TankSession): Boolean {
+        if (session.fillStartTime == null || session.startRow != null || session.startTime == null) return true
+        val fillEnd = session.fillEndEpochMs ?: return false
+        return (session.startEpochMs ?: Long.MIN_VALUE) >= fillEnd
+    }
+
+    /**
+     * End Trip closure for tanks that were filled but never sprayed (iOS parity,
+     * `closingFillOnlySessionsBeforeTripEnd`). Such a session has a start time and
+     * no end time, which the server and Portal treat as an unfinished tank. It is
+     * closed at its own recorded fill end (never a new time), so the fill
+     * duration is kept and it stays visibly fill-only (no start row). A running
+     * fill is never closed here. Call only once the End gate has passed.
+     */
+    fun closingFillOnlySessionsBeforeTripEnd(trip: Trip): Trip {
+        if (!trip.isActive || !trip.endTime.isNullOrBlank() || trip.isFillingTank) return trip
+        var changed = false
+        val sessions = trip.tankSessions.map { session ->
+            val fillEnd = session.fillEndEpochMs
+            val start = session.startEpochMs
+            if (session.endTime == null && !wasSprayed(session) &&
+                fillEnd != null && start != null && fillEnd >= start) {
+                changed = true
+                session.copy(endTime = session.fillEndTime)
+            } else session
+        }
+        return if (changed) trip.copy(tankSessions = sessions) else trip
+    }
+
+    /**
+     * True when ending now would save a spray Trip with planned tanks but no
+     * sprayed tank. The server's `admin_end_trip_after_tanks` refuses that, so
+     * the UI asks the operator to confirm instead of ending silently.
+     */
+    fun endWouldRecordNoSprayedTank(trip: Trip): Boolean =
+        trip.tripFunction == "spraying" && (trip.totalTanks ?: 0) > 0 &&
+            trip.tankSessions.none(::wasSprayed)
+
     fun isOpenSpray(session: TankSession): Boolean {
         if (session.endTime != null) return false
         if (session.fillStartTime == null || session.startRow != null || session.startTime == null) return true

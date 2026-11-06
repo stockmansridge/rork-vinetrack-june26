@@ -18,6 +18,7 @@ import com.rork.vinetrack.ui.theme.AppTheme
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.rork.vinetrack.data.CrashLog.install(applicationContext)
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             setRecentsScreenshotEnabled(false)
