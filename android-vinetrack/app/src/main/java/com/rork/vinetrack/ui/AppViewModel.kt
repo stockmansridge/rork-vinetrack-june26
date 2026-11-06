@@ -9806,13 +9806,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             onResult(false)
             return
         }
-        val tripId = repaired.id
-        val capturedPoints = tracker?.points?.toList() ?: repaired.pathPoints ?: emptyList()
+        // Only once End is allowed: close tanks that were filled but never sprayed.
+        val ending = closeFillOnlyTanksForEnd(repaired) ?: run { onResult(false); return }
+        val tripId = ending.id
+        val capturedPoints = tracker?.points?.toList() ?: ending.pathPoints ?: emptyList()
         val capturedDistance = tracker?.distanceMetres ?: trip.totalDistance ?: 0.0
         val owner = session.userId
         val vineyard = _ui.value.selectedVineyardId
         if (owner == null || vineyard == null || runCatching { activeTripStore.saveDurably(
-                owner, vineyard, trip.copy(pathPoints = capturedPoints, totalDistance = capturedDistance)) }.getOrDefault(false) == false) {
+                owner, vineyard, ending.copy(pathPoints = capturedPoints, totalDistance = capturedDistance)) }.getOrDefault(false) == false) {
             _ui.update { it.copy(tripError = "Couldn't save the finished trip to this device. It's still running; please free up storage and retry.") }
             onResult(false)
             return
@@ -13369,6 +13371,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             emptyList(), source = "endReview") }
     }
 
+    /**
+     * iOS parity (End Trip fill-only closure): durably closes tanks that were
+     * filled but never sprayed at their own fill end, publishes them and queues
+     * the TRIP_TANK marker (which TRIP_END replay waits behind). Returns the trip
+     * to end, unchanged when nothing needed closing, or null when the closure
+     * could not be saved (the Trip keeps running).
+     */
+    private fun closeFillOnlyTanksForEnd(trip: Trip): Trip? {
+        val closed = TankSessionLifecycle.closingFillOnlySessionsBeforeTripEnd(trip)
+        if (closed == trip) return trip
+        val owner = session.userId
+        if (owner == null || !runCatching { activeTripStore.saveDurably(owner, trip.vineyardId, closed) }.getOrDefault(false)) {
+            _ui.update { it.copy(tripError = "Couldn't save the tank closure on this device. The trip is still running; free up storage and retry.") }
+            return null
+        }
+        _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) closed else it }) }
+        tripTankSync.enqueue(closed)
+        Log.i("VineTrackTrip", "End Trip closed fill-only tank at its fill end")
+        return closed
+    }
+
+    /** True when finishing the active Trip now would save a spray with planned tanks but none sprayed. */
+    fun endWouldRecordNoSprayedTank(): Boolean =
+        _ui.value.activeTrip?.let(TankSessionLifecycle::endWouldRecordNoSprayedTank) == true
+
     private fun endOccurrenceTrip(trip: Trip, notes: String?, hours: Double?, onResult: (Boolean) -> Unit) {
         try {
             check(trip.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE) { trip.coverageMessage ?: "Update required." }
@@ -13378,6 +13405,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             require(hours == null || (hours.isFinite() && hours >= (trip.startEngineHours ?: 0.0)))
             val owner = session.userId ?: error("Account access required.")
+            // Only once End is allowed: close tanks that were filled but never sprayed.
+            val trip = closeFillOnlyTanksForEnd(trip) ?: error("Couldn't save the tank closure on this device. Trip is retained.")
             val proposedEndTime = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS).toString()
             val captured = trip.copy(pathPoints = tracker?.points?.toList() ?: trip.pathPoints,
                 totalDistance = tracker?.distanceMetres ?: trip.totalDistance, completionNotes = notes, endEngineHours = hours)

@@ -4893,6 +4893,9 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
     // tripError and returned, but tripError is only rendered on an empty trip
     // list, so a blocked finish looked like a completely dead button.
     var finishBlocked by remember { mutableStateOf<String?>(null) }
+    // Spray with planned tanks but none sprayed: ask before ending (iOS parity).
+    var showNoTankConfirmation by remember { mutableStateOf(false) }
+    var noTankConfirmed by remember { mutableStateOf(false) }
 
     val endEngineHours = endEngineHoursText.trim().replace(",", ".").toDoubleOrNull()
     // Block finishing only when both readings exist and the end reading is below
@@ -4995,30 +4998,49 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
                 )
             }
 
+            fun startFinish() {
+                saving = true
+                finishBlocked = null
+                val extra = reviewCompletes.toList()
+                val savedEndHours = if (trip.shouldCaptureEndEngineHours) endEngineHours else null
+                val finish: ((Boolean) -> Unit) -> Unit = { callback ->
+                    if (trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY)
+                        vm.endTrip(notes.trim().ifBlank { null }, savedEndHours, callback)
+                    else vm.endTripWithRowReview(extra, notes.trim().ifBlank { null }, savedEndHours, callback)
+                }
+                finish { ok ->
+                    saving = false
+                    if (ok) {
+                        onEnded()
+                    } else {
+                        // Keep the sheet open carrying the exact reason and
+                        // required action, rather than closing over a trip
+                        // that is in fact still running.
+                        finishBlocked = vm.ui.value.tripError
+                            ?: "Couldn't finish the trip. Please try again."
+                    }
+                }
+            }
+
+            if (showNoTankConfirmation) {
+                AlertDialog(
+                    onDismissRequest = { showNoTankConfirmation = false },
+                    title = { Text("No tank recorded") },
+                    text = { Text("No tank was recorded for this spray. Ending now saves it without tank times or amounts.") },
+                    confirmButton = {
+                        TextButton(onClick = { showNoTankConfirmation = false; noTankConfirmed = true; startFinish() }) {
+                            Text("End Anyway", color = VineColors.Destructive)
+                        }
+                    },
+                    dismissButton = { TextButton(onClick = { showNoTankConfirmation = false }) { Text("Cancel") } },
+                )
+            }
+
             Spacer(Modifier.height(16.dp))
             Button(
                 onClick = {
-                    saving = true
-                    finishBlocked = null
-                    val extra = reviewCompletes.toList()
-                    val savedEndHours = if (trip.shouldCaptureEndEngineHours) endEngineHours else null
-                    val finish: ((Boolean) -> Unit) -> Unit = { callback ->
-                        if (trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY)
-                            vm.endTrip(notes.trim().ifBlank { null }, savedEndHours, callback)
-                        else vm.endTripWithRowReview(extra, notes.trim().ifBlank { null }, savedEndHours, callback)
-                    }
-                    finish { ok ->
-                        saving = false
-                        if (ok) {
-                            onEnded()
-                        } else {
-                            // Keep the sheet open carrying the exact reason and
-                            // required action, rather than closing over a trip
-                            // that is in fact still running.
-                            finishBlocked = vm.ui.value.tripError
-                                ?: "Couldn't finish the trip. Please try again."
-                        }
-                    }
+                    if (vm.endWouldRecordNoSprayedTank() && !noTankConfirmed) showNoTankConfirmation = true
+                    else startFinish()
                 },
                 enabled = !saving && !engineHoursInvalid,
                 modifier = Modifier.fillMaxWidth(),
