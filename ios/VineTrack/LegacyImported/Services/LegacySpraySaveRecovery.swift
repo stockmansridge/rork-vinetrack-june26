@@ -207,6 +207,22 @@ final class LegacySpraySaveRecovery {
             try replace(item)
         }
     }
+    /// Attempts for one Trip ID (GuidedNeverUploadedRepair evidence).
+    func attempts(trip: UUID) throws -> [Attempt] { try attempts().filter { $0.trip.id == trip } }
+
+    /// GuidedNeverUploadedRepair only: removes this Trip's never-accepted paired
+    /// save after the server showed no Trip with this ID and its Spray absent or
+    /// deleted, and after the attempts were archived and read back. Accepted
+    /// pairs or another account's/vineyard's attempts are never removed.
+    func retireReviewedNeverCreated(trip: UUID, owner: UUID, vineyard: UUID) throws {
+        let items = try attempts()
+        let target = items.filter { $0.trip.id == trip }
+        guard !target.isEmpty,
+              target.allSatisfy({ $0.scope.actor == owner && $0.scope.vineyard == vineyard &&
+                                  $0.verified?.status != "accepted" }) else { throw failure }
+        try persistence.saveOrThrow(items.filter { $0.trip.id != trip }, key: Self.key)
+    }
+
     private func replace(_ item: Attempt) throws {
         var items = try attempts()
         guard let index = items.firstIndex(where: { $0.record.id == item.record.id }),

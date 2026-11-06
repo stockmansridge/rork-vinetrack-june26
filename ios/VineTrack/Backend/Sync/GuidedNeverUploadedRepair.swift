@@ -41,6 +41,8 @@ enum GuidedNeverUploadedRepair {
         let queuedUploadFailed: Bool
         let linkedSprayIdsCheckedOnServer: [UUID]
         let serverTripRowsVisible: Int
+        /// Encoded never-accepted paired Save-for-Later attempts for this Trip.
+        var legacySpraySaveAttempts: Data? = nil
     }
 
     nonisolated struct UnlinkedSprayArchive: Codable, Sendable {
@@ -176,8 +178,16 @@ enum GuidedNeverUploadedRepair {
         guard try !TrackedSprayCompletionSync.shared.intents().contains(where: { $0.tripId == tripId }) else {
             throw Refused(explanation: "A Spray completion is recorded for this Trip. It cannot be retired as never started.")
         }
-        guard try !store.isLegacySpraySyncHeld(trip: tripId) else {
-            throw Refused(explanation: "An original spray save for this Trip is still held for its receipt.")
+        // A never-accepted paired Save for Later (Trip + Spray created together
+        // on the server, atomically) is evidence to archive, not a blocker, once
+        // the server proves the Trip absent and its Spray absent or deleted.
+        let legacyRecovery = LegacySpraySaveRecovery(persistence: .shared)
+        let legacyAttempts = try legacyRecovery.attempts(trip: tripId)
+        guard legacyAttempts.allSatisfy({ $0.scope.actor == owner && $0.scope.vineyard == vineyard }) else {
+            throw Refused(explanation: "An original spray save for this Trip belongs to another account or vineyard. Nothing was changed.")
+        }
+        guard !legacyAttempts.contains(where: { $0.verified?.status == "accepted" }) else {
+            throw Refused(explanation: "The server accepted the original spray save for this Trip. It must be reconciled, not retired.")
         }
         let drafts = SprayTankActualStore.shared.initialMixDrafts.filter { $0.tripId == tripId }
         guard drafts.allSatisfy({ $0.ownerId == owner && $0.vineyardId == vineyard }) else {
@@ -213,7 +223,7 @@ enum GuidedNeverUploadedRepair {
             absenceEvidence = evidence
             try requireContext(owner: owner, vineyard: vineyard, store: store, tripSync: tripSync, spraySync: spraySync)
         }
-        let linkedSprayIds = Array(Set(drafts.map(\.sprayRecordId) +
+        let linkedSprayIds = Array(Set(drafts.map(\.sprayRecordId) + legacyAttempts.map(\.record.id) +
             store.sprayRecords.filter { $0.canonicalTripId == tripId }.map(\.id)))
         let serverSprays = try await visibleServerSprays(linkedSprayIds)
         try requireContext(owner: owner, vineyard: vineyard, store: store, tripSync: tripSync, spraySync: spraySync)
@@ -223,15 +233,18 @@ enum GuidedNeverUploadedRepair {
 
         let journalData: Data? = try LiveTripCancellationLocal.journalURL(tripId: tripId.uuidString.lowercased())
             .map { try Data(contentsOf: $0) }
+        let legacyData: Data? = try legacyAttempts.isEmpty ? nil : JSONEncoder().encode(legacyAttempts)
         let archive = NeverCreatedTripArchive(
             tripId: tripId, owner: owner, vineyard: vineyard, reason: note, archivedAt: Date(),
             occurrenceJournal: journalData, initialMixDrafts: drafts,
             queuedUpload: tripSync.isPendingUpsert(tripId), queuedUploadFailed: tripSync.isQueuedUploadMarkedFailed(tripId),
             linkedSprayIdsCheckedOnServer: linkedSprayIds.sorted { $0.uuidString < $1.uuidString },
-            serverTripRowsVisible: serverTrips.count)
+            serverTripRowsVisible: serverTrips.count,
+            legacySpraySaveAttempts: legacyData)
         try saveAndReadBack(archive, key: tripArchiveKey(tripId)) {
             $0.tripId == tripId && $0.owner == owner && $0.vineyard == vineyard &&
-                $0.initialMixDrafts.count == drafts.count && $0.occurrenceJournal == journalData
+                $0.initialMixDrafts.count == drafts.count && $0.occurrenceJournal == journalData &&
+                ($0.legacySpraySaveAttempts == nil) == legacyAttempts.isEmpty
         }
 
         // Retire only this ID's queue entry and handoff. The journal file is
@@ -248,6 +261,9 @@ enum GuidedNeverUploadedRepair {
         if let intent = deletionIntent, let evidence = absenceEvidence {
             try store.tripDeletionJournal.acknowledgeReviewedAbsence(
                 intent, owner: owner, vineyard: vineyard, evidence: evidence)
+        }
+        if !legacyAttempts.isEmpty {
+            try legacyRecovery.retireReviewedNeverCreated(trip: tripId, owner: owner, vineyard: vineyard)
         }
         try SprayTankActualStore.shared.removeInitialMixDrafts(tripId: tripId, vineyardId: vineyard)
         try tripSync.retireReviewedNeverCreatedTrip(tripId)
