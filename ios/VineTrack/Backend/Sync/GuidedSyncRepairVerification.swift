@@ -240,6 +240,29 @@ enum GuidedSyncRepairVerification {
             do {
                 let remote = try await SupabaseTripSyncRepository()
                     .fetchTripForOccurrenceStart(tripId: tripId, vineyardId: vineyard)
+                // A Trip the server never accepted has no tombstone to find.
+                // The owner-reviewed retire records the server absence on the
+                // original, scoped deletion intent; accept that receipt only
+                // while the server still shows no row and nothing is queued.
+                if remote == nil,
+                   let intent = try store.tripDeletionJournal.load().intents[tripId],
+                   intent.scope?.account == owner, intent.scope?.vineyard == vineyard,
+                   intent.scope?.trip == tripId,
+                   intent.acknowledgement?.hasPrefix("REVIEWED_SERVER_ABSENCE_VERIFIED:") == true {
+                    guard !tripSync.isPendingUpsert(tripId) && !tripSync.isPendingDelete(tripId) &&
+                          SprayTankActualStore.shared.pendingCount(tripId: tripId) == 0 &&
+                          !store.sprayRecords.contains(where: {
+                              $0.vineyardId == vineyard && $0.canonicalTripId == tripId &&
+                              (spraySync.isPendingUpsert($0.id) || spraySync.isPendingDelete($0.id))
+                          }) else {
+                        return held("NEVER_CREATED_DEPENDENTS_PENDING",
+                            "The server never had this Trip, but linked local queues are still waiting.")
+                    }
+                    return Result(verified: true, code: "NEVER_CREATED_RETIRE_VERIFIED",
+                        explanation: "The server has no copy of this Trip, the reviewed retire is recorded on the original deletion, and nothing linked is still queued.",
+                        evidence: ["trip_id:\(tripId.uuidString.lowercased())",
+                                   "verified_source:reviewed_server_absence"])
+                }
                 guard let remote, remote.id == tripId, remote.vineyardId == vineyard,
                       remote.deletedAt != nil else {
                     return held("DELETE_TOMBSTONE_NOT_VERIFIED",

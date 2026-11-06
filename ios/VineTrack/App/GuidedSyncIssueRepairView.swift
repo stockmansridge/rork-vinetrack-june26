@@ -1396,6 +1396,7 @@ private struct GuidedSyncIssueDetailView: View {
                     reason: evidenceNote, store: store, tripSync: tripSync, spraySync: spraySync)
                 stage("NEVER_CREATED_TRIP_RETIRED",
                       "No server Trip visible; local evidence archived and read back; upload queue entry retired.")
+                await verifyAfterCorrection(owner: owner, vineyard: vineyard)
             case .discardUnlinkedSpray:
                 guard issue.kind == .sprayRecord, neverUploadedEvidence else {
                     outcome = "Inspect the server record first."
