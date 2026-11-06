@@ -123,11 +123,10 @@ class YieldEstimationViewModel {
     }
 
     @discardableResult
-    func recordQuadrantCount(siteId: UUID, measurement: QuadrantCountMeasurement, recordedBy: String, isSystemAdmin: Bool) -> Bool {
+    func recordQuadrantCount(siteId: UUID, measurement: QuadrantCountMeasurement, recordedBy: String) -> Bool {
         guard isQuadrantCount, !isCompleted,
               let checked = QuadrantCountMeasurement.make(rawBunchCount: measurement.rawBunchCount,
-                sectionLengthCm: measurement.sectionLengthCm, vineSpacingCm: measurement.vineSpacingCm,
-                isSystemAdmin: isSystemAdmin),
+                sectionLengthCm: measurement.sectionLengthCm, vineSpacingCm: measurement.vineSpacingCm),
               let index = sampleSites.firstIndex(where: { $0.id == siteId }) else { return false }
         sampleSites[index].bunchCountEntry = BunchCountEntry(bunchesPerVine: checked.bunchesPerVine,
             recordedAt: Date(), recordedBy: recordedBy, quadrant: checked)
@@ -166,11 +165,10 @@ class YieldEstimationViewModel {
     /// text stays in the caller on failure; unsaved sites must not look recorded.
     @discardableResult
     func saveQuadrantCount(siteId: UUID, measurement: QuadrantCountMeasurement, recordedBy: String,
-                           isSystemAdmin: Bool, persist: () -> Bool) -> Bool {
+                           persist: () -> Bool) -> Bool {
         let previousSites = sampleSites
         let previousLength = quadrantSectionLengthCm
-        guard recordQuadrantCount(siteId: siteId, measurement: measurement, recordedBy: recordedBy,
-                                  isSystemAdmin: isSystemAdmin) else { return false }
+        guard recordQuadrantCount(siteId: siteId, measurement: measurement, recordedBy: recordedBy) else { return false }
         guard persist() else {
             sampleSites = previousSites
             quadrantSectionLengthCm = previousLength

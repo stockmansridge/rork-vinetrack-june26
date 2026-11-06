@@ -3,7 +3,6 @@ import MapKit
 
 struct YieldEstimationView: View {
     @Environment(MigratedDataStore.self) private var store
-    @Environment(SystemAdminService.self) private var systemAdmin
     @State private var showCountMethod = false
     @State private var showPermanentSites = false
     @State private var confirmedSiteSets: [UUID: YieldSamplingSiteSetRow] = [:]
@@ -70,7 +69,7 @@ struct YieldEstimationView: View {
 
     var body: some View {
         Group {
-            if tripStarted && (!viewModel.isQuadrantCount || systemAdmin.isSystemAdmin) {
+            if tripStarted {
                 tripContent
             } else {
                 introContent
@@ -79,7 +78,6 @@ struct YieldEstimationView: View {
         .confirmationDialog("Choose Yield Estimate Count Method", isPresented: $showCountMethod, titleVisibility: .visible) {
             Button("1. Bunches Per Vine Count") { startTrip() }
             Button("2. Quadrant Count") { startQuadrantTrip() }
-                .disabled(!systemAdmin.isSystemAdmin)
             Button("3. Panel Count") { startPanelTrip() }
             Button("Cancel", role: .cancel) {}
         }
@@ -121,11 +119,11 @@ struct YieldEstimationView: View {
     // MARK: - Bunch Count Trip home (start / resume / history)
 
     private var activeDraft: YieldEstimationSession? {
-        BunchCountTripLogic.activeDraft(sessions: store.yieldSessions.filter { !$0.isQuadrantCount || systemAdmin.isSystemAdmin }, vineyardId: store.selectedVineyardId)
+        BunchCountTripLogic.activeDraft(sessions: store.yieldSessions, vineyardId: store.selectedVineyardId)
     }
 
     private var completedTrips: [YieldEstimationSession] {
-        BunchCountTripLogic.completedTrips(sessions: store.yieldSessions.filter { !$0.isQuadrantCount || systemAdmin.isSystemAdmin }, vineyardId: store.selectedVineyardId)
+        BunchCountTripLogic.completedTrips(sessions: store.yieldSessions, vineyardId: store.selectedVineyardId)
     }
 
     private var introContent: some View {
@@ -325,7 +323,6 @@ struct YieldEstimationView: View {
     }
 
     private func startQuadrantTrip() {
-        guard systemAdmin.isSystemAdmin else { return }
         viewModel.startNewTrip()
         viewModel.countMethod = "quadrant"
         withAnimation(.smooth(duration: 0.25)) { tripStarted = true }
@@ -333,7 +330,6 @@ struct YieldEstimationView: View {
     }
 
     private func resumeTrip(_ session: YieldEstimationSession) {
-        guard !session.isQuadrantCount || systemAdmin.isSystemAdmin else { return }
         viewModel.loadSession(session)
         withAnimation(.smooth(duration: 0.25)) { tripStarted = true }
         fitMapToSites()
@@ -430,10 +426,9 @@ struct YieldEstimationView: View {
         } else if viewModel.isQuadrantCount {
             let block = paddocks.first { $0.id == site.paddockId }
             QuadrantCountEntrySheet(site: site, defaultLengthCm: viewModel.quadrantSectionLengthCm,
-                vineSpacingCm: block.flatMap { $0.vineSpacingIsKnown == false ? nil : $0.vineSpacing * 100 },
-                isSystemAdmin: systemAdmin.isSystemAdmin) { measurement, name in
+                vineSpacingCm: block.flatMap { $0.vineSpacingIsKnown == false ? nil : $0.vineSpacing * 100 }) { measurement, name in
                     return viewModel.saveQuadrantCount(siteId: site.id, measurement: measurement,
-                        recordedBy: name, isSystemAdmin: systemAdmin.isSystemAdmin, persist: saveSession)
+                        recordedBy: name, persist: saveSession)
                 }
         } else {
             BunchCountEntrySheet(site: site) { count, name in
@@ -1354,7 +1349,7 @@ struct YieldEstimationView: View {
     private func saveSession() -> Bool {
         guard let vid = store.selectedVineyardId else { return false }
         let session = viewModel.toSession(vineyardId: vid, samplesPerHectare: samplesPerHa)
-        let accepted = store.saveYieldSession(session, isSystemAdmin: systemAdmin.isSystemAdmin)
+        let accepted = store.saveYieldSession(session)
         saveFailed = !accepted
         return accepted
     }
