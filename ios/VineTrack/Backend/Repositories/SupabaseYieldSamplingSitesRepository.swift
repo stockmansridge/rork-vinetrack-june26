@@ -199,7 +199,10 @@ final class SupabaseYieldSamplingSitesRepository {
                 .execute().value
         }
         guard let saved = result.first, saved.id == input.id, saved.siteId == input.siteId,
-              saved.latitude == input.latitude, saved.longitude == input.longitude else {
+              // Postgres float8 text output keeps 15 significant digits, so an
+              // exact match failed every successful save. ~0.1 mm tolerance.
+              abs(saved.latitude - input.latitude) <= 1e-9,
+              abs(saved.longitude - input.longitude) <= 1e-9 else {
             throw CocoaError(.fileWriteUnknown)
         }
         return saved

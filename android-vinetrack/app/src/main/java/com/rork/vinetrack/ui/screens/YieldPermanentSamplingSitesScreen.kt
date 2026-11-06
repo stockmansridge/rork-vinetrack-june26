@@ -57,6 +57,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -111,7 +112,8 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
     val vine = LocalVineColors.current
 
     var selectedBlockId by rememberSaveable(vineyardId, user) { mutableStateOf("") }
-    val block = blocks.firstOrNull { it.id.equals(selectedBlockId, true) } ?: blocks.firstOrNull()
+    // No default: the map shows every block until one is chosen from the dropdown.
+    val block = blocks.firstOrNull { it.id.equals(selectedBlockId, true) }
     var blockMenu by remember { mutableStateOf(false) }
     var sets by remember { mutableStateOf<List<YieldSiteSet>>(emptyList()) }
     var draftSites by remember { mutableStateOf<List<YieldFixedSite>>(emptyList()) }
@@ -156,7 +158,7 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
         editorSite = existing
         pendingCoordinate = position
         val next = (draftSites.maxOfOrNull { it.siteNumber } ?: 0) + 1
-        nameText = existing?.name ?: "Sample $next"
+        nameText = existing?.name ?: ""
         rowText = existing?.rowNumber ?: ""
         panelText = existing?.panelNumber ?: ""
         notesText = existing?.notes ?: ""
@@ -217,7 +219,10 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
     }
 
     LaunchedEffect(vineyardId, user, block?.id, revision) {
-        val currentBlock = block ?: return@LaunchedEffect
+        val currentBlock = block ?: run {
+            sets = emptyList(); draftSites = emptyList(); confirmedSites = emptyList()
+            return@LaunchedEffect
+        }
         if (vineyardId.isBlank() || user.isNullOrBlank()) return@LaunchedEffect
         busy = true
         sets = emptyList(); draftSites = emptyList(); confirmedSites = emptyList()
@@ -242,8 +247,28 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
     val camera = rememberCameraPositionState()
     var mapLoaded by remember { mutableStateOf(false) }
     val bounds = block?.polygonPoints?.map { LatLng(it.latitude, it.longitude) }.orEmpty()
+    val allBlockPoints = remember(blocks) {
+        blocks.flatMap { b -> b.polygonPoints.orEmpty().map { LatLng(it.latitude, it.longitude) } }
+    }
     LaunchedEffect(mapLoaded, block?.id) {
-        if (mapLoaded && bounds.isNotEmpty()) camera.fitToContent(points = bounds, paddingPx = 100)
+        if (!mapLoaded) return@LaunchedEffect
+        val target = if (block != null) bounds else allBlockPoints
+        if (target.isNotEmpty()) camera.fitToContent(points = target, paddingPx = 100)
+    }
+
+    fun createDraft() {
+        val currentBlock = block ?: return
+        scope.launch {
+            busy = true
+            try {
+                repo.beginDraft(vineyardId, currentBlock.id)
+                message = "Draft created. Tap inside the purple block to add sampling sites."
+                errorText = null
+                revision++
+            } catch (e: Exception) {
+                errorText = "Could not create draft: ${e.message}"
+            } finally { busy = false }
+        }
     }
 
     Scaffold(
@@ -265,9 +290,14 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                 color = vine.textSecondary)
             Box {
                 OutlinedButton(onClick = { blockMenu = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Block: ${block?.name ?: "Choose block"}")
+                    Text("Block: ${block?.name ?: "Select a block"}")
                 }
                 DropdownMenu(expanded = blockMenu, onDismissRequest = { blockMenu = false }) {
+                    if (block != null) DropdownMenuItem(text = { Text("All blocks (none selected)") }, onClick = {
+                        selectedBlockId = ""
+                        blockMenu = false
+                        message = null
+                    })
                     blocks.forEach { option ->
                         DropdownMenuItem(text = { Text(option.name) }, onClick = {
                             selectedBlockId = option.id
@@ -277,9 +307,21 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                     }
                 }
             }
-            OutlinedButton(onClick = { revision++ }, enabled = !busy) { Text("Refresh from Server") }
+            // Step 1 comes first: a draft must exist before the map accepts pins.
+            if (block != null && draft == null && !busy) {
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = user != null && vineyardId.isNotEmpty() && canEditSites,
+                    onClick = { createDraft() },
+                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Purple),
+                ) { Icon(Icons.Filled.Add, contentDescription = null); Spacer(Modifier.width(6.dp))
+                    Text(if (confirmed == null) "Create Draft Locations" else "Revise Confirmed Locations") }
+                Text("Create a draft first, then tap inside the block on the map to drop sampling pins.",
+                    color = vine.textSecondary)
+            }
+            OutlinedButton(onClick = { revision++ }, enabled = !busy && block != null) { Text("Refresh from Server") }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            if (block != null) {
+            if (blocks.isNotEmpty()) {
                 Box(Modifier.fillMaxWidth().height(350.dp).mapGestureOwnership { mapGestureActive = it }) {
                     GoogleMap(
                         modifier = Modifier.fillMaxSize(),
@@ -297,15 +339,32 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                         ),
                         onMapLoaded = { mapLoaded = true },
                         onMapClick = { position ->
-                            if (draft != null) showSiteEditor(position)
+                            when {
+                                block == null -> {
+                                    // Tapping a block on the overview selects it.
+                                    blocks.firstOrNull {
+                                        RowAttachment.containsPoint(it, position.latitude, position.longitude)
+                                    }?.let { selectedBlockId = it.id; message = null }
+                                        ?: run { message = "Select a block from the dropdown first." }
+                                }
+                                draft == null -> message =
+                                    "Press ${if (confirmed == null) "Create Draft Locations" else "Revise Confirmed Locations"} at the top first."
+                                else -> showSiteEditor(position)
+                            }
                         },
                     ) {
-                        if (bounds.size >= 3) Polygon(
-                            points = bounds,
-                            strokeColor = VineColors.Purple,
-                            strokeWidth = 3f,
-                            fillColor = VineColors.Purple.copy(alpha = 0.16f),
-                        )
+                        blocks.forEach { b ->
+                            val pts = b.polygonPoints.orEmpty().map { LatLng(it.latitude, it.longitude) }
+                            val selected = b.id.equals(block?.id, true)
+                            if (pts.size >= 3) Polygon(
+                                points = pts,
+                                strokeColor = if (selected) VineColors.Purple else Color(0xFFF5D45B),
+                                strokeWidth = if (selected) 4f else 2f,
+                                fillColor = if (selected) VineColors.Purple.copy(alpha = 0.16f)
+                                    else Color.Yellow.copy(alpha = 0.08f),
+                                zIndex = if (selected) 1f else 0f,
+                            )
+                        }
                         displaySites.forEach { site ->
                             Marker(
                                 state = MarkerState(position = LatLng(site.latitude, site.longitude)),
@@ -331,12 +390,16 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                     )
                 }
                 Text(
-                    if (draft != null) "Tap within the purple block to add a site, or tap a draft marker to edit."
-                    else "Confirmed locations are locked. Create a draft revision to make changes.",
+                    when {
+                        block == null -> "Select a block from the dropdown (or tap one on the map) to manage its sampling sites."
+                        draft != null -> "Tap within the purple block to add a site, or tap a draft marker to edit."
+                        confirmed != null -> "Confirmed locations are locked. Press Revise Confirmed Locations to make changes."
+                        else -> "Press Create Draft Locations at the top, then tap inside the block."
+                    },
                     color = vine.textSecondary,
                 )
             }
-            VineyardCard {
+            if (block != null) VineyardCard {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (confirmed != null) Text(
                         "Confirmed version ${confirmed.version} · ${confirmedSites.size} sites",
@@ -346,26 +409,7 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                         "Draft version ${draft.version} · ${draftSites.size} sites (not yet confirmed)",
                         color = VineColors.Purple, fontWeight = FontWeight.SemiBold,
                     )
-                    if (draft == null) {
-                        OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = block != null && !busy && user != null && vineyardId.isNotEmpty() && canEditSites,
-                            onClick = {
-                                val currentBlock = block ?: return@OutlinedButton
-                                scope.launch {
-                                    busy = true
-                                    try {
-                                        repo.beginDraft(vineyardId, currentBlock.id)
-                                        message = "Draft saved on server. Review and confirm the locations."
-                                        revision++
-                                    } catch (e: Exception) {
-                                        errorText = "Could not create draft: ${e.message}"
-                                    } finally { busy = false }
-                                }
-                            },
-                        ) { Icon(Icons.Filled.Add, contentDescription = null); Spacer(Modifier.width(6.dp))
-                            Text(if (confirmed == null) "Create Draft Locations" else "Revise Confirmed Locations") }
-                    } else {
+                    if (draft != null) {
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth().testTag("yield.sites.placeGPS"),
                             enabled = !busy && !locatingField,
@@ -472,21 +516,24 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Lat ${"%.7f".format(coord.latitude)} · Long ${"%.7f".format(coord.longitude)}",
                         color = vine.textSecondary)
-                    OutlinedTextField(nameText, { nameText = it }, label = { Text("Site name") }, singleLine = true)
+                    val defaultName = editorSite?.name ?: "Sample ${(draftSites.maxOfOrNull { it.siteNumber } ?: 0) + 1}"
+                    OutlinedTextField(nameText, { nameText = it }, label = { Text("Site name (optional)") },
+                        placeholder = { Text(defaultName) }, singleLine = true)
                     OutlinedTextField(rowText, { rowText = it }, label = { Text("Row (optional)") }, singleLine = true)
                     OutlinedTextField(panelText, { panelText = it }, label = { Text("Panel (optional)") }, singleLine = true)
                     OutlinedTextField(notesText, { notesText = it }, label = { Text("Notes (optional)") })
                 }
             },
             confirmButton = {
-                TextButton(enabled = !busy && nameText.isNotBlank(), onClick = {
+                TextButton(enabled = !busy, onClick = {
                     val existing = editorSite
+                    val nextNumber = existing?.siteNumber ?: ((draftSites.maxOfOrNull { it.siteNumber } ?: 0) + 1)
                     val site = YieldFixedSite(
                         id = existing?.id ?: UUID.randomUUID().toString(),
                         siteSetId = currentSet.id, vineyardId = vineyardId, paddockId = currentBlock.id,
                         siteId = existing?.siteId ?: UUID.randomUUID().toString(),
-                        siteNumber = existing?.siteNumber ?: ((draftSites.maxOfOrNull { it.siteNumber } ?: 0) + 1),
-                        name = nameText.trim(),
+                        siteNumber = nextNumber,
+                        name = nameText.trim().ifEmpty { existing?.name ?: "Sample $nextNumber" },
                         rowNumber = rowText.trim().ifEmpty { null },
                         panelNumber = panelText.trim().ifEmpty { null },
                         latitude = coord.latitude, longitude = coord.longitude,
@@ -503,6 +550,7 @@ fun YieldPermanentSamplingSitesScreen(state: AppUiState, onBack: () -> Unit) {
                             revision++
                         } catch (e: Exception) {
                             errorText = "Site was not confirmed saved: ${e.message}"
+                            revision++ // Re-read so a save that did land is shown, not duplicated.
                         } finally { busy = false }
                     }
                 }) { Text("Save Site") }

@@ -225,7 +225,7 @@ class YieldSamplingSiteRepository(private val session: SessionStore) {
         if (!response.status.isSuccess()) fail(response.status.value, response.bodyAsText())
         val saved = response.body<List<YieldFixedSite>>().single()
         check(saved.id.equals(row.id, true) && saved.siteId.equals(row.siteId, true)
-            && saved.latitude == row.latitude && saved.longitude == row.longitude)
+            && sameCoordinate(saved.latitude, row.latitude) && sameCoordinate(saved.longitude, row.longitude))
         saved
     }
 
