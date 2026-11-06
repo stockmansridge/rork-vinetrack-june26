@@ -457,6 +457,8 @@ final class PinSyncService {
         func isCurrentAccount() -> Bool {
             auth.isSignedIn && auth.userId == actor && auth.completedSignOutSequence == sequence
         }
+        // Nothing to deliver: skip reading the whole pins cache (photos included).
+        guard pendingConfirmations.values.contains(where: { $0.deliveryStatus == .pending }) else { return }
         let pins = try PinRepository(persistence: persistence).loadAllForDurableUpdate()
         var next = pendingConfirmations
         var firstError: Error?
@@ -700,13 +702,15 @@ final class PinSyncService {
         func isCurrentAccount() -> Bool {
             auth.isSignedIn && auth.userId == actor && auth.completedSignOutSequence == signOutSequence
         }
+        let candidates = pendingPhotos.values
+            .filter { $0.vineyardId == vineyardId }
+            .sorted { $0.capturedAt < $1.capturedAt }
+        // Nothing to upload: skip reading the whole pins cache (photos included).
+        guard !candidates.isEmpty else { return }
         let durablePins = try PinRepository(persistence: persistence).loadAllForDurableUpdate()
         let ownedIds = Set(durablePins.filter {
             $0.vineyardId == vineyardId && (pendingOwners[$0.id] ?? $0.createdByUserId) == actor
         }.map(\.id))
-        let candidates = pendingPhotos.values
-            .filter { $0.vineyardId == vineyardId }
-            .sorted { $0.capturedAt < $1.capturedAt }
         var firstFailure: Error?
         for snapshot in candidates {
             guard isCurrentAccount(), writeAuthority.canWrite(vineyardId: snapshot.vineyardId.uuidString),
@@ -933,10 +937,13 @@ final class PinSyncService {
         nameColorMap: [String: String],
         downloadedPhotos: [UUID: DownloadedRemotePhoto]
     ) throws {
-        let cacheSnapshot = try store.pinRepo.loadAllForDurableUpdate()
-        let latestPins = store.selectedVineyardId == vineyardId
+        // The selected vineyard's pins are already in memory; only another
+        // vineyard needs the whole cache (photos included) read up front.
+        let isSelected = store.selectedVineyardId == vineyardId
+        var cacheSnapshot: [VinePin]? = isSelected ? nil : try store.pinRepo.loadAllForDurableUpdate()
+        let latestPins = isSelected
             ? store.pins
-            : cacheSnapshot.filter { $0.vineyardId == vineyardId }
+            : (cacheSnapshot ?? []).filter { $0.vineyardId == vineyardId }
         let existingById = Dictionary(latestPins.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         var upserts: [VinePin] = []
         var deletions = Set<UUID>()
@@ -996,12 +1003,19 @@ final class PinSyncService {
             acknowledgedUpserts.append(backendPin.id)
         }
 
-        try store.applyRemotePinBatch(
-            vineyardId: vineyardId,
-            cacheSnapshot: cacheSnapshot,
-            upserts: upserts,
-            deleting: deletions
-        )
+        // The pull re-reads rows updated at the watermark, so most passes
+        // return pins identical to what is stored. Then there is nothing to
+        // write: skip reading and rewriting the whole pins cache.
+        let changesSomething = !deletions.isEmpty || upserts.contains { existingById[$0.id] != $0 }
+        if changesSomething {
+            if cacheSnapshot == nil { cacheSnapshot = try store.pinRepo.loadAllForDurableUpdate() }
+            try store.applyRemotePinBatch(
+                vineyardId: vineyardId,
+                cacheSnapshot: cacheSnapshot ?? [],
+                upserts: upserts,
+                deleting: deletions
+            )
+        }
         metadata.clearRemoteAcknowledged(
             upsertIds: acknowledgedUpserts,
             deleteIds: acknowledgedDeletes

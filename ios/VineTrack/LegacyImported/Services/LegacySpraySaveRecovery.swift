@@ -61,7 +61,25 @@ final class LegacySpraySaveRecovery {
     private let persistence: PersistenceStore
     init(persistence: PersistenceStore) { self.persistence = persistence }
 
+    /// Last decoded and fully validated journal, keyed by its exact file
+    /// bytes. Sync status, held checks and the repair list call `attempts()`
+    /// hundreds of times per sweep; decoding and re-validating the same
+    /// ~700 KB file each time held the main thread for seconds. Identical
+    /// bytes always decode and validate to the identical result, and every
+    /// call still reads the current file, so any write is seen immediately.
+    private static var validatedJournal: (bytes: Data, items: [Attempt])?
+
     func attempts() throws -> [Attempt] {
+        let bytes: Data?
+        do { bytes = try persistence.retainedBytesForInspection(key: Self.key) } catch { throw failure }
+        guard let bytes else { Self.validatedJournal = nil; return [] }
+        if let cached = Self.validatedJournal, cached.bytes == bytes { return cached.items }
+        let items = try decodeAndValidateAttempts()
+        Self.validatedJournal = (bytes, items)
+        return items
+    }
+
+    private func decodeAndValidateAttempts() throws -> [Attempt] {
         switch persistence.loadOutcome(key: Self.key) as PersistenceStore.LoadOutcome<[Attempt]> {
         case .missing: return []
         case .decoded(let items):
