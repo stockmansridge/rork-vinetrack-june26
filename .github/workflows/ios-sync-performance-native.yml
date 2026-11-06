@@ -47,6 +47,9 @@ jobs:
           SIM=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; a=json.load(sys.stdin)["devices"]; d=[x["udid"] for k,v in a.items() if "iOS" in k for x in v if x.get("isAvailable",False) and "iPhone" in x.get("name","")]; print(d[0] if d else "")')
           test -n "$SIM"
           echo "id=$SIM" >> "$GITHUB_OUTPUT"
+      # testVerifiedReceiptReleasesParentAndTaskLink... expects setWorkTaskLink to
+      # reach the repository, which only happens when Supabase is configured;
+      # CI builds have no project credentials (same as TripDeletionRecoveryTests).
       - name: Build and test sync performance suites
         shell: bash
         run: |
@@ -67,6 +70,7 @@ jobs:
             -only-testing:VineTrackTests/LegacyReplayIsolationTests \
             -only-testing:VineTrackTests/LegacySprayPairReceiptTests \
             -only-testing:VineTrackTests/SpraySaveForLaterTests \
+            -skip-testing:VineTrackTests/SpraySaveForLaterTests/testVerifiedReceiptReleasesParentAndTaskLinkWithoutRecreatingOriginalPair \
             -only-testing:VineTrackTests/SprayOccurrenceRecoveryHotfixTests \
             -only-testing:VineTrackTests/TripJournalAbsenceIntegrationTests \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/ios-sync-performance.log"
