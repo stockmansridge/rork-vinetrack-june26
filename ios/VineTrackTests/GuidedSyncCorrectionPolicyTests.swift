@@ -44,6 +44,46 @@ final class GuidedSyncCorrectionPolicyTests: XCTestCase {
         }
     }
 
+    func testNeverUploadedTripRetireNeedsNoServerRowAndScopedLocalEvidence() {
+        let queued = item(kind: .protectedQueue, scoped: false)
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(
+            for: queued, server: .notVisible, neverUploadedEvidence: true),
+            [.retireNeverUploadedTrip, .privateReview])
+        // Without scoped evidence, or before / despite a server read, never offered.
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: queued, server: .notVisible), [.privateReview])
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(
+            for: queued, server: .notChecked, neverUploadedEvidence: true), [.privateReview])
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(
+            for: queued, server: .active, neverUploadedEvidence: true).contains(.retireNeverUploadedTrip))
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(
+            for: queued, server: .deleted, neverUploadedEvidence: true),
+            [.reviewLegacyDeleted, .privateReview], "A server-deleted Trip uses the deleted-Trip reconciliation")
+        let handoff = item(kind: .initialMixDraft, scoped: false)
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(
+            for: handoff, server: .notVisible, neverUploadedEvidence: true),
+            [.retireNeverUploadedTrip, .privateReview])
+        // A Trip saved on this phone (scoped upload) is never retired this way.
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(
+            for: item(kind: .tripUpload), server: .notVisible, neverUploadedEvidence: true)
+            .contains(.retireNeverUploadedTrip))
+    }
+
+    func testUnlinkedSprayDiscardOnlyWithRecoveredOrphanEvidence() {
+        let spray = item(kind: .sprayRecord)
+        for state: GuidedSyncRecordState in [.notVisible, .standalone, .deleted] {
+            XCTAssertEqual(GuidedSyncCorrectionPolicy.available(
+                for: spray, server: state, neverUploadedEvidence: true),
+                [.discardUnlinkedSpray, .privateReview])
+            XCTAssertFalse(GuidedSyncCorrectionPolicy.available(for: spray, server: state)
+                .contains(.discardUnlinkedSpray))
+        }
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(
+            for: spray, server: .notChecked, neverUploadedEvidence: true), [.privateReview])
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(
+            for: item(kind: .tankActual), server: .standalone, neverUploadedEvidence: true)
+            .contains(.discardUnlinkedSpray))
+    }
+
     func testNoMutationBeforeReadbackOrWhenRowNotVisible() {
         let original = item(kind: .tripUpload, actual: true)
         XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: original, server: .notChecked), [.privateReview])

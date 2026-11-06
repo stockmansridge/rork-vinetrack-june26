@@ -2222,6 +2222,21 @@ final class MigratedDataStore {
         return true
     }
 
+    /// Removes a reviewed, archived, server-discarded unlinked recovered Spray
+    /// (GuidedNeverUploadedRepair only). The exact expected record must still
+    /// be present unchanged; the slice write must succeed before memory changes.
+    func retireReviewedUnlinkedSpray(_ expected: SprayRecord) throws {
+        guard let vineyardId = selectedVineyardId, expected.vineyardId == vineyardId,
+              expected.pendingOrphanLink,
+              sprayRecords.first(where: { $0.id == expected.id }) == expected else {
+            throw SprayTankActualValidationError.localSaveFailed
+        }
+        try operationalWriteAuthority.requireWrite(vineyardId: vineyardId.uuidString)
+        let next = sprayRecords.filter { $0.id != expected.id }
+        try sprayRepo.saveRecordsSliceOrThrow(next, for: vineyardId)
+        sprayRecords = next
+    }
+
     func deleteSprayRecord(_ recordId: UUID) {
         guard !sprayRecords.contains(where: { $0.id == recordId && $0.pendingOrphanLink }) else { return }
         guard let record = sprayRecords.first(where: { $0.id == recordId }), selectedVineyardId == record.vineyardId else { return }

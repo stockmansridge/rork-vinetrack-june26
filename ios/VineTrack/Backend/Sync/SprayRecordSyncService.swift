@@ -54,6 +54,14 @@ final class SprayRecordSyncService {
     /// Whether a specific spray record is queued for a remote delete.
     func isPendingDelete(_ id: UUID) -> Bool { metadata.pendingDeletes[id] != nil }
 
+    /// Only GuidedNeverUploadedRepair calls this, after a server-verified
+    /// discard of an unlinked recovered Spray and a read-back local archive.
+    func retireReviewedQueue(_ id: UUID) {
+        metadata.clearDirty([id])
+        metadata.clearDeleted([id])
+        SyncIssueCenter.shared.clearIssues([id])
+    }
+
     /// P0 Phase A: removes exactly one queue entry for a spray record whose Trip cancellation
     /// receipt is verified and durably acknowledged. Never used by count.
     func clearCancelledTripRecordQueue(_ id: UUID, delete: Bool) {
