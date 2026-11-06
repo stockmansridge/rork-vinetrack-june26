@@ -50,6 +50,8 @@ jobs:
       # testVerifiedReceiptReleasesParentAndTaskLink... expects setWorkTaskLink to
       # reach the repository, which only happens when Supabase is configured;
       # CI builds have no project credentials (same as TripDeletionRecoveryTests).
+      # TripJournalAbsenceIntegrationTests is not listed: it drives the real
+      # SupabaseTripSyncRepository and stops the test host without credentials.
       - name: Build and test sync performance suites
         shell: bash
         run: |
@@ -72,7 +74,6 @@ jobs:
             -only-testing:VineTrackTests/SpraySaveForLaterTests \
             -skip-testing:VineTrackTests/SpraySaveForLaterTests/testVerifiedReceiptReleasesParentAndTaskLinkWithoutRecreatingOriginalPair \
             -only-testing:VineTrackTests/SprayOccurrenceRecoveryHotfixTests \
-            -only-testing:VineTrackTests/TripJournalAbsenceIntegrationTests \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/ios-sync-performance.log"
       - name: Preserve results
         if: always()
