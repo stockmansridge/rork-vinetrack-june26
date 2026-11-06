@@ -1091,7 +1091,13 @@ private struct GuidedSyncIssueDetailView: View {
               let owner = auth.userId, owner == store.currentUserIdProvider?(),
               let vineyard = store.selectedVineyardId else { return }
         isWorking = true
-        defer { isWorking = false }
+        // Visible feedback on every tap: a re-check with the same answer used
+        // to leave the screen unchanged, which looked like nothing happened.
+        serverExplanation = "Checking the server…"
+        defer {
+            isWorking = false
+            serverExplanation += " · checked " + Date().formatted(date: .omitted, time: .standard)
+        }
         independentReceipt = nil
         actualAccepted = false
         switch issue.kind {
