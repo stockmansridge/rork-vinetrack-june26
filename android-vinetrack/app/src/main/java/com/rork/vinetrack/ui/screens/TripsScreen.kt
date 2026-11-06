@@ -2458,6 +2458,18 @@ internal fun ActiveTripHud(
                         trip.tripFunction == "spraying" ||
                         (trip.totalTanks ?: 0) > 0 ||
                         trip.tankSessions.isNotEmpty()
+                    if (isSprayTrip && state.sprayNoTankWarning) {
+                        Text(
+                            com.rork.vinetrack.data.SprayNoTankWarning.MESSAGE,
+                            color = VineColors.Warning,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(VineColors.Warning.copy(alpha = 0.14f))
+                                .padding(10.dp),
+                        )
+                    }
                     if (isSprayTrip) TankSessionControls(vm, trip, linkedSpray, state.tripBusy || trip.isPaused, compact = true)
                     val transport: @Composable () -> Unit = {
                         IconButton(onClick = { vm.setTripPaused(trip.id, !trip.isPaused) }, enabled = !state.tripBusy,
