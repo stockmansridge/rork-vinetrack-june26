@@ -5,14 +5,12 @@ import XCTest
 /// Trip start → end closure: every open item (pause, fill timer, tank) is
 /// closed on the saved record, and engine-hour readings round-trip.
 ///
-/// Tests are `async` on purpose: with this project's MainActor default
-/// isolation, Swift 6.3 back-deployed isolated deinit (iOS 18 target) aborts
-/// with "pointer being freed was not allocated" in TaskLocal::StopLookupScope
-/// when a MainActor object is released inside a synchronous XCTest method.
-/// Async tests run inside a Task and avoid that runtime path.
 @MainActor
 final class TripFlowClosureTests: XCTestCase {
     private var directory: URL!
+    /// TripTrackingService holds its store and location service weakly (the
+    /// app environment owns them), so each test keeps them alive explicitly.
+    private var retained: [AnyObject] = []
 
     override func setUpWithError() throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -20,6 +18,7 @@ final class TripFlowClosureTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        retained.removeAll()
         try? FileManager.default.removeItem(at: directory)
     }
 
@@ -36,7 +35,9 @@ final class TripFlowClosureTests: XCTestCase {
         store.startTrip(trip)
         store.claimDeviceTrip(trip.id)
         let tracking = TripTrackingService()
-        tracking.configure(store: store, locationService: LocationService())
+        let location = LocationService()
+        retained += [store, location, tracking]
+        tracking.configure(store: store, locationService: location)
         XCTAssertNotNil(tracking.activeTrip, "after configure: " + state(store, tracking))
         return (store, tracking, trip)
     }
@@ -126,7 +127,9 @@ final class TripFlowClosureTests: XCTestCase {
         store.startTrip(trip)
         store.claimDeviceTrip(trip.id)
         let tracking = TripTrackingService()
-        tracking.configure(store: store, locationService: LocationService())
+        let location = LocationService()
+        retained += [store, location, tracking]
+        tracking.configure(store: store, locationService: location)
         XCTAssertNotNil(tracking.activeTrip, "after configure: " + state(store, tracking))
         return (store, tracking, trip)
     }
