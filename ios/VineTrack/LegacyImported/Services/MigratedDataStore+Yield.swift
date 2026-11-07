@@ -31,9 +31,9 @@ extension MigratedDataStore {
     // MARK: - YieldEstimationSession
 
     @discardableResult
-    func saveYieldSession(_ session: YieldEstimationSession, isSystemAdmin: Bool = false) -> Bool {
+    func saveYieldSession(_ session: YieldEstimationSession) -> Bool {
         let previousIsQuadrant = yieldSessions.first { $0.id == session.id }?.isQuadrantCount ?? false
-        guard !(session.isQuadrantCount || previousIsQuadrant) || isSystemAdmin else { return false }
+        // Never silently convert an existing quadrant record into another count method.
         guard !previousIsQuadrant || session.isQuadrantCount else { return false }
         guard let vineyardId = selectedVineyardId, session.vineyardId == vineyardId else { return false }
         let item = session

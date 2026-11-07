@@ -452,8 +452,8 @@ nonisolated struct QuadrantCountMeasurement: Codable, Sendable, Hashable {
     let calculationVersion: Int
     var bunchesPerVine: Double { rawBunchCount * (vineSpacingCm / sectionLengthCm) }
 
-    static func make(rawBunchCount: Double, sectionLengthCm: Double, vineSpacingCm: Double?, isSystemAdmin: Bool) -> Self? {
-        guard isSystemAdmin, rawBunchCount.isFinite, rawBunchCount >= 0,
+    static func make(rawBunchCount: Double, sectionLengthCm: Double, vineSpacingCm: Double?) -> Self? {
+        guard rawBunchCount.isFinite, rawBunchCount >= 0,
               rawBunchCount.rounded(.down) == rawBunchCount,
               sectionLengthCm.isFinite, sectionLengthCm > 0,
               let vineSpacingCm, vineSpacingCm.isFinite, vineSpacingCm > 0 else { return nil }

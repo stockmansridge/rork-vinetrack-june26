@@ -55,6 +55,8 @@ object YieldSampleGenerator {
         selectedPaddockIds: Collection<String>,
         samplesPerHectare: Int,
         random: Random = Random.Default,
+        /** When set, every block gets exactly this many sites instead of a per-ha density. */
+        samplesPerBlock: Int? = null,
     ): List<SampleSite> {
         val all = mutableListOf<SampleSite>()
         var globalIndex = 1
@@ -62,7 +64,7 @@ object YieldSampleGenerator {
         for (paddock in selected) {
             val area = paddock.areaHectares
             if (area <= 0) continue
-            val totalSamples = maxOf(1, round(samplesPerHectare * area).toInt())
+            val totalSamples = samplesForBlock(area, samplesPerHectare, samplesPerBlock)
             val sites = generateSitesOnRows(paddock, totalSamples, globalIndex, random)
             all.addAll(sites)
             globalIndex += sites.size
@@ -152,9 +154,15 @@ object YieldSampleGenerator {
         paddocks: List<Paddock>,
         selectedPaddockIds: Collection<String>,
         samplesPerHectare: Int,
+        samplesPerBlock: Int? = null,
     ): Int = paddocks
         .filter { p -> selectedPaddockIds.any { it.equals(p.id, ignoreCase = true) } }
-        .sumOf { maxOf(1, round(samplesPerHectare * it.areaHectares).toInt()) }
+        .sumOf { samplesForBlock(it.areaHectares, samplesPerHectare, samplesPerBlock) }
+
+    /** Sites for one block: a fixed count per block, or density x area (min 1). */
+    fun samplesForBlock(areaHectares: Double, samplesPerHectare: Int, samplesPerBlock: Int?): Int =
+        if (samplesPerBlock != null) maxOf(1, samplesPerBlock)
+        else maxOf(1, round(samplesPerHectare * areaHectares).toInt())
 
     fun totalSelectedArea(paddocks: List<Paddock>, selectedPaddockIds: Collection<String>): Double =
         paddocks

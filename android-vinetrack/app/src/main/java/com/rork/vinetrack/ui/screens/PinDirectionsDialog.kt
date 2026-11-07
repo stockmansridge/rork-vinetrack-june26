@@ -80,6 +80,27 @@ internal fun PinDirectionsDialog(
     color: Color,
     userLocation: Pair<Double, Double>?,
     onDismiss: () -> Unit,
+) = CoordinateDirectionsDialog(
+    id = pin.id,
+    title = pin.displayTitle,
+    latitude = pin.attachedLatitude,
+    longitude = pin.attachedLongitude,
+    color = color,
+    userLocation = userLocation,
+    onDismiss = onDismiss,
+)
+
+/** Same direct-line directions view for any coordinate (e.g. Permanent Items). */
+@OptIn(ExperimentalMaterial3Api::class, MapsComposeExperimentalApi::class)
+@Composable
+internal fun CoordinateDirectionsDialog(
+    id: String,
+    title: String,
+    latitude: Double?,
+    longitude: Double?,
+    color: Color,
+    userLocation: Pair<Double, Double>?,
+    onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
@@ -88,9 +109,9 @@ internal fun PinDirectionsDialog(
     // Destination is the pin's validated attached location — the snapped vine
     // row when it has one — so the marker, the line, the distance and the
     // bearing all agree with the row the operator must drive to.
-    val pinLatLng = remember(pin.attachedLatitude, pin.attachedLongitude) {
-        val lat = pin.attachedLatitude
-        val lon = pin.attachedLongitude
+    val pinLatLng = remember(latitude, longitude) {
+        val lat = latitude
+        val lon = longitude
         if (isValidMapCoordinate(lat, lon)) LatLng(lat ?: 0.0, lon ?: 0.0) else null
     }
     val userLatLng = userLocation
@@ -165,9 +186,9 @@ internal fun PinDirectionsDialog(
                         if (pinLatLng != null) {
                             val markerState = remember(pinLatLng) { MarkerState(position = pinLatLng) }
                             MarkerComposable(
-                                keys = arrayOf(pin.id, color.value.toString()),
+                                keys = arrayOf(id, color.value.toString()),
                                 state = markerState,
-                                title = pin.displayTitle,
+                                title = title,
                                 anchor = Offset(0.5f, 0.5f),
                                 zIndex = 2f,
                             ) {
@@ -208,7 +229,7 @@ internal fun PinDirectionsDialog(
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         Text(
-                            pin.displayTitle,
+                            title,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = vine.textPrimary,

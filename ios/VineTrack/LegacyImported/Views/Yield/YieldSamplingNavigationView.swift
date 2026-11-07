@@ -8,7 +8,6 @@ import CoreLocation
 /// so values save into the existing YieldEstimationSession.
 struct YieldSamplingNavigationView: View {
     @Environment(MigratedDataStore.self) private var store
-    @Environment(SystemAdminService.self) private var systemAdmin
     @State private var quadrantLengthText = "60"
     @Environment(LocationService.self) private var locationService
     @Environment(NetworkMonitor.self) private var network
@@ -153,7 +152,8 @@ struct YieldSamplingNavigationView: View {
         }
         .sheet(isPresented: $showPanelEntry) {
             if let site = currentSite {
-                PanelCountEntrySheet(site: site) { measurement, recordedBy in
+                PanelCountEntrySheet(site: site,
+                    blockPanelLengthMetres: paddocks.first { $0.id == site.paddockId }?.intermediatePostSpacing) { measurement, recordedBy in
                     let accepted = viewModel.savePanelCount(
                         siteId: site.id, measurement: measurement,
                         recordedBy: recordedBy, persist: saveSession
@@ -433,7 +433,7 @@ struct YieldSamplingNavigationView: View {
                     .font(.subheadline).foregroundStyle(.secondary)
             } else if viewModel.isQuadrantCount {
                 QuadrantCountFields(countText: $bunchesText, lengthText: $quadrantLengthText,
-                    vineSpacingCm: quadrantSpacingCm, isSystemAdmin: systemAdmin.isSystemAdmin)
+                    vineSpacingCm: quadrantSpacingCm)
             } else { entryPanel }
             actionRow
             if !viewModel.isCompleted && recordedCount > 0 {
@@ -731,7 +731,7 @@ struct YieldSamplingNavigationView: View {
     private var quadrantMeasurement: QuadrantCountMeasurement? {
         guard let count = parsedBunches,
               let length = Double(quadrantLengthText.replacingOccurrences(of: ",", with: ".")) else { return nil }
-        return .make(rawBunchCount: count, sectionLengthCm: length, vineSpacingCm: quadrantSpacingCm, isSystemAdmin: systemAdmin.isSystemAdmin)
+        return .make(rawBunchCount: count, sectionLengthCm: length, vineSpacingCm: quadrantSpacingCm)
     }
 
     private var parsedBunches: Double? {
@@ -746,7 +746,7 @@ struct YieldSamplingNavigationView: View {
         if viewModel.isQuadrantCount {
             guard let measurement = quadrantMeasurement,
                   viewModel.saveQuadrantCount(siteId: site.id, measurement: measurement,
-                    recordedBy: recorderName, isSystemAdmin: systemAdmin.isSystemAdmin, persist: saveSession) else { return }
+                    recordedBy: recorderName, persist: saveSession) else { return }
         } else {
             viewModel.recordBunchCount(siteId: site.id, bunchesPerVine: value, recordedBy: recorderName)
             saveSession()
@@ -790,7 +790,7 @@ struct YieldSamplingNavigationView: View {
             vineyardId: vid,
             samplesPerHectare: store.settings.samplesPerHectare
         )
-        let accepted = store.saveYieldSession(session, isSystemAdmin: systemAdmin.isSystemAdmin)
+        let accepted = store.saveYieldSession(session)
         saveFailed = !accepted
         return accepted
     }

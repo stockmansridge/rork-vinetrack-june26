@@ -288,14 +288,11 @@ struct StartTripSheet: View {
 
     private var heroHeader: some View {
         VStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(VineyardTheme.earthBrown.opacity(0.15))
-                    .frame(width: 76, height: 76)
-                Image(systemName: "wrench.and.screwdriver.fill")
-                    .font(.system(size: 32, weight: .semibold))
-                    .foregroundStyle(VineyardTheme.earthBrown)
-            }
+            BrightToolIcon(
+                symbol: "wrench.and.screwdriver.fill",
+                colors: [VineyardTheme.earthBrown, .orange],
+                size: 76
+            )
             VStack(spacing: 4) {
                 Text("Maintenance Trip")
                     .font(.title2.bold())
@@ -319,9 +316,15 @@ struct StartTripSheet: View {
                 HStack(spacing: 14) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 10)
-                            .fill(VineyardTheme.leafGreen.opacity(0.15))
+                            .fill(
+                                LinearGradient(
+                                    colors: [VineyardTheme.leafGreen, .cyan],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
                             .frame(width: 44, height: 44)
-                        GrapeLeafIcon(size: 22, color: VineyardTheme.leafGreen)
+                        GrapeLeafIcon(size: 22, color: .white)
                     }
                     if let paddock = singleSelectedPaddock {
                         VStack(alignment: .leading, spacing: 4) {
@@ -752,14 +755,10 @@ struct StartTripSheet: View {
             }
         } label: {
             HStack(spacing: 14) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill((isSelected ? Color.purple : Color.secondary).opacity(0.15))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: pattern.icon)
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(isSelected ? .purple : .secondary)
-                }
+                BrightToolIcon(
+                    symbol: pattern.icon,
+                    colors: [.purple, .indigo]
+                )
                 VStack(alignment: .leading, spacing: 3) {
                     Text(pattern.title)
                         .font(.subheadline.weight(.semibold))
@@ -884,9 +883,11 @@ struct StartTripSheet: View {
                         }
                     } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: selectedFunctionIcon)
-                                .foregroundStyle(VineyardTheme.earthBrown)
-                                .frame(width: 24)
+                            BrightToolIcon(
+                                symbol: selectedFunctionIcon,
+                                colors: [VineyardTheme.earthBrown, .orange],
+                                size: 34
+                            )
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Function")
                                     .font(.subheadline.weight(.semibold))
@@ -1039,9 +1040,11 @@ struct StartTripSheet: View {
                     }
                 } label: {
                     HStack(spacing: 12) {
-                        Image(systemName: "car.fill")
-                            .foregroundStyle(.indigo)
-                            .frame(width: 24)
+                        BrightToolIcon(
+                            symbol: "car.fill",
+                            colors: [.indigo, .cyan],
+                            size: 34
+                        )
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Machine")
                                 .font(.subheadline.weight(.semibold))
@@ -1145,10 +1148,11 @@ struct StartTripSheet: View {
     private var operatorSection: some View {
         sectionContainer(title: "Operator", icon: "person.fill", tint: .orange) {
             HStack(spacing: 12) {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(.orange)
-                    .frame(width: 32)
+                BrightToolIcon(
+                    symbol: "person.crop.circle.fill",
+                    colors: [.orange, .red],
+                    size: 34
+                )
                 TextField("Name (optional)", text: $personName)
                     .textInputAutocapitalization(.words)
                     .submitLabel(.done)
@@ -1210,9 +1214,11 @@ struct StartTripSheet: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(tint)
+                BrightToolIcon(
+                    symbol: icon,
+                    colors: maintenanceSetupColors(for: title, tint: tint),
+                    size: 24
+                )
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -1221,6 +1227,28 @@ struct StartTripSheet: View {
             content()
         }
         .padding(.horizontal)
+    }
+
+    /// Presentation-only palette for Maintenance Trip setup.
+    private func maintenanceSetupColors(for title: String, tint: Color) -> [Color] {
+        switch title {
+        case "Block", "Seeding Details":
+            return [VineyardTheme.leafGreen, .cyan]
+        case "Trip Function":
+            return [VineyardTheme.earthBrown, .orange]
+        case "Machine":
+            return [.indigo, .cyan]
+        case "Operator":
+            return [.orange, .red]
+        case "Tracking Pattern", "Proposed Row Sequence":
+            return [.purple, .indigo]
+        case "Free Drive":
+            return [.cyan, VineyardTheme.leafGreen]
+        case "Start Path & Direction":
+            return [.blue, .cyan]
+        default:
+            return [tint, tint.opacity(0.78)]
+        }
     }
 
     private func handleStart() {

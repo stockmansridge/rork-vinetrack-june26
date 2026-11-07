@@ -3,12 +3,16 @@ import MapKit
 
 struct YieldEstimationView: View {
     @Environment(MigratedDataStore.self) private var store
-    @Environment(SystemAdminService.self) private var systemAdmin
     @State private var showCountMethod = false
     @State private var showPermanentSites = false
     @State private var confirmedSiteSets: [UUID: YieldSamplingSiteSetRow] = [:]
     @State private var confirmedSiteCounts: [UUID: Int] = [:]
     @State private var savedLocationBlocks: Set<UUID> = []
+    /// Blocks already asked "fixed or dynamic?" so the prompt shows once per block.
+    @State private var promptedBlocks: Set<UUID> = []
+    /// Sample count mode: per hectare (shared default) or a fixed number per block (this device).
+    @AppStorage("yield.sampling.perBlockMode") private var perBlockMode = false
+    @AppStorage("yield.sampling.samplesPerBlock") private var samplesPerBlock = 5
     @State private var siteSourcesLoading = false
     @State private var siteRouteBusy = false
     @State private var siteRouteError: String?
@@ -70,7 +74,7 @@ struct YieldEstimationView: View {
 
     var body: some View {
         Group {
-            if tripStarted && (!viewModel.isQuadrantCount || systemAdmin.isSystemAdmin) {
+            if tripStarted {
                 tripContent
             } else {
                 introContent
@@ -79,7 +83,6 @@ struct YieldEstimationView: View {
         .confirmationDialog("Choose Yield Estimate Count Method", isPresented: $showCountMethod, titleVisibility: .visible) {
             Button("1. Bunches Per Vine Count") { startTrip() }
             Button("2. Quadrant Count") { startQuadrantTrip() }
-                .disabled(!systemAdmin.isSystemAdmin)
             Button("3. Panel Count") { startPanelTrip() }
             Button("Cancel", role: .cancel) {}
         }
@@ -90,6 +93,24 @@ struct YieldEstimationView: View {
         }
         .task(id: viewModel.selectedPaddockIds) {
             if !tripStarted || !viewModel.isGenerated { await loadConfirmedSamplingSites() }
+        }
+        .alert(fixedPromptBlock.map { "\($0.name) has permanent sampling locations" } ?? "",
+               isPresented: Binding(
+                   get: { fixedPromptBlock != nil },
+                   set: { shown in if !shown, let block = fixedPromptBlock { promptedBlocks.insert(block.id) } }
+               )) {
+            if let block = fixedPromptBlock {
+                Button("Use Fixed Locations") {
+                    savedLocationBlocks.insert(block.id); promptedBlocks.insert(block.id)
+                }
+                Button("Use Dynamic Sites") {
+                    savedLocationBlocks.remove(block.id); promptedBlocks.insert(block.id)
+                }
+            }
+        } message: {
+            if let block = fixedPromptBlock {
+                Text("Use the \(confirmedSiteCounts[block.id] ?? 0) pre-configured fixed locations for this block, or generate dynamic sample sites?")
+            }
         }
         .task { if refreshSharedDefaults { await syncSamplingDefault() } }
         .alert("Hard Delete Draft?", isPresented: $showHomeDraftDeleteConfirm) {
@@ -121,11 +142,11 @@ struct YieldEstimationView: View {
     // MARK: - Bunch Count Trip home (start / resume / history)
 
     private var activeDraft: YieldEstimationSession? {
-        BunchCountTripLogic.activeDraft(sessions: store.yieldSessions.filter { !$0.isQuadrantCount || systemAdmin.isSystemAdmin }, vineyardId: store.selectedVineyardId)
+        BunchCountTripLogic.activeDraft(sessions: store.yieldSessions, vineyardId: store.selectedVineyardId)
     }
 
     private var completedTrips: [YieldEstimationSession] {
-        BunchCountTripLogic.completedTrips(sessions: store.yieldSessions.filter { !$0.isQuadrantCount || systemAdmin.isSystemAdmin }, vineyardId: store.selectedVineyardId)
+        BunchCountTripLogic.completedTrips(sessions: store.yieldSessions, vineyardId: store.selectedVineyardId)
     }
 
     private var introContent: some View {
@@ -325,7 +346,6 @@ struct YieldEstimationView: View {
     }
 
     private func startQuadrantTrip() {
-        guard systemAdmin.isSystemAdmin else { return }
         viewModel.startNewTrip()
         viewModel.countMethod = "quadrant"
         withAnimation(.smooth(duration: 0.25)) { tripStarted = true }
@@ -333,7 +353,6 @@ struct YieldEstimationView: View {
     }
 
     private func resumeTrip(_ session: YieldEstimationSession) {
-        guard !session.isQuadrantCount || systemAdmin.isSystemAdmin else { return }
         viewModel.loadSession(session)
         withAnimation(.smooth(duration: 0.25)) { tripStarted = true }
         fitMapToSites()
@@ -423,17 +442,17 @@ struct YieldEstimationView: View {
     @ViewBuilder
     private func countEntrySheet(site: SampleSite) -> some View {
         if viewModel.isPanelCount {
-            PanelCountEntrySheet(site: site) { measurement, recordedBy in
+            PanelCountEntrySheet(site: site,
+                blockPanelLengthMetres: paddocks.first { $0.id == site.paddockId }?.intermediatePostSpacing) { measurement, recordedBy in
                 viewModel.savePanelCount(siteId: site.id, measurement: measurement,
                                          recordedBy: recordedBy, persist: saveSession)
             }
         } else if viewModel.isQuadrantCount {
             let block = paddocks.first { $0.id == site.paddockId }
             QuadrantCountEntrySheet(site: site, defaultLengthCm: viewModel.quadrantSectionLengthCm,
-                vineSpacingCm: block.flatMap { $0.vineSpacingIsKnown == false ? nil : $0.vineSpacing * 100 },
-                isSystemAdmin: systemAdmin.isSystemAdmin) { measurement, name in
+                vineSpacingCm: block.flatMap { $0.vineSpacingIsKnown == false ? nil : $0.vineSpacing * 100 }) { measurement, name in
                     return viewModel.saveQuadrantCount(siteId: site.id, measurement: measurement,
-                        recordedBy: name, isSystemAdmin: systemAdmin.isSystemAdmin, persist: saveSession)
+                        recordedBy: name, persist: saveSession)
                 }
         } else {
             BunchCountEntrySheet(site: site) { count, name in
@@ -755,31 +774,41 @@ struct YieldEstimationView: View {
 
     // MARK: - Yield sampling route source (one decision per block)
 
+    /// First selected block with permanent locations that has not been asked yet.
+    private var fixedPromptBlock: Paddock? {
+        guard !viewModel.isGenerated, !siteSourcesLoading, !siteRouteBusy else { return nil }
+        return paddocks.first {
+            viewModel.selectedPaddockIds.contains($0.id)
+                && confirmedSiteSets[$0.id] != nil && !promptedBlocks.contains($0.id)
+        }
+    }
+
     private var sourceSelectionSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !viewModel.selectedPaddockIds.isEmpty && !viewModel.isGenerated {
                 Label("Sampling Locations by Block", systemImage: "mappin.and.ellipse")
                     .font(.headline)
-                Text("Choose saved confirmed locations or generate sampling locations independently for each block.")
+                Text("Blocks with permanent sampling locations can use those fixed sites or new dynamic sites.")
                     .font(.caption).foregroundStyle(.secondary)
                 if siteSourcesLoading { ProgressView("Checking confirmed sites…") }
                 ForEach(paddocks.filter { viewModel.selectedPaddockIds.contains($0.id) }) { block in
                     VStack(alignment: .leading, spacing: 5) {
                         Text(block.name).font(.subheadline.weight(.semibold))
-                        if let set = confirmedSiteSets[block.id] {
-                            Toggle(isOn: Binding(
+                        if confirmedSiteSets[block.id] != nil {
+                            Picker("Sampling locations for \(block.name)", selection: Binding(
                                 get: { savedLocationBlocks.contains(block.id) },
-                                set: { useSaved in
-                                    if useSaved { savedLocationBlocks.insert(block.id) }
+                                set: { useFixed in
+                                    if useFixed { savedLocationBlocks.insert(block.id) }
                                     else { savedLocationBlocks.remove(block.id) }
+                                    promptedBlocks.insert(block.id)
                                 }
                             )) {
-                                Text("Use Saved Permanent Locations (v\(set.version) · \(confirmedSiteCounts[block.id] ?? 0) sites)")
-                                    .font(.caption)
+                                Text("Fixed (\(confirmedSiteCounts[block.id] ?? 0))").tag(true)
+                                Text("Dynamic").tag(false)
                             }
-                            .tint(.purple)
+                            .pickerStyle(.segmented)
                         } else {
-                            Text("Generate Sampling Locations · no confirmed sites")
+                            Text("Dynamic sites · no permanent locations")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -858,7 +887,8 @@ struct YieldEstimationView: View {
             siteRouteError = "Vineyard or block selection changed. Please try again."
             return
         }
-        viewModel.generateSampleSites(paddocks: paddocks, samplesPerHectare: samplesPerHa)
+        viewModel.generateSampleSites(paddocks: paddocks, samplesPerHectare: samplesPerHa,
+                                      samplesPerBlock: perBlockMode ? samplesPerBlock : nil)
         let generated = viewModel.sampleSites
         var combined: [SampleSite] = []
         var versions: [String: YieldSamplingSiteSource] = [:]
@@ -905,7 +935,26 @@ struct YieldEstimationView: View {
         Group {
             if !viewModel.selectedPaddockIds.isEmpty {
                 let totalArea = viewModel.totalSelectedArea(paddocks: paddocks)
-                let expectedSamples = viewModel.expectedSampleCount(paddocks: paddocks, samplesPerHectare: samplesPerHa)
+                // Fixed blocks contribute their saved sites; dynamic blocks use the chosen mode.
+                let expectedSamples = viewModel.expectedSampleCount(
+                    paddocks: paddocks, samplesPerHectare: samplesPerHa,
+                    samplesPerBlock: perBlockMode ? samplesPerBlock : nil,
+                    excluding: savedLocationBlocks
+                ) + savedLocationBlocks.filter { viewModel.selectedPaddockIds.contains($0) }
+                    .reduce(0) { $0 + (confirmedSiteCounts[$1] ?? 0) }
+
+                if !viewModel.isGenerated {
+                    Picker("Number of sample sites", selection: $perBlockMode) {
+                        Text("Per Ha").tag(false)
+                        Text("Per Block").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: .infinity)
+                    if viewModel.selectedPaddockIds.isSubset(of: savedLocationBlocks) {
+                        Text("All selected blocks use fixed locations, so this number is not used.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
 
                 HStack(spacing: 0) {
                     summaryCard(
@@ -915,14 +964,14 @@ struct YieldEstimationView: View {
                         color: VineyardTheme.leafGreen
                     )
                     Button {
-                        samplesPerHaText = "\(samplesPerHa)"
+                        samplesPerHaText = "\(perBlockMode ? samplesPerBlock : samplesPerHa)"
                         showSamplesPerHaEditor = true
                     } label: {
                         VStack(spacing: 4) {
-                            Text("Samples/ha")
+                            Text(perBlockMode ? "Samples/block" : "Samples/ha")
                                 .font(.caption.weight(.semibold))
                             HStack(spacing: 5) {
-                                Text("\(samplesPerHa)")
+                                Text("\(perBlockMode ? samplesPerBlock : samplesPerHa)")
                                     .font(.title2.weight(.bold))
                                     .monospacedDigit()
                                 Image(systemName: "pencil")
@@ -941,7 +990,9 @@ struct YieldEstimationView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("yield.samplesPerHectare.edit")
-                    .accessibilityLabel("Edit number of samples per hectare, currently \(samplesPerHa)")
+                    .accessibilityLabel(perBlockMode
+                        ? "Edit number of samples per block, currently \(samplesPerBlock)"
+                        : "Edit number of samples per hectare, currently \(samplesPerHa)")
                     .disabled(viewModel.isCompleted)
                     summaryCard(
                         title: "Total Sites",
@@ -1147,8 +1198,9 @@ struct YieldEstimationView: View {
     private var regeneratePathButton: some View {
         Button {
             withAnimation(.smooth(duration: 0.3)) {
-                viewModel.generateSampleSites(paddocks: paddocks, samplesPerHectare: samplesPerHa)
-                        viewModel.generatePath(paddocks: paddocks)
+                viewModel.generateSampleSites(paddocks: paddocks, samplesPerHectare: samplesPerHa,
+                                              samplesPerBlock: perBlockMode ? samplesPerBlock : nil)
+                viewModel.generatePath(paddocks: paddocks)
             }
             fitMapToSites()
             saveSession()
@@ -1283,7 +1335,48 @@ struct YieldEstimationView: View {
 
     // MARK: - Samples per Ha Sheet
 
+    @ViewBuilder
     private var samplesPerHaSheet: some View {
+        if perBlockMode { samplesPerBlockSheet } else { samplesPerHectareSheet }
+    }
+
+    private var samplesPerBlockSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        TextField("Samples per block", text: $samplesPerHaText)
+                            .keyboardType(.numberPad)
+                        Text("per block").foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Samples per Block")
+                } footer: {
+                    Text("Every block using dynamic sites gets this many sample sites, whatever its size. Saved on this device.")
+                }
+            }
+            .navigationTitle("Samples per Block")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showSamplesPerHaEditor = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        if let n = Int(samplesPerHaText), (1...200).contains(n) { samplesPerBlock = n }
+                        showSamplesPerHaEditor = false
+                    }
+                    .fontWeight(.semibold)
+                    .disabled({
+                        guard let n = Int(samplesPerHaText) else { return true }
+                        return !(1...200).contains(n)
+                    }())
+                }
+            }
+        }
+    }
+
+    private var samplesPerHectareSheet: some View {
         NavigationStack {
             Form {
                 Section {
@@ -1354,7 +1447,7 @@ struct YieldEstimationView: View {
     private func saveSession() -> Bool {
         guard let vid = store.selectedVineyardId else { return false }
         let session = viewModel.toSession(vineyardId: vid, samplesPerHectare: samplesPerHa)
-        let accepted = store.saveYieldSession(session, isSystemAdmin: systemAdmin.isSystemAdmin)
+        let accepted = store.saveYieldSession(session)
         saveFailed = !accepted
         return accepted
     }

@@ -67,7 +67,13 @@ class YieldEstimationViewModel {
         isPathGenerated = false
     }
 
-    func generateSampleSites(paddocks: [Paddock], samplesPerHectare: Int) {
+    /// Sites for one block: a fixed count per block, or density x area (min 1).
+    static func samplesForBlock(areaHectares: Double, samplesPerHectare: Int, samplesPerBlock: Int?) -> Int {
+        if let samplesPerBlock { return max(1, samplesPerBlock) }
+        return max(1, Int(round(Double(samplesPerHectare) * areaHectares)))
+    }
+
+    func generateSampleSites(paddocks: [Paddock], samplesPerHectare: Int, samplesPerBlock: Int? = nil) {
         var allSites: [SampleSite] = []
         var globalIndex = 1
 
@@ -77,7 +83,8 @@ class YieldEstimationViewModel {
             let area = paddock.areaHectares
             guard area > 0 else { continue }
 
-            let totalSamples = max(1, Int(round(Double(samplesPerHectare) * area)))
+            let totalSamples = Self.samplesForBlock(areaHectares: area, samplesPerHectare: samplesPerHectare,
+                                                    samplesPerBlock: samplesPerBlock)
 
             let sites = generateSitesOnRows(
                 paddock: paddock,
@@ -123,11 +130,10 @@ class YieldEstimationViewModel {
     }
 
     @discardableResult
-    func recordQuadrantCount(siteId: UUID, measurement: QuadrantCountMeasurement, recordedBy: String, isSystemAdmin: Bool) -> Bool {
+    func recordQuadrantCount(siteId: UUID, measurement: QuadrantCountMeasurement, recordedBy: String) -> Bool {
         guard isQuadrantCount, !isCompleted,
               let checked = QuadrantCountMeasurement.make(rawBunchCount: measurement.rawBunchCount,
-                sectionLengthCm: measurement.sectionLengthCm, vineSpacingCm: measurement.vineSpacingCm,
-                isSystemAdmin: isSystemAdmin),
+                sectionLengthCm: measurement.sectionLengthCm, vineSpacingCm: measurement.vineSpacingCm),
               let index = sampleSites.firstIndex(where: { $0.id == siteId }) else { return false }
         sampleSites[index].bunchCountEntry = BunchCountEntry(bunchesPerVine: checked.bunchesPerVine,
             recordedAt: Date(), recordedBy: recordedBy, quadrant: checked)
@@ -166,11 +172,10 @@ class YieldEstimationViewModel {
     /// text stays in the caller on failure; unsaved sites must not look recorded.
     @discardableResult
     func saveQuadrantCount(siteId: UUID, measurement: QuadrantCountMeasurement, recordedBy: String,
-                           isSystemAdmin: Bool, persist: () -> Bool) -> Bool {
+                           persist: () -> Bool) -> Bool {
         let previousSites = sampleSites
         let previousLength = quadrantSectionLengthCm
-        guard recordQuadrantCount(siteId: siteId, measurement: measurement, recordedBy: recordedBy,
-                                  isSystemAdmin: isSystemAdmin) else { return false }
+        guard recordQuadrantCount(siteId: siteId, measurement: measurement, recordedBy: recordedBy) else { return false }
         guard persist() else {
             sampleSites = previousSites
             quadrantSectionLengthCm = previousLength
@@ -568,11 +573,14 @@ class YieldEstimationViewModel {
             .reduce(0) { $0 + $1.areaHectares }
     }
 
-    func expectedSampleCount(paddocks: [Paddock], samplesPerHectare: Int) -> Int {
+    func expectedSampleCount(paddocks: [Paddock], samplesPerHectare: Int, samplesPerBlock: Int? = nil,
+                             excluding excluded: Set<UUID> = []) -> Int {
         paddocks
-            .filter { selectedPaddockIds.contains($0.id) }
+            .filter { selectedPaddockIds.contains($0.id) && !excluded.contains($0.id) }
             .reduce(0) { total, paddock in
-                total + max(1, Int(round(Double(samplesPerHectare) * paddock.areaHectares)))
+                total + Self.samplesForBlock(areaHectares: paddock.areaHectares,
+                                             samplesPerHectare: samplesPerHectare,
+                                             samplesPerBlock: samplesPerBlock)
             }
     }
 
