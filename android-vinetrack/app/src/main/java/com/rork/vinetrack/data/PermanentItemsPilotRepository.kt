@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.rork.vinetrack.data.auth.SessionStore
+import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.headers
@@ -390,6 +391,16 @@ class PermanentItemsPilotRepository(context: Context) {
             requireScope(vineyard, account)
             path
         }
+    /** Downloads a private item photo; storage RLS allows active vineyard members only. */
+    suspend fun downloadPhoto(path: String): ByteArray = withContext(Dispatchers.IO) {
+        val response = SupabaseClient.http.get(
+            SupabaseClient.storageUrl("object/authenticated/permanent-item-photos/$path")) {
+            headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer " + token()) }
+        }
+        if (response.status.value !in 200..299) succeeded(response.status.value, response.bodyAsText())
+        response.body<ByteArray>().also { require(it.isNotEmpty()) { "Photo is empty." } }
+    }
+
     private fun succeeded(code: Int, body: String): String {
         if (code in 200..299) return body
         if (code == 401 || code == 403) throw BackendError.Unauthorized

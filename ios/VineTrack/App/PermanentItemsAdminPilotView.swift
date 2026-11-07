@@ -304,6 +304,11 @@ private struct PermanentItemPilotRepository {
         return row
     }
 
+    /// Private photo download; storage RLS allows active vineyard members only.
+    func downloadPhoto(path: String) async throws -> Data {
+        try await client.storage.from("permanent-item-photos").download(path: path)
+    }
+
     func uploadPhoto(_ data: Data, vineyardId: UUID, itemId: UUID) async throws -> String {
         guard !data.isEmpty && data.count <= 5 * 1024 * 1024 else {
             throw PermanentItemsPilotError.photo
@@ -412,6 +417,7 @@ struct PermanentItemsAdminPilotView: View {
     @State private var message: String?
     @State private var typeFilter: String?
     @State private var directionsItem: PermanentItemPilotRow?
+    @State private var photoItem: PermanentItemPilotRow?
     @State private var deleteTarget: PermanentItemPilotRow?
     @State private var pendingDelete: PermanentItemHardDeleteIntent?
     @State private var camera: MapCameraPosition = .automatic
@@ -610,6 +616,7 @@ struct PermanentItemsAdminPilotView: View {
                                 blockName: store.paddocks.first { $0.id == item.paddockId }?.name,
                                 canEdit: canManage,
                                 canDelete: canHardDelete,
+                                onViewImage: item.photoPath == nil ? nil : { photoItem = item },
                                 onOpen: {
                                     guard !actionsDisabled else { return }
                                     if canManage { editing = item; showEditor = true }
@@ -685,6 +692,11 @@ struct PermanentItemsAdminPilotView: View {
             Button("Cancel", role: .cancel) { deleteTarget = nil }
         } message: {
             Text("This cannot be undone. The item and its photos will be removed from iOS, Android and Portal.")
+        }
+        .fullScreenCover(item: $photoItem) { item in
+            if let path = item.photoPath {
+                PermanentItemPhotoLoader(path: path, repository: repository)
+            }
         }
         .sheet(item: $directionsItem) { item in
             PermanentItemDirectionsSheet(
@@ -1243,6 +1255,8 @@ private struct PermanentItemListRow: View {
     let blockName: String?
     let canEdit: Bool
     let canDelete: Bool
+    /// Non-nil only when the item has a photo.
+    let onViewImage: (() -> Void)?
     let onOpen: () -> Void
     let onDirections: () -> Void
     let onEdit: () -> Void
@@ -1274,6 +1288,10 @@ private struct PermanentItemListRow: View {
             }
 
             HStack(spacing: 0) {
+                if let onViewImage {
+                    ActionButton(icon: "photo", label: "View Image", color: .purple, action: onViewImage)
+                    Spacer()
+                }
                 ActionButton(icon: "arrow.triangle.turn.up.right.diamond", label: "Directions",
                              color: VineyardTheme.leafGreen, action: onDirections)
                 if canEdit {
@@ -1360,6 +1378,46 @@ private struct PermanentItemDirectionsSheet: View {
             .onAppear {
                 locationService.requestPermission()
                 locationService.startUpdating()
+            }
+        }
+    }
+}
+
+/// Loads a private Permanent Item photo, then shows it full screen (Pins viewer).
+private struct PermanentItemPhotoLoader: View {
+    let path: String
+    let repository: PermanentItemPilotRepository
+    @Environment(\.dismiss) private var dismiss
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                PhotoViewerSheet(image: image)
+            } else {
+                NavigationStack {
+                    ZStack {
+                        Color.black.ignoresSafeArea()
+                        if failed {
+                            Text("Could not load the photo. Check your connection and try again.")
+                                .foregroundStyle(.white).multilineTextAlignment(.center).padding()
+                        } else {
+                            ProgressView().tint(.white)
+                        }
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+                    }
+                }
+            }
+        }
+        .task(id: path) {
+            do {
+                let data = try await repository.downloadPhoto(path: path)
+                if let decoded = UIImage(data: data) { image = decoded } else { failed = true }
+            } catch {
+                failed = true
             }
         }
     }
