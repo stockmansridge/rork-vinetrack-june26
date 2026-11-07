@@ -129,6 +129,10 @@ import Foundation
     }
 
     func load() throws -> Snapshot? { try readSnapshot(recordDecodeEvidence: true) }
+    /// Exact current file bytes (nil when absent), for callers that cache a
+    /// value derived from an already-validated snapshot of the same bytes.
+    func currentBytes() -> Data? { try? Data(contentsOf: fileURL) }
+    var identity: Scope { scope }
 
     /// Diagnostic reads must not write even decode-failure evidence to another store.
     func inspectionSnapshot() throws -> Snapshot? { try readSnapshot(recordDecodeEvidence: false) }

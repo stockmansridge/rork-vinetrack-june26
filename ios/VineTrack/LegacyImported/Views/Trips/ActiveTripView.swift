@@ -1435,41 +1435,22 @@ struct ActiveTripView: View {
     }
 
     private var hybridMapView: some View {
-        Map(position: $position) {
-            ForEach(paddocksOnMap) { paddock in
-                if paddock.polygonPoints.count >= 3 {
-                    MapPolygon(coordinates: paddock.polygonPoints.map { $0.coordinate })
-                        .foregroundStyle(VineyardTheme.leafGreen.opacity(0.15))
-                        .stroke(VineyardTheme.leafGreen.opacity(0.7), lineWidth: 1.5)
-                }
-                ForEach(paddock.rows, id: \.id) { row in
-                    MapPolyline(coordinates: [row.startPoint.coordinate, row.endPoint.coordinate])
-                        .stroke(Color.white.opacity(0.5), lineWidth: 1)
-                }
+        // Equatable layer: the once-a-second clock, speed and row readouts
+        // re-evaluate this screen constantly; the map's rows, trail and pins
+        // are only rebuilt when they (or the camera) actually change.
+        LiveTripMapLayers(
+            position: $position,
+            paddocks: paddocksOnMap,
+            trail: displayTrailSegments,
+            pins: visibleMapPins.map {
+                LiveTripMapLayers.Pin(id: $0.id, name: $0.buttonName,
+                                      latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude,
+                                      colorToken: store.resolvedPinColorToken($0))
             }
-
-            // Display trail is precomputed off-body on a 1Hz throttle. Map
-            // renders at most `maxTrailBuckets` polylines (3–5) regardless of
-            // trip length, preventing the per-GPS-tick overlay explosion that
-            // froze SwiftUI/MapKit.
-            ForEach(displayTrailSegments) { segment in
-                MapPolyline(coordinates: segment.coordinates)
-                    .stroke(segment.color, lineWidth: 4)
-            }
-
-            ForEach(visibleMapPins) { pin in
-                Annotation(pin.buttonName, coordinate: pin.coordinate) {
-                    Circle()
-                        .fill(Color.fromString(store.resolvedPinColorToken(pin)))
-                        .frame(width: 14, height: 14)
-                        .overlay(Circle().stroke(.white, lineWidth: 2))
-                        .shadow(radius: 1)
-                }
-            }
-
-            UserAnnotation()
-        }
-        .mapStyle(.hybrid)
+            // Stable order, so an unchanged pin set compares equal.
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        )
+        .equatable()
     }
 
     /// Compact wrong-row pill rendered above the side row chips so the
@@ -2233,5 +2214,78 @@ struct ActiveTripView: View {
             return String(format: "%d:%02d:%02d", h, m, s)
         }
         return String(format: "%d:%02d", m, s)
+    }
+}
+
+
+/// Map content for the live Trip. Same layers and styling as before; kept in
+/// its own Equatable view so unrelated live-screen updates skip the diff.
+private struct LiveTripMapLayers: View, Equatable {
+    struct Pin: Equatable, Identifiable {
+        let id: UUID
+        let name: String
+        let latitude: Double
+        let longitude: Double
+        let colorToken: String
+        var coordinate: CLLocationCoordinate2D { .init(latitude: latitude, longitude: longitude) }
+    }
+
+    @Binding var position: MapCameraPosition
+    let paddocks: [Paddock]
+    let trail: [TrailSegment]
+    let pins: [Pin]
+
+    static func == (lhs: LiveTripMapLayers, rhs: LiveTripMapLayers) -> Bool {
+        lhs.position == rhs.position && lhs.paddocks == rhs.paddocks && lhs.pins == rhs.pins &&
+            sameTrail(lhs.trail, rhs.trail)
+    }
+
+    private static func sameTrail(_ a: [TrailSegment], _ b: [TrailSegment]) -> Bool {
+        guard a.count == b.count else { return false }
+        for (x, y) in zip(a, b) {
+            guard x.id == y.id, x.color == y.color, x.coordinates.count == y.coordinates.count else { return false }
+            for (p, q) in zip(x.coordinates, y.coordinates) where p.latitude != q.latitude || p.longitude != q.longitude {
+                return false
+            }
+        }
+        return true
+    }
+
+    var body: some View {
+        Map(position: $position) {
+            ForEach(paddocks) { paddock in
+                if paddock.polygonPoints.count >= 3 {
+                    MapPolygon(coordinates: paddock.polygonPoints.map { $0.coordinate })
+                        .foregroundStyle(VineyardTheme.leafGreen.opacity(0.15))
+                        .stroke(VineyardTheme.leafGreen.opacity(0.7), lineWidth: 1.5)
+                }
+                ForEach(paddock.rows, id: \.id) { row in
+                    MapPolyline(coordinates: [row.startPoint.coordinate, row.endPoint.coordinate])
+                        .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                }
+            }
+
+            // Display trail is precomputed off-body on a 1Hz throttle. Map
+            // renders at most `maxTrailBuckets` polylines (3–5) regardless of
+            // trip length, preventing the per-GPS-tick overlay explosion that
+            // froze SwiftUI/MapKit.
+            ForEach(trail) { segment in
+                MapPolyline(coordinates: segment.coordinates)
+                    .stroke(segment.color, lineWidth: 4)
+            }
+
+            ForEach(pins) { pin in
+                Annotation(pin.name, coordinate: pin.coordinate) {
+                    Circle()
+                        .fill(Color.fromString(pin.colorToken))
+                        .frame(width: 14, height: 14)
+                        .overlay(Circle().stroke(.white, lineWidth: 2))
+                        .shadow(radius: 1)
+                }
+            }
+
+            UserAnnotation()
+        }
+        .mapStyle(.hybrid)
     }
 }

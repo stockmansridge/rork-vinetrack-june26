@@ -17,11 +17,27 @@ final class TripTrackingService {
     #endif
     private var isLegacySprayStartPending: Bool = false
 
+    /// Last validated journal snapshot, keyed by its scope and exact file
+    /// bytes. The live Trip screen reads occurrence state many times per
+    /// refresh; identical bytes always decode and validate identically, and
+    /// every call still reads the current file, so a write is seen at once.
+    @ObservationIgnored private var journalSnapshotCache: (scope: TripOccurrenceJournal.Scope, bytes: Data, state: TripOccurrenceJournal.Snapshot)?
+
+    private func cachedSnapshot(_ journal: TripOccurrenceJournal) throws -> TripOccurrenceJournal.Snapshot? {
+        guard let bytes = journal.currentBytes() else { return try journal.load() }
+        if let cached = journalSnapshotCache, cached.scope == journal.identity, cached.bytes == bytes {
+            return cached.state
+        }
+        let state = try journal.load()
+        if let state { journalSnapshotCache = (journal.identity, bytes, state) }
+        return state
+    }
+
     var canOperateOccurrences: Bool {
         guard let trip = activeTrip, trip.coverageBasis == .occurrence else { return false }
         do {
             let journal = try occurrenceJournal(for: trip)
-            guard let state = try journal.load() else { return false }
+            guard let state = try cachedSnapshot(journal) else { return false }
             return journal.canOperate(state)
         } catch { return false }
     }
@@ -29,7 +45,7 @@ final class TripTrackingService {
     var occurrenceActivationMessage: String? {
         guard let trip = activeTrip, trip.coverageBasis != .legacy else { return nil }
         do {
-            guard let state = try occurrenceJournal(for: trip).load() else { throw TripOccurrenceCoverage.Failure.missing }
+            guard let state = try cachedSnapshot(occurrenceJournal(for: trip)) else { throw TripOccurrenceCoverage.Failure.missing }
             if let held = state.heldReason { return held }
             if state.creationConfirmed == false || state.serverActive != true || state.pending.contains(where: { $0.rpc == "activate_trip_occurrences_v1" }) {
                 return try occurrenceJournal(for: trip).canOperate(state)
@@ -305,14 +321,26 @@ final class TripTrackingService {
 
     // MARK: - Active trip helpers
 
+    @ObservationIgnored private var projectedActiveTripCache: (trip: Trip, journal: Data, projected: Trip)?
+
     var activeTrip: Trip? {
         guard let store, store.isDeviceTripOwner, let id = store.deviceActiveTripId else { return nil }
         guard let trip = store.trips.first(where: { $0.id == id && $0.isActive && $0.endTime == nil && $0.vineyardId == store.selectedVineyardId }) else { return nil }
         guard trip.coverageBasis == .occurrence else { return trip }
         do {
             let journal = try occurrenceJournal(for: trip, initializeIfMissing: false)
-            guard let state = try journal.load() else { return trip }
-            return try trip.withOccurrenceProjection(state.projected)
+            // The live Trip screen reads this dozens of times per refresh.
+            // Decoding, validating and projecting the journal on every read
+            // held the main thread for seconds. Reuse the projection while
+            // the saved Trip and the journal's exact bytes are unchanged.
+            guard let bytes = journal.currentBytes() else { return trip }
+            if let cached = projectedActiveTripCache, cached.journal == bytes, cached.trip == trip {
+                return cached.projected
+            }
+            guard let state = try cachedSnapshot(journal) else { return trip }
+            let projected = try trip.withOccurrenceProjection(state.projected)
+            projectedActiveTripCache = (trip, bytes, projected)
+            return projected
         } catch {
             // Read-only accessor evaluated during SwiftUI body updates: it must
             // not publish state. `occurrenceActivationMessage` already surfaces
