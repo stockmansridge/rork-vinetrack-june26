@@ -709,7 +709,8 @@ private fun syncEntityLabel(entityType: String): String = when (entityType) {
 
 /** Human-friendly relative time (e.g. "5 minutes ago") for a cache timestamp. */
 private fun relativeTime(epochMillis: Long): String =
-    DateUtils.getRelativeTimeSpanString(
+    if (System.currentTimeMillis() - epochMillis in 0 until DateUtils.MINUTE_IN_MILLIS) "just now"
+    else DateUtils.getRelativeTimeSpanString(
         epochMillis,
         System.currentTimeMillis(),
         DateUtils.MINUTE_IN_MILLIS,
@@ -844,12 +845,20 @@ private fun SyncFunctionRow(
             statusText = if (waiting == 1) "1 item waiting to sync" else "$waiting items waiting to sync"
             statusColor = VineColors.Warning
         }
+        // This area keeps no download record at all (it loads with the
+        // vineyard or on demand), so "Not downloaded" would be untrue. Report
+        // only what is known: nothing of it is waiting to upload.
+        spec.syncTimeKey == null && readKnowledge == null && readError.isNullOrBlank() -> {
+            statusText = "Nothing waiting to upload"
+            statusColor = vine.textSecondary
+        }
         else -> {
             val downloaded = syncDownloadStatus(readKnowledge, lastSyncedAt != null, !readError.isNullOrBlank(), online)
-            statusText = downloaded.label + (lastSyncedAt?.let { " - " + relativeTime(it) } ?: "")
+            statusText = downloaded.label + (lastSyncedAt?.let { " " + relativeTime(it) } ?: "")
             statusColor = when (downloaded.tone) {
                 SyncDownloadTone.Current -> VineColors.Success
                 SyncDownloadTone.Attention -> VineColors.Destructive
+                SyncDownloadTone.Neutral -> vine.textSecondary
                 SyncDownloadTone.Saved, SyncDownloadTone.Waiting -> VineColors.Warning
             }
         }

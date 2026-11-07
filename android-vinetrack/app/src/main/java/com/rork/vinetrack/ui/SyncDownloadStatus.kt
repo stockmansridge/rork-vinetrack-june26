@@ -3,7 +3,7 @@ package com.rork.vinetrack.ui
 import com.rork.vinetrack.data.HomeReadKnowledge
 
 /** Download evidence is independent of whether the upload queue is empty. */
-internal enum class SyncDownloadTone { Current, Saved, Waiting, Attention }
+internal enum class SyncDownloadTone { Current, Saved, Waiting, Attention, Neutral }
 internal data class SyncDownloadStatus(val label: String, val tone: SyncDownloadTone)
 
 internal fun syncDownloadStatus(
@@ -29,10 +29,12 @@ internal fun syncDownloadStatus(
             if (online) "Up to date" else "Saved data - offline",
             if (online) SyncDownloadTone.Current else SyncDownloadTone.Saved,
         )
-        // A cache timestamp proves a past download, not that this attempt succeeded.
+        // A cache timestamp proves a past download, not that this attempt
+        // succeeded: show when it last synced, neutrally (not a warning, and
+        // never the green "Up to date" reserved for verified fresh reads).
         null -> SyncDownloadStatus(
-            if (hasRecordedDownload) "Last download recorded" else "Not downloaded",
-            if (hasRecordedDownload) SyncDownloadTone.Saved else SyncDownloadTone.Waiting,
+            if (hasRecordedDownload) "Last synced" else "Not downloaded",
+            if (hasRecordedDownload) SyncDownloadTone.Neutral else SyncDownloadTone.Waiting,
         )
     }
 }

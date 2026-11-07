@@ -9,6 +9,8 @@ on:
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/ActiveTripStore.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/HomeSyncStatus.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/SyncDownloadStatus.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/ui/SyncDownloadStatusTest.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SyncStatusScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripRepository.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt'
@@ -75,6 +77,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon --stacktrace :app:compileDebugKotlin :app:testDebugUnitTest \
             --tests "com.rork.vinetrack.data.HeldTripRecoveryTest" \
+            --tests "com.rork.vinetrack.ui.SyncDownloadStatusTest" \
             --tests "com.rork.vinetrack.data.TripEndTankClosureTest" \
             --tests "com.rork.vinetrack.data.TankSessionLifecycleTest" \
             --tests "com.rork.vinetrack.data.LegacySprayJournalQuarantineTest" \
