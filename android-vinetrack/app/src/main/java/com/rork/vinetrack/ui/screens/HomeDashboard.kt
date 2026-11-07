@@ -1251,7 +1251,7 @@ internal fun QuickActionsSection(
                     size = 36.dp,
                 )
                 Column(Modifier.weight(1f)) {
-                    Text("Permanent Item", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    Text("Permanent Item Pins", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                     Text("Fixed property assets", fontSize = 12.sp,
                         color = Color.White.copy(alpha = 0.85f), maxLines = 1)
                 }

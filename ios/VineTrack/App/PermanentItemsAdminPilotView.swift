@@ -357,7 +357,7 @@ struct PermanentItemsPilotShortcut: View {
                         BrightToolIcon(symbol: "mappin.circle.fill",
                                        colors: [.indigo, .purple], size: 36)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Permanent Item").font(.subheadline.weight(.semibold))
+                            Text("Permanent Item Pins").font(.subheadline.weight(.semibold))
                             Text(subtitle)
                                 .font(.caption)
                                 .foregroundStyle(.white.opacity(0.85))
