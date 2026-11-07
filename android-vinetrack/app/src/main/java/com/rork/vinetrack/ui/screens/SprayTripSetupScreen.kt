@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -58,6 +59,7 @@ import com.rork.vinetrack.data.spray.SprayTargetLibrary
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.BrightToolIcon
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
@@ -120,11 +122,10 @@ fun SprayTripSetupScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Icon(
-                    Icons.Filled.WaterDrop,
-                    contentDescription = null,
-                    tint = VineColors.LeafGreen,
-                    modifier = Modifier.size(44.dp),
+                BrightToolIcon(
+                    icon = Icons.Filled.WaterDrop,
+                    colors = listOf(VineColors.LeafGreen, VineColors.Cyan),
+                    size = 70.dp,
                 )
                 Spacer(Modifier.height(12.dp))
                 Text("Spray Trip Setup", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
@@ -139,19 +140,19 @@ fun SprayTripSetupScreen(
             Spacer(Modifier.height(24.dp))
 
             SprayTripSetupCard(
-                icon = { tint -> Icon(Icons.Filled.Schedule, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp)) },
+                icon = Icons.Filled.Schedule,
                 title = "Resume a Spray Program",
                 subtitle = "Continue an in-progress spray or start from a Program Step",
-                tint = VineColors.Indigo,
+                colors = listOf(VineColors.Indigo, VineColors.Purple),
                 enabled = true,
                 onClick = { showProgramPicker = true },
             )
             Spacer(Modifier.height(12.dp))
             SprayTripSetupCard(
-                icon = { tint -> Icon(Icons.Filled.Calculate, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp)) },
+                icon = Icons.Filled.Calculate,
                 title = "One-off Spray",
                 subtitle = "Open the spray calculator and configure a new job from scratch",
-                tint = VineColors.LeafGreen,
+                colors = listOf(VineColors.LeafGreen, VineColors.Cyan),
                 enabled = true,
                 onClick = { onOpenCalculator(null) },
             )
@@ -240,16 +241,15 @@ fun SprayTripSetupScreen(
 
 @Composable
 private fun SprayTripSetupCard(
-    icon: @Composable (Color) -> Unit,
+    icon: ImageVector,
     title: String,
     subtitle: String,
-    tint: Color,
+    colors: List<Color>,
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val vine = LocalVineColors.current
-    val effectiveTint = if (enabled) tint else vine.textSecondary
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -260,14 +260,18 @@ private fun SprayTripSetupCard(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(effectiveTint.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            icon(effectiveTint)
+        if (enabled) {
+            BrightToolIcon(icon = icon, colors = colors, size = 44.dp)
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(vine.textSecondary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(22.dp))
+            }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(

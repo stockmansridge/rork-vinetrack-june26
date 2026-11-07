@@ -44,10 +44,12 @@ struct SprayTripSetupSheet: View {
         NavigationStack {
             VStack(spacing: 0) {
                 VStack(spacing: 16) {
-                    Image(systemName: "sprinkler.and.droplets.fill")
-                        .font(.system(size: 44))
-                        .foregroundStyle(VineyardTheme.leafGreen.gradient)
-                        .padding(.top, 24)
+                    BrightToolIcon(
+                        symbol: "sprinkler.and.droplets.fill",
+                        colors: [VineyardTheme.leafGreen, .cyan],
+                        size: 70
+                    )
+                    .padding(.top, 24)
 
                     VStack(spacing: 6) {
                         Text("Spray Trip Setup")
@@ -67,7 +69,7 @@ struct SprayTripSetupSheet: View {
                         subtitle: SprayTripSetupOption.resumeProgram.subtitle(
                             programStepCount: programSteps.count
                         ),
-                        color: VineyardTheme.leafGreen,
+                        colors: [.indigo, .purple],
                         disabled: false
                     ) {
                         showResumeProgram = true
@@ -79,7 +81,7 @@ struct SprayTripSetupSheet: View {
                         subtitle: SprayTripSetupOption.oneOffSpray.subtitle(
                             programStepCount: programSteps.count
                         ),
-                        color: .blue,
+                        colors: [VineyardTheme.leafGreen, .cyan],
                         disabled: false
                     ) {
                         showCalculator = true
@@ -248,19 +250,22 @@ private struct SprayTripSetupCard: View {
     let icon: String
     let title: String
     let subtitle: String
-    let color: Color
+    let colors: [Color]
     var disabled: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 14) {
-                Image(systemName: icon)
-                    .font(.title2)
-                    .foregroundStyle(disabled ? .secondary : color)
-                    .frame(width: 44, height: 44)
-                    .background((disabled ? Color.secondary : color).opacity(0.12))
-                    .clipShape(.rect(cornerRadius: 10))
+                if disabled {
+                    Image(systemName: icon)
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
+                        .background(Color.secondary.opacity(0.12), in: .rect(cornerRadius: 10))
+                } else {
+                    BrightToolIcon(symbol: icon, colors: colors)
+                }
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
