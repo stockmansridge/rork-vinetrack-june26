@@ -410,7 +410,8 @@ struct PermanentItemsAdminPilotView: View {
     @State private var pending: PermanentItemPilotOperation?
     @State private var busy = false
     @State private var message: String?
-    @State private var archiveTarget: PermanentItemPilotRow?
+    @State private var typeFilter: String?
+    @State private var directionsItem: PermanentItemPilotRow?
     @State private var deleteTarget: PermanentItemPilotRow?
     @State private var pendingDelete: PermanentItemHardDeleteIntent?
     @State private var camera: MapCameraPosition = .automatic
@@ -437,11 +438,58 @@ struct PermanentItemsAdminPilotView: View {
     private var pendingKey: String {
         "permanent-item-op-v1|\(account?.uuidString ?? "none")|\(vineyard?.uuidString ?? "none")"
     }
+    private var activeRows: [PermanentItemPilotRow] { rows.filter { $0.archivedAt == nil } }
+    private var typesPresent: [String] {
+        Array(Set(activeRows.map(\.itemType)))
+            .sorted { PermanentItemsPilotPolicy.label($0, custom: customTypes)
+                < PermanentItemsPilotPolicy.label($1, custom: customTypes) }
+    }
+    /// A filter whose type no longer has any items falls back to All.
+    private var activeFilter: String? {
+        guard let typeFilter, typesPresent.contains(typeFilter) else { return nil }
+        return typeFilter
+    }
     private var visible: [PermanentItemPilotRow] {
-        rows.filter { (canHardDelete || $0.archivedAt == nil) &&
+        activeRows.filter { (activeFilter == nil || $0.itemType == activeFilter) &&
             (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) ||
              PermanentItemsPilotPolicy.label($0.itemType, custom: customTypes).localizedCaseInsensitiveContains(search)) }
-            .sorted { $0.name < $1.name }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+    private var actionsDisabled: Bool { busy || pending != nil || pendingDelete != nil }
+
+    @ViewBuilder
+    private var typeFilterBar: some View {
+        if typesPresent.count > 1 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    filterChip("All", color: nil, selected: activeFilter == nil) { typeFilter = nil }
+                    ForEach(typesPresent, id: \.self) { key in
+                        filterChip(PermanentItemsPilotPolicy.label(key, custom: customTypes),
+                                   color: PermanentItemsPilotPolicy.color(key, custom: customTypes),
+                                   selected: activeFilter == key) {
+                            typeFilter = activeFilter == key ? nil : key
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func filterChip(_ title: String, color: Color?, selected: Bool,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let color { Circle().fill(color).frame(width: 10, height: 10) }
+                Text(title).font(.subheadline.weight(selected ? .semibold : .regular))
+            }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .foregroundStyle(selected ? Color.blue : Color.primary)
+            .background(selected ? Color.blue.opacity(0.15) : Color(uiColor: .secondarySystemGroupedBackground),
+                        in: .capsule)
+            .overlay(Capsule().stroke(selected ? Color.blue.opacity(0.6) : Color(uiColor: .separator),
+                                      lineWidth: 0.6))
+        }
+        .buttonStyle(.plain)
     }
 
     var body: some View {
@@ -476,12 +524,12 @@ struct PermanentItemsAdminPilotView: View {
                         }
                         if let pendingDelete {
                             VStack(alignment: .leading, spacing: 8) {
-                                Label("Permanent delete pending confirmation or photo cleanup",
+                                Label("A delete is still pending",
                                       systemImage: "exclamationmark.triangle")
                                     .font(.footnote.bold())
                                 Text("Item \(pendingDelete.p_item_id.uuidString.prefix(8)); no second delete will be started.")
                                     .font(.caption)
-                                Button("Retry same permanent delete") {
+                                Button("Retry delete") {
                                     Task { await retryHardDelete() }
                                 }.disabled(!canHardDelete || busy)
                             }
@@ -501,6 +549,7 @@ struct PermanentItemsAdminPilotView: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(busy || pending != nil || pendingDelete != nil)
                         }
+                        typeFilterBar
                         HStack(spacing: 9) {
                             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                             TextField("Search permanent items", text: $search)
@@ -529,8 +578,8 @@ struct PermanentItemsAdminPilotView: View {
                                     .stroke(.yellow.opacity(0.9), lineWidth: 2)
                                 }
                             }
-                            // All fixtures remain visible regardless of text search.
-                            ForEach(rows.filter { $0.archivedAt == nil }) { item in
+                            // The map shows the same filtered items as the list.
+                            ForEach(visible) { item in
                                 Annotation(item.name, coordinate: item.coordinate) {
                                     Button {
                                         if canManage {
@@ -554,44 +603,31 @@ struct PermanentItemsAdminPilotView: View {
                         .frame(height: 290)
                         .clipShape(.rect(cornerRadius: 12))
                         ForEach(visible) { item in
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text(item.name).font(.headline)
-                                    if item.archivedAt != nil {
-                                        Text("Archived").font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
+                            PermanentItemListRow(
+                                item: item,
+                                typeLabel: PermanentItemsPilotPolicy.label(item.itemType, custom: customTypes),
+                                color: PermanentItemsPilotPolicy.color(item.itemType, custom: customTypes),
+                                blockName: store.paddocks.first { $0.id == item.paddockId }?.name,
+                                canEdit: canManage,
+                                canDelete: canHardDelete,
+                                onOpen: {
+                                    guard !actionsDisabled else { return }
+                                    if canManage { editing = item; showEditor = true }
+                                },
+                                onDirections: { directionsItem = item },
+                                onEdit: {
+                                    guard !actionsDisabled else { return }
+                                    editing = item; showEditor = true
+                                },
+                                onDelete: {
+                                    guard !actionsDisabled else { return }
+                                    deleteTarget = item
                                 }
-                                Text("\(PermanentItemsPilotPolicy.label(item.itemType, custom: customTypes)) · revision \(item.serverRevision)")
-                                    .foregroundStyle(PermanentItemsPilotPolicy.color(item.itemType, custom: customTypes))
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text(String(format: "%.6f, %.6f", item.latitude, item.longitude))
-                                    .font(.caption.monospaced())
-                                HStack {
-                                    Button("View on Map") {
-                                        camera = .region(MKCoordinateRegion(
-                                            center: item.coordinate,
-                                            span: MKCoordinateSpan(latitudeDelta: 0.002, longitudeDelta: 0.002)))
-                                    }
-                                    if canManage && item.archivedAt == nil {
-                                        Button("Edit / Move") {
-                                            editing = item; showEditor = true
-                                        }.disabled(busy || pending != nil || pendingDelete != nil)
-                                        Button("Archive") {
-                                            archiveTarget = item
-                                        }.disabled(busy || pending != nil || pendingDelete != nil)
-                                    }
-                                    if canHardDelete {
-                                        Button("Hard Delete", role: .destructive) {
-                                            deleteTarget = item
-                                        }.disabled(busy || pending != nil || pendingDelete != nil)
-                                    }
-                                }.buttonStyle(.bordered)
-                            }.frame(maxWidth: .infinity, alignment: .leading)
-                                .padding().background(.regularMaterial, in: .rect(cornerRadius: 12))
+                            )
                         }
-                        if rows.isEmpty && !busy {
-                            Text("No Permanent Items yet.").foregroundStyle(.secondary)
+                        if !busy && visible.isEmpty {
+                            Text(activeRows.isEmpty ? "No Permanent Items yet." : "No Permanent Items match this filter.")
+                                .foregroundStyle(.secondary)
                         }
                     }.padding()
                 }
@@ -635,35 +671,27 @@ struct PermanentItemsAdminPilotView: View {
             }
         }
         .confirmationDialog(
-            deleteTarget.map { "Permanently delete \($0.name)?" } ?? "Hard Delete Permanent Item?",
+            deleteTarget.map { "Delete \($0.name)?" } ?? "Delete Permanent Item?",
             isPresented: Binding(
                 get: { deleteTarget != nil },
                 set: { if !$0 { deleteTarget = nil } }
             ),
             titleVisibility: .visible
         ) {
-            Button("Delete Permanently", role: .destructive) {
+            Button("Delete", role: .destructive) {
                 if let target = deleteTarget { Task { await hardDelete(target) } }
                 deleteTarget = nil
             }
             Button("Cancel", role: .cancel) { deleteTarget = nil }
         } message: {
-            Text("This cannot be undone. The fixture, history entries and all attached photos will be permanently removed from every platform.")
+            Text("This cannot be undone. The item and its photos will be removed from iOS, Android and Portal.")
         }
-        .confirmationDialog("Archive this Permanent Item?",
-                            isPresented: Binding(
-                                get: { archiveTarget != nil },
-                                set: { if !$0 { archiveTarget = nil } }
-                            ), titleVisibility: .visible) {
-            Button("Archive", role: .destructive) {
-                if let target = archiveTarget {
-                    Task { await archive(target) }
-                }
-                archiveTarget = nil
-            }
-            Button("Cancel", role: .cancel) { archiveTarget = nil }
-        } message: {
-            Text("The fixture will disappear from the active map. Its history will remain.")
+        .sheet(item: $directionsItem) { item in
+            PermanentItemDirectionsSheet(
+                title: item.name,
+                coordinate: item.coordinate,
+                color: PermanentItemsPilotPolicy.color(item.itemType, custom: customTypes)
+            )
         }
     }
 
@@ -738,7 +766,7 @@ struct PermanentItemsAdminPilotView: View {
         pending = nil
         rows.removeAll { $0.id == result.id }
         rows.append(result)
-        message = "Synced · revision \(result.serverRevision)"
+        message = "Saved"
         return result
     }
 
@@ -1203,6 +1231,136 @@ private struct PermanentItemCameraPicker: UIViewControllerRepresentable {
         }
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             parent.dismiss()
+        }
+    }
+}
+
+/// Pins-list style row: header bar in the item's pin colour and compact actions.
+private struct PermanentItemListRow: View {
+    let item: PermanentItemPilotRow
+    let typeLabel: String
+    let color: Color
+    let blockName: String?
+    let canEdit: Bool
+    let canDelete: Bool
+    let onOpen: () -> Void
+    let onDirections: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(action: onOpen) {
+                HStack(spacing: 8) {
+                    Image(systemName: "mappin.circle.fill").foregroundStyle(.white)
+                    Text(item.name).font(.headline).foregroundStyle(.white).lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold()).foregroundStyle(.white.opacity(0.8))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(color.gradient)
+                .clipShape(.rect(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(typeLabel + (blockName.map { " · \($0)" } ?? ""))
+                    .font(.subheadline.weight(.semibold))
+                if let notes = item.notes, !notes.isEmpty {
+                    Text(notes).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+
+            HStack(spacing: 0) {
+                ActionButton(icon: "arrow.triangle.turn.up.right.diamond", label: "Directions",
+                             color: VineyardTheme.leafGreen, action: onDirections)
+                if canEdit {
+                    Spacer()
+                    ActionButton(icon: "pencil", label: "Edit", color: .blue, action: onEdit)
+                }
+                if canDelete {
+                    Spacer()
+                    ActionButton(icon: "trash", label: "Delete", color: .red, action: onDelete)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(12)
+        .background(.regularMaterial, in: .rect(cornerRadius: 12))
+    }
+}
+
+/// Direct-line directions to a Permanent Item (same as the Pins directions sheet).
+private struct PermanentItemDirectionsSheet: View {
+    let title: String
+    let coordinate: CLLocationCoordinate2D
+    let color: Color
+    @Environment(\.dismiss) private var dismiss
+    @Environment(LocationService.self) private var locationService
+    @Environment(MigratedDataStore.self) private var store
+    @State private var position: MapCameraPosition = .automatic
+
+    private var userCoordinate: CLLocationCoordinate2D? { locationService.location?.coordinate }
+
+    private var distanceText: String {
+        guard let userLocation = locationService.location else { return "—" }
+        let target = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        return "\(store.settings.regionFormatter.formatShortDistance(metres: userLocation.distance(from: target))) away"
+    }
+
+    private var bearing: Double {
+        guard let user = userCoordinate else { return 0 }
+        let lat1 = user.latitude * .pi / 180
+        let lat2 = coordinate.latitude * .pi / 180
+        let dLon = (coordinate.longitude - user.longitude) * .pi / 180
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        return atan2(y, x) * 180 / .pi
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Map(position: $position) {
+                    Annotation(title, coordinate: coordinate) {
+                        ZStack {
+                            Circle().fill(color.gradient).frame(width: 36, height: 36)
+                            Image(systemName: "mappin").font(.caption.bold()).foregroundStyle(.white)
+                        }
+                    }
+                    if let user = userCoordinate {
+                        MapPolyline(coordinates: [user, coordinate])
+                            .stroke(.blue, style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
+                    }
+                    UserAnnotation()
+                }
+                .mapStyle(.hybrid)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(.headline)
+                        Text(distanceText).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "location.north.line")
+                        .font(.title2)
+                        .foregroundStyle(VineyardTheme.info)
+                        .rotationEffect(.degrees(bearing))
+                }
+                .padding()
+                .background(Color(.secondarySystemGroupedBackground))
+            }
+            .navigationTitle("Directions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+            }
+            .onAppear {
+                locationService.requestPermission()
+                locationService.startUpdating()
+            }
         }
     }
 }

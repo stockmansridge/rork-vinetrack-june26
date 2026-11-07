@@ -25,6 +25,21 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Directions
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Place
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.theme.LocalVineColors
+import com.rork.vinetrack.ui.theme.VineColors
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -144,7 +159,9 @@ fun PermanentItemsAdminPilotScreen(
     var search by remember(user, vineyard) { mutableStateOf("") }
     var editing by remember(user, vineyard) { mutableStateOf(false) }
     var selected by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
-    var archiveTarget by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
+    var typeFilter by remember(user, vineyard) { mutableStateOf<String?>(null) }
+    var directionsItem by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
+    var userLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var deleteTarget by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
     var name by remember(user, vineyard) { mutableStateOf("") }
     var type by remember(user, vineyard) { mutableStateOf("irrigation_valve") }
@@ -233,7 +250,7 @@ fun PermanentItemsAdminPilotScreen(
                     pending = false
                     selected = saved
                     editing = false
-                    notice = "Synced · revision " + saved.serverRevision
+                    notice = "Saved"
                 }
             } catch (e: Exception) {
                 if (state.selectedVineyardId == target && state.currentUserId == user) {
@@ -250,7 +267,7 @@ fun PermanentItemsAdminPilotScreen(
         if (locked || !canHardDelete || busy || pending) return
         val already = pendingDelete
         if (already != null && item != null && already.itemId != item.id) {
-            error = "Finish the pending hard delete before deleting another item."
+            error = "Finish the pending delete before deleting another item."
             return
         }
         val intent = already ?: item?.let { repository.hardDeleteIntent(it) } ?: return
@@ -262,7 +279,7 @@ fun PermanentItemsAdminPilotScreen(
                 if (state.selectedVineyardId == target && state.currentUserId == user) {
                     pendingDelete = null
                     rows = repository.list(target)
-                    notice = "Permanently deleted. All attached photos removed."
+                    notice = "Deleted."
                     deleteTarget = null
                     selected = null
                 }
@@ -512,11 +529,11 @@ fun PermanentItemsAdminPilotScreen(
                 Text("Fixed fixtures, independent of Repairs and Observations.",
                     style = MaterialTheme.typography.bodySmall)
                 if (pendingDelete != null && canHardDelete) {
-                    Text("Permanent delete or private photo cleanup pending.",
+                    Text("A delete is still pending.",
                         color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.SemiBold)
                     Button(onClick = { hardDelete() }, enabled = !busy) {
-                        Text("Retry same permanent delete")
+                        Text("Retry delete")
                     }
                 }
                 if (pending && canManage) {
@@ -529,7 +546,7 @@ fun PermanentItemsAdminPilotScreen(
                         scope.launch {
                             try {
                                 val row = repository.retry(target)
-                                notice = "Synced · revision " + row.serverRevision
+                                notice = "Saved"
                                 error = null
                                 rows = repository.list(target)
                             } catch (e: Exception) {
@@ -550,6 +567,34 @@ fun PermanentItemsAdminPilotScreen(
                         Text("New Permanent Item")
                     }
                 }
+                // Type filter at the top: All + each type that has an item.
+                val active = rows.filter { it.archivedAt == null }
+                val typesPresent = active.map { it.itemType }.distinct()
+                    .sortedBy { PermanentItemPilotPolicy.label(it, customTypes) }
+                val activeFilter = typeFilter?.takeIf { it in typesPresent }
+                if (typesPresent.size > 1) Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val chipColors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = VineColors.Primary.copy(alpha = 0.18f),
+                        selectedLabelColor = VineColors.Primary,
+                    )
+                    FilterChip(selected = activeFilter == null, onClick = { typeFilter = null },
+                        label = { Text("All") }, colors = chipColors)
+                    typesPresent.forEach { key ->
+                        FilterChip(
+                            selected = activeFilter == key,
+                            onClick = { typeFilter = if (activeFilter == key) null else key },
+                            label = { Text(PermanentItemPilotPolicy.label(key, customTypes)) },
+                            leadingIcon = {
+                                Box(Modifier.size(10.dp).background(
+                                    permanentItemColor(key, customTypes), CircleShape))
+                            },
+                            colors = chipColors,
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = search, onValueChange = { search = it },
                     label = { Text("Search permanent items") },
@@ -560,13 +605,12 @@ fun PermanentItemsAdminPilotScreen(
                         }
                     }
                 )
-                val visible = rows.filter { (canHardDelete || it.archivedAt == null) &&
+                val visible = active.filter { (activeFilter == null || it.itemType == activeFilter) &&
                     (search.isBlank() || it.name.contains(search, true) ||
                         PermanentItemPilotPolicy.label(it.itemType, customTypes).contains(search, true))
                 }
-                val allMarkers = rows.filter { it.archivedAt == null }
-                // Overview always renders every pin and vineyard block boundary.
-                // Search filters the list only; future type/layer filters are deliberately omitted.
+                // The map shows the same filtered items as the list.
+                val allMarkers = visible
                 val fallback = state.paddocks.firstNotNullOfOrNull { block ->
                     block.polygonPoints?.firstOrNull()?.let { LatLng(it.latitude, it.longitude) }
                 } ?: LatLng(-34.0, 138.0)
@@ -607,51 +651,34 @@ fun PermanentItemsAdminPilotScreen(
                 }
                 Column(
                     Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    visible.sortedBy { it.name }.forEach { item ->
-                        Column(
-                            Modifier.fillMaxWidth().clickable { startEditor(item) }.padding(vertical = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(item.name, fontWeight = FontWeight.SemiBold)
-                                if (item.archivedAt != null) Text(" · Archived",
-                                    style = MaterialTheme.typography.labelSmall)
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Box(Modifier.size(14.dp).background(
-                                    Color(android.graphics.Color.parseColor(
-                                        PermanentItemPilotPolicy.hex(item.itemType, customTypes))),
-                                    CircleShape))
-                                Text(PermanentItemPilotPolicy.label(item.itemType, customTypes) +
-                                    " · revision " + item.serverRevision,
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
-                            Text("%.6f, %.6f".format(item.latitude, item.longitude),
-                                style = MaterialTheme.typography.bodySmall)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (canManage && item.archivedAt == null) {
-                                    OutlinedButton(onClick = { startEditor(item) },
-                                        enabled = !busy && !pending && pendingDelete == null) {
-                                        Text("Edit / Move")
-                                    }
-                                    OutlinedButton(onClick = { archiveTarget = item },
-                                        enabled = !busy && !pending && pendingDelete == null) {
-                                        Text("Archive")
+                    val actionsEnabled = !busy && !pending && pendingDelete == null
+                    visible.sortedBy { it.name.lowercase() }.forEach { item ->
+                        PermanentItemListRow(
+                            item = item,
+                            typeLabel = PermanentItemPilotPolicy.label(item.itemType, customTypes),
+                            color = permanentItemColor(item.itemType, customTypes),
+                            blockName = state.paddocks.firstOrNull {
+                                it.id.equals(item.paddockId, true)
+                            }?.name,
+                            canEdit = canManage,
+                            canDelete = canHardDelete,
+                            onOpen = { if (actionsEnabled) startEditor(item) },
+                            onDirections = {
+                                directionsItem = item
+                                scope.launch {
+                                    location.currentLocation()?.let {
+                                        userLocation = it.latitude to it.longitude
                                     }
                                 }
-                                if (canHardDelete) {
-                                    OutlinedButton(onClick = { deleteTarget = item },
-                                        enabled = !busy && !pending && pendingDelete == null) {
-                                        Text("Hard Delete", color = MaterialTheme.colorScheme.error)
-                                    }
-                                }
-                            }
-                        }
+                            },
+                            onEdit = { if (actionsEnabled) startEditor(item) },
+                            onDelete = { if (actionsEnabled) deleteTarget = item },
+                        )
                     }
-                    if (visible.isEmpty()) Text("No Permanent Items in this filter.")
+                    if (visible.isEmpty()) Text(
+                        if (active.isEmpty()) "No Permanent Items yet." else "No Permanent Items match this filter.")
                 }
             }
         }
@@ -751,10 +778,9 @@ fun PermanentItemsAdminPilotScreen(
         val current = deleteTarget
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            title = { Text("Permanently delete " + (current?.name ?: "this item") + "?") },
+            title = { Text("Delete " + (current?.name ?: "this item") + "?") },
             text = {
-                Text("This cannot be undone. The Permanent Item, its history entries " +
-                    "and all attached photos will be permanently removed from iOS, Android and Portal.")
+                Text("This cannot be undone. The item and its photos will be removed from iOS, Android and Portal.")
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -762,7 +788,7 @@ fun PermanentItemsAdminPilotScreen(
                     deleteTarget = null
                     hardDelete(item)
                 }, enabled = canHardDelete && !busy && !pending && pendingDelete == null) {
-                    Text("Delete Permanently", color = MaterialTheme.colorScheme.error)
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -771,22 +797,72 @@ fun PermanentItemsAdminPilotScreen(
         )
     }
 
-    if (archiveTarget != null) {
-        AlertDialog(
-            onDismissRequest = { archiveTarget = null },
-            title = { Text("Archive Permanent Item?") },
-            text = { Text("This fixture will leave the active map, but remain in history.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    val item = archiveTarget ?: return@TextButton
-                    archiveTarget = null
-                    selected = item
-                    name = item.name; type = item.itemType; lat = item.latitude.toString()
-                    lon = item.longitude.toString(); notes = item.notes ?: ""; blockId = item.paddockId
-                    save("archive", item)
-                }) { Text("Archive") }
-            },
-            dismissButton = { TextButton(onClick = { archiveTarget = null }) { Text("Cancel") } }
+    directionsItem?.let { item ->
+        CoordinateDirectionsDialog(
+            id = item.id,
+            title = item.name,
+            latitude = item.latitude,
+            longitude = item.longitude,
+            color = permanentItemColor(item.itemType, customTypes),
+            userLocation = userLocation,
+            onDismiss = { directionsItem = null },
         )
+    }
+}
+
+private fun permanentItemColor(type: String, custom: List<PermanentItemPilotType>): Color =
+    runCatching { Color(android.graphics.Color.parseColor(PermanentItemPilotPolicy.hex(type, custom))) }
+        .getOrDefault(Color(0xFFA8559A))
+
+/** Pins-list style row: header bar in the item's pin colour and compact actions. */
+@Composable
+private fun PermanentItemListRow(
+    item: PermanentItemPilotRow,
+    typeLabel: String,
+    color: Color,
+    blockName: String?,
+    canEdit: Boolean,
+    canDelete: Boolean,
+    onOpen: () -> Unit,
+    onDirections: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val onColor = if (color.luminance() > 0.6f) Color.Black else Color.White
+    VineyardCard {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(color)
+                    .clickable(onClick = onOpen)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(Icons.Filled.Place, contentDescription = null, tint = onColor,
+                    modifier = Modifier.size(18.dp))
+                Text(item.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = onColor,
+                    maxLines = 1, modifier = Modifier.weight(1f))
+                Icon(Icons.Filled.ChevronRight, contentDescription = null,
+                    tint = onColor.copy(alpha = 0.8f), modifier = Modifier.size(18.dp))
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(typeLabel + (blockName?.let { " · $it" } ?: ""), fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                if (!item.notes.isNullOrBlank()) Text(item.notes, fontSize = 13.sp,
+                    color = vine.textSecondary, maxLines = 2)
+            }
+            Row(modifier = Modifier.fillMaxWidth()) {
+                PinActionButton(Icons.Filled.Directions, "Directions", VineColors.Primary,
+                    modifier = Modifier.weight(1f), onClick = onDirections)
+                if (canEdit) PinActionButton(Icons.Filled.Edit, "Edit", VineColors.Purple,
+                    modifier = Modifier.weight(1f), onClick = onEdit)
+                if (canDelete) PinActionButton(Icons.Filled.Delete, "Delete", VineColors.Destructive,
+                    modifier = Modifier.weight(1f), onClick = onDelete)
+            }
+        }
     }
 }
