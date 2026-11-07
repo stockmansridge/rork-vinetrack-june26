@@ -724,6 +724,26 @@ class TripRepository(private val session: SessionStore) {
      * metadata-edit replay stale-guard. Returns null when the trip is missing
      * or soft-deleted so the caller can block an edit against a vanished trip.
      */
+    /**
+     * True when the server holds this Trip (including a deleted one) or any
+     * Spray record with this id or linked to this Trip. Used only before an
+     * owner removes a held local original the server never received.
+     */
+    suspend fun serverHasTripOrSpray(tripId: String, sprayId: String): Boolean = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        suspend fun any(path: String): Boolean {
+            val response = SupabaseClient.http.get(SupabaseClient.restUrl(path)) { authHeaders(token) }
+            return when {
+                response.status.isSuccess() -> response.body<List<kotlinx.serialization.json.JsonObject>>().isNotEmpty()
+                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            }
+        }
+        any("trips?id=eq.$tripId&select=id") ||
+            any("spray_records?or=(id.eq.$sprayId,trip_id.eq.$tripId)&select=id")
+    }
+
     suspend fun fetchTrip(id: String, accountAccess: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null): Trip? = withContext(Dispatchers.IO) {
         if (accountAccess != null && !session.isAccountAccessCurrent(accountAccess)) throw BackendError.Unauthorized
         requireConfig()

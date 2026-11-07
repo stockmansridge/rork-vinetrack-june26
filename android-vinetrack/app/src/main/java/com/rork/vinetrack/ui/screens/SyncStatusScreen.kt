@@ -48,6 +48,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -164,6 +165,7 @@ fun SyncStatusScreen(
     // selecting an item only opens a sheet; nothing about the outbox row
     // changes. Cleared when the sheet closes.
     var detailItem by remember { mutableStateOf<PendingSyncItem?>(null) }
+    var pendingLegacyRemoval by remember { mutableStateOf<com.rork.vinetrack.ui.LegacyHoldNotice?>(null) }
     Scaffold(
         modifier = modifier,
         containerColor = vine.appBackground,
@@ -229,10 +231,31 @@ fun SyncStatusScreen(
             SectionHeader("Pending Sync", onLight = true)
             state.legacyReplayHolds.forEach { original ->
                 VineyardCard {
-                    Text("Original Save for Later · held for recovery", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                    Text(original, fontSize = 13.sp, color = vine.textSecondary)
-                    Text("Inspect the scoped Trip diagnostic report below. Do not clear storage or recreate the job.", fontSize = 12.sp, color = vine.textSecondary)
+                    Text("A saved spray job couldn't be uploaded", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Text("This spray job was saved for later on this phone with an earlier version of VineTrack and can't be checked, so it hasn't been uploaded. Your other records are not affected.",
+                        fontSize = 13.sp, color = vine.textSecondary)
+                    if (original.tripId != null && original.sprayId != null) {
+                        TextButton(onClick = { pendingLegacyRemoval = original }) { Text("Check server and remove") }
+                    } else {
+                        Text("Tap Copy diagnostics and send them to support.", fontSize = 12.sp, color = vine.textSecondary)
+                    }
                 }
+            }
+            pendingLegacyRemoval?.let { notice ->
+                AlertDialog(
+                    onDismissRequest = { pendingLegacyRemoval = null },
+                    title = { Text("Remove this saved spray job?") },
+                    text = { Text("VineTrack checks the server first and only removes it if the server never received it. If you still need this spray, plan it again afterwards.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            pendingLegacyRemoval = null
+                            vm.removeNeverUploadedLegacyHold(notice) { message ->
+                                scope.launch { snackbarHostState.showSnackbar(message) }
+                            }
+                        }) { Text("Check and remove") }
+                    },
+                    dismissButton = { TextButton(onClick = { pendingLegacyRemoval = null }) { Text("Cancel") } },
+                )
             }
             if (state.phase5OperationHolds.isNotEmpty()) {
                 VineyardCard {

@@ -9,6 +9,8 @@ on:
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/ActiveTripStore.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/HomeSyncStatus.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SyncStatusScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripRepository.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/MainActivity.kt'
       - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/HeldTripRecoveryTest.kt'

@@ -490,6 +490,9 @@ data class PendingTankStart(
     val result: com.rork.vinetrack.data.TankStartResult,
 )
 
+/** A held original Save for Later: plain identity for actions, technical text for diagnostics only. */
+data class LegacyHoldNotice(val tripId: String?, val sprayId: String?, val technical: String)
+
 data class AppUiState(
     val route: AppRoute = AppRoute.Restoring,
     /**
@@ -582,7 +585,7 @@ data class AppUiState(
     /** Nonidentifying guidance for the independent actual pending authority. */
     val tankActualSyncNotice: String? = null,
     /** Issue #41: original legacy jobs, never a global error on a modern Spray Mix. */
-    val legacyReplayHolds: List<String> = emptyList(),
+    val legacyReplayHolds: List<LegacyHoldNotice> = emptyList(),
     val phase5ReplayStage: String = "NOT_RUN_THIS_PROCESS",
     val phase5OperationHolds: Map<String, String> = emptyMap(),
     /** P0 Phase C: Trips with unacknowledged local tank actuals; never shown as synced. */
@@ -3056,6 +3059,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }.onFailure { lines += "failure_code: LEGACY_EVIDENCE_INSPECTION_HELD; original_bytes_retained; cause: ${com.rork.vinetrack.data.LegacySprayJournalQuarantine.describe(it)}" }
                 runCatching { legacySpraySaves.quarantineDiagnostics() }.onSuccess { lines += it }
                     .onFailure { lines += "legacy_journal_set_aside: unreadable (${it.javaClass.simpleName})" }
+                state.legacyReplayHolds.forEach { lines += "legacy_hold: ${it.technical}" }
                 runCatching { sprayTankActualStore.pendingOwned(access).filter { it.vineyardId == vineyard } }.onSuccess { actuals ->
                     lines += "owned_pending_actual_rows: ${actuals.size}; excludes_foreign_or_correction_evidence"
                     val snapshotTrip = runCatching { activeTripStore.load() }.getOrNull()
@@ -3474,7 +3478,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     it.ownerId == session.userId && it.vineyardId == state.selectedVineyardId
                 }.map { it.status }
             result = homeSyncStatus(state, scoped.map { it.toSyncItem(starts, changes) }, photos,
-                evidenceNeedsAttention = pendingWrites.readIssue.value != null || pinEvidenceReadIssue.value != null,
+                // A held original Save for Later is unsent work: never show green "Synced" over it.
+                evidenceNeedsAttention = pendingWrites.readIssue.value != null || pinEvidenceReadIssue.value != null ||
+                    state.legacyReplayHolds.isNotEmpty(),
                 writesHeld = state.selectedVineyardId?.let { vineyard ->
                     state.accessMatrix?.operationalAccessByVineyard?.get(vineyard)?.isTrialExpiredReadOnly
                 } == true)
@@ -4136,10 +4142,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val vineyard = _ui.value.selectedVineyardId
         val notices = inspection?.held?.filter { h ->
             (h.owner == null || h.owner == owner) && (h.vineyard == null || h.vineyard == vineyard)
-        }?.map { h -> "${h.code}: Trip ${h.trip ?: "identity unreadable"}; Spray ${h.record ?: "identity unreadable"}; " +
-            "vineyard ${h.vineyard ?: "unknown"}; journal entry ${h.index}. Original evidence retained; original-job recovery required." }
-            ?: listOf("LEGACY_JOURNAL_READ_FAILURE: identity unresolved; original evidence retained.")
+        }?.map { h -> LegacyHoldNotice(h.trip, h.record, "${h.code}: Trip ${h.trip ?: "identity unreadable"}; Spray ${h.record ?: "identity unreadable"}; " +
+            "vineyard ${h.vineyard ?: "unknown"}; journal entry ${h.index}. Original evidence retained; original-job recovery required.") }
+            ?: listOf(LegacyHoldNotice(null, null, "LEGACY_JOURNAL_READ_FAILURE: identity unresolved; original evidence retained."))
         _ui.update { it.copy(legacyReplayHolds = notices) }
+    }
+
+    /**
+     * Owner action on Sync Status for a held original Save for Later. Removes
+     * it from sync only after the server confirms it has neither the Trip nor
+     * any Spray record for it; the original bytes stay on the device.
+     */
+    fun removeNeverUploadedLegacyHold(notice: LegacyHoldNotice, onResult: (String) -> Unit) {
+        val trip = notice.tripId
+        val spray = notice.sprayId
+        val owner = session.userId
+        if (trip == null || spray == null || owner == null) {
+            onResult("This saved job can't be identified, so it can't be removed here. Copy diagnostics and send them to support.")
+            return
+        }
+        if (!_ui.value.isOnline) {
+            onResult("Connect to the internet so VineTrack can check the server first. Nothing was removed.")
+            return
+        }
+        viewModelScope.launch {
+            val message = runCatching {
+                if (tripRepo.serverHasTripOrSpray(trip, spray)) {
+                    "This job is on the server, so it wasn't removed. Copy diagnostics and send them to support."
+                } else {
+                    legacySpraySaves.retireNeverUploaded(owner, trip, spray)
+                    publishLegacyReplayInspection()
+                    "Removed. The server never received this saved job."
+                }
+            }.getOrElse { "The server couldn't be checked, so nothing was removed. Try again when connected." }
+            onResult(message)
+        }
     }
 
     /** In-process stage observation, not a server acknowledgement or upload-attempt counter. */
