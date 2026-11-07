@@ -450,7 +450,16 @@ struct ActiveTripView: View {
         validSpeedSamples.removeAll { $0.date < cutoff }
     }
 
+    /// Diagnostic timing of this view's body construction (no effect unless
+    /// Performance Diagnostics capture is on). Not layout or rendering time.
     var body: some View {
+        let timing = PerformanceCapture.shared.beginComputation()
+        let content = timedBody
+        PerformanceCapture.shared.endComputation(timing, label: "Live Trip screen body", records: timing == nil ? 0 : tracking.takeActiveTripReadCount())
+        return content
+    }
+
+    @ViewBuilder private var timedBody: some View {
         VStack(spacing: 0) {
             if let message = tracking.occurrenceActivationMessage {
                 VStack(alignment: .leading, spacing: 4) {
@@ -2251,7 +2260,17 @@ private struct LiveTripMapLayers: View, Equatable {
         return true
     }
 
+    /// Diagnostic timing of this view's body construction (no effect unless
+    /// Performance Diagnostics capture is on). Not layout or rendering time.
     var body: some View {
+        let timing = PerformanceCapture.shared.beginComputation()
+        let content = timedBody
+        PerformanceCapture.shared.endComputation(timing, label: "Live Trip map layers body", records: timing == nil ? 0 : paddocks.reduce(0) { $0 + $1.rows.count })
+        PerformanceCapture.shared.endComputation(timing, label: "Live Trip map pins drawn", records: pins.count)
+        return content
+    }
+
+    @ViewBuilder private var timedBody: some View {
         Map(position: $position) {
             ForEach(paddocks) { paddock in
                 if paddock.polygonPoints.count >= 3 {

@@ -43,7 +43,16 @@ struct TripView: View {
     @State private var showTripChoice: Bool = false
     @State private var showSpraySetup: Bool = false
 
+    /// Diagnostic timing of this view's body construction (no effect unless
+    /// Performance Diagnostics capture is on). Not layout or rendering time.
     var body: some View {
+        let timing = PerformanceCapture.shared.beginComputation()
+        let content = timedBody
+        PerformanceCapture.shared.endComputation(timing, label: "Trip tab body", records: timing == nil ? 0 : 0)
+        return content
+    }
+
+    @ViewBuilder private var timedBody: some View {
         NavigationStack {
             Group {
                 if let active = tracking.activeTrip, active.vineyardId == store.selectedVineyardId, !historyOnly {

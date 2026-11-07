@@ -270,7 +270,16 @@ struct PinsView: View {
         }.sorted { $0.name < $1.name }
     }
 
+    /// Diagnostic timing of this view's body construction (no effect unless
+    /// Performance Diagnostics capture is on). Not layout or rendering time.
     var body: some View {
+        let timing = PerformanceCapture.shared.beginComputation()
+        let content = timedBody
+        PerformanceCapture.shared.endComputation(timing, label: "Pins tab body", records: timing == nil ? 0 : 0)
+        return content
+    }
+
+    @ViewBuilder private var timedBody: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {

@@ -16,6 +16,7 @@ on:
       - 'ios/VineTrack/LegacyImported/Models/EngineHoursInput.swift'
       - 'ios/VineTrack/LegacyImported/Views/Trips/**'
       - 'ios/VineTrack/App/NewMainTabView.swift'
+      - 'ios/VineTrack/LegacyImported/Views/Pins/PinsView.swift'
       - 'ios/VineTrack/App/SprayCalculatorView.swift'
       - 'ios/VineTrack/App/SprayTripStartConfirmationSheet.swift'
       - 'ios/VineTrack/Backend/Sync/TripSyncService.swift'

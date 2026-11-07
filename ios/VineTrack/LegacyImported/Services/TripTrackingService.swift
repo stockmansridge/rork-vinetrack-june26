@@ -323,7 +323,15 @@ final class TripTrackingService {
 
     @ObservationIgnored private var projectedActiveTripCache: (trip: Trip, journal: Data, projected: Trip)?
 
+    /// Diagnostics only: how often the live screen read `activeTrip`.
+    @ObservationIgnored private var activeTripReadCount = 0
+    func takeActiveTripReadCount() -> Int {
+        defer { activeTripReadCount = 0 }
+        return activeTripReadCount
+    }
+
     var activeTrip: Trip? {
+        activeTripReadCount &+= 1
         guard let store, store.isDeviceTripOwner, let id = store.deviceActiveTripId else { return nil }
         guard let trip = store.trips.first(where: { $0.id == id && $0.isActive && $0.endTime == nil && $0.vineyardId == store.selectedVineyardId }) else { return nil }
         guard trip.coverageBasis == .occurrence else { return trip }
@@ -2760,7 +2768,7 @@ final class TripTrackingService {
             vineyardId: trip.vineyardId.uuidString.lowercased(), tripId: trip.id.uuidString.lowercased()),
             authority: store?.operationalWriteAuthority ?? .shared,
             createDirectoryIfMissing: initializeIfMissing)
-        if initializeIfMissing, try journal.load() == nil {
+        if initializeIfMissing, try cachedSnapshot(journal) == nil {
             try (store?.operationalWriteAuthority ?? .shared).requireWrite(vineyardId: trip.vineyardId.uuidString)
             guard let raw = trip.occurrenceCoverage else { throw TripOccurrenceCoverage.Failure.updateRequired }
             try journal.initialize(raw, requiresRecovery: true)

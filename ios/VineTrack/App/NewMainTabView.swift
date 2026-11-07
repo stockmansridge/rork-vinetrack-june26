@@ -1029,7 +1029,16 @@ struct NewHomeTabView: View {
     #endif
 
 
+    /// Diagnostic timing of this view's body construction (no effect unless
+    /// Performance Diagnostics capture is on). Not layout or rendering time.
     var body: some View {
+        let timing = PerformanceCapture.shared.beginComputation()
+        let content = timedBody
+        PerformanceCapture.shared.endComputation(timing, label: "Home tab body", records: timing == nil ? 0 : 0)
+        return content
+    }
+
+    @ViewBuilder private var timedBody: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
