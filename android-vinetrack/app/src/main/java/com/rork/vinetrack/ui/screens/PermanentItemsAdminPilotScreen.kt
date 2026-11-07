@@ -30,6 +30,17 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.foundation.horizontalScroll
@@ -162,6 +173,9 @@ fun PermanentItemsAdminPilotScreen(
     var typeFilter by remember(user, vineyard) { mutableStateOf<String?>(null) }
     var directionsItem by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
     var userLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var photoItem by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
+    var photoBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var photoError by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
     var name by remember(user, vineyard) { mutableStateOf("") }
     var type by remember(user, vineyard) { mutableStateOf("irrigation_valve") }
@@ -664,6 +678,24 @@ fun PermanentItemsAdminPilotScreen(
                             }?.name,
                             canEdit = canManage,
                             canDelete = canHardDelete,
+                            onViewImage = item.photoPath?.let { path -> {
+                                photoItem = item; photoBitmap = null; photoError = null
+                                scope.launch {
+                                    try {
+                                        val bytes = repository.downloadPhoto(path)
+                                        val bitmap = withContext(Dispatchers.Default) {
+                                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                        }
+                                        if (photoItem?.id == item.id) {
+                                            if (bitmap != null) photoBitmap = bitmap.asImageBitmap()
+                                            else photoError = "This photo could not be opened."
+                                        }
+                                    } catch (e: Exception) {
+                                        if (photoItem?.id == item.id) photoError =
+                                            "Could not load the photo. Check your connection and try again."
+                                    }
+                                }
+                            } },
                             onOpen = { if (actionsEnabled) startEditor(item) },
                             onDirections = {
                                 directionsItem = item
@@ -797,6 +829,12 @@ fun PermanentItemsAdminPilotScreen(
         )
     }
 
+    photoItem?.let { item ->
+        PermanentItemPhotoViewer(
+            title = item.name, bitmap = photoBitmap, error = photoError,
+            onDismiss = { photoItem = null; photoBitmap = null; photoError = null },
+        )
+    }
     directionsItem?.let { item ->
         CoordinateDirectionsDialog(
             id = item.id,
@@ -823,6 +861,8 @@ private fun PermanentItemListRow(
     blockName: String?,
     canEdit: Boolean,
     canDelete: Boolean,
+    /** Non-null only when the item has a photo. */
+    onViewImage: (() -> Unit)?,
     onOpen: () -> Unit,
     onDirections: () -> Unit,
     onEdit: () -> Unit,
@@ -856,12 +896,60 @@ private fun PermanentItemListRow(
                     color = vine.textSecondary, maxLines = 2)
             }
             Row(modifier = Modifier.fillMaxWidth()) {
+                if (onViewImage != null) PinActionButton(Icons.Filled.Photo, "View Image", VineColors.Purple,
+                    modifier = Modifier.weight(1f), onClick = onViewImage)
                 PinActionButton(Icons.Filled.Directions, "Directions", VineColors.Primary,
                     modifier = Modifier.weight(1f), onClick = onDirections)
                 if (canEdit) PinActionButton(Icons.Filled.Edit, "Edit", VineColors.Purple,
                     modifier = Modifier.weight(1f), onClick = onEdit)
                 if (canDelete) PinActionButton(Icons.Filled.Delete, "Delete", VineColors.Destructive,
                     modifier = Modifier.weight(1f), onClick = onDelete)
+            }
+        }
+    }
+}
+
+/** Full-screen photo with pinch to zoom; tap X to close. */
+@Composable
+private fun PermanentItemPhotoViewer(
+    title: String,
+    bitmap: ImageBitmap?,
+    error: String?,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        var scale by remember { mutableStateOf(1f) }
+        var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            when {
+                bitmap != null -> Image(
+                    bitmap = bitmap,
+                    contentDescription = "Photo of $title",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(1f, 5f)
+                                offset = if (scale == 1f) androidx.compose.ui.geometry.Offset.Zero else offset + pan
+                            }
+                        }
+                        .graphicsLayer(scaleX = scale, scaleY = scale,
+                            translationX = offset.x, translationY = offset.y),
+                )
+                error != null -> Text(error, color = Color.White,
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp))
+                else -> CircularProgressIndicator(color = Color.White,
+                    modifier = Modifier.align(Alignment.Center))
+            }
+            Row(Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.45f))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(title, color = Color.White, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close photo", tint = Color.White)
+                }
             }
         }
     }
