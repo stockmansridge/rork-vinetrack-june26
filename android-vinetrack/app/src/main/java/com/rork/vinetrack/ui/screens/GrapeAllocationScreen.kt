@@ -121,6 +121,8 @@ fun GrapeAllocationScreen(
     var creating by remember(state.selectedVineyardId) { mutableStateOf(false) }
     var deleteCandidate by remember(state.selectedVineyardId) { mutableStateOf<GrapeAllocation?>(null) }
     var expandedVarieties by remember(state.selectedVineyardId, reportVintage) { mutableStateOf<Set<String>>(emptySet()) }
+    // Full-width toggle under Income Breakdown: show Varieties or Allocations.
+    var showAllocations by rememberSaveable { mutableStateOf(false) }
     val scopedAllocations = state.grapeAllocations.filter { it.vineyardId.equals(state.selectedVineyardId, true) && it.deletedAt == null }
 
     LaunchedEffect(state.selectedVineyardId) { vm.refreshGrapeAllocations() }
@@ -249,6 +251,20 @@ fun GrapeAllocationScreen(
                 }
             }
 
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = !showAllocations,
+                    onClick = { showAllocations = false },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                ) { Text("By Varieties") }
+                SegmentedButton(
+                    selected = showAllocations,
+                    onClick = { showAllocations = true },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                ) { Text("By Allocation") }
+            }
+
+            if (!showAllocations) {
             SectionHeader("Varieties")
             if (varietyRows.isEmpty()) {
                 VineyardCard {
@@ -277,6 +293,9 @@ fun GrapeAllocationScreen(
                 }
             }
 
+            }
+
+            if (showAllocations) {
             SectionHeader("Allocations")
             if (state.grapeAllocationBusy) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
@@ -303,6 +322,7 @@ fun GrapeAllocationScreen(
                         onDelete = { deleteCandidate = allocation },
                     )
                 }
+            }
             }
         }
     }
