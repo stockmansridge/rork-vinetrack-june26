@@ -410,8 +410,10 @@ struct PermanentItemsAdminPilotView: View {
     @State private var rows: [PermanentItemPilotRow] = []
     @State private var customTypes: [PermanentItemPilotType] = []
     @State private var search = ""
-    @State private var showEditor = false
     @State private var editing: PermanentItemPilotRow?
+    /// The sheet is driven by the item itself, so Edit always opens that item
+    /// (a separate Bool flag let SwiftUI present the editor with a stale nil = "New").
+    @State private var editorTarget: PermanentItemEditorTarget?
     @State private var pending: PermanentItemPilotOperation?
     @State private var busy = false
     @State private var message: String?
@@ -547,7 +549,7 @@ struct PermanentItemsAdminPilotView: View {
                         if canManage {
                             Button {
                                 editing = nil
-                                showEditor = true
+                                editorTarget = PermanentItemEditorTarget(item: editing)
                             } label: {
                                 Label("New Permanent Item", systemImage: "mappin.and.ellipse")
                                     .frame(maxWidth: .infinity)
@@ -590,7 +592,7 @@ struct PermanentItemsAdminPilotView: View {
                                     Button {
                                         if canManage {
                                             editing = item
-                                            showEditor = true
+                                            editorTarget = PermanentItemEditorTarget(item: editing)
                                         } else if canHardDelete {
                                             deleteTarget = item
                                         }
@@ -619,12 +621,12 @@ struct PermanentItemsAdminPilotView: View {
                                 onViewImage: item.photoPath == nil ? nil : { photoItem = item },
                                 onOpen: {
                                     guard !actionsDisabled else { return }
-                                    if canManage { editing = item; showEditor = true }
+                                    if canManage { editing = item; editorTarget = PermanentItemEditorTarget(item: editing) }
                                 },
                                 onDirections: { directionsItem = item },
                                 onEdit: {
                                     guard !actionsDisabled else { return }
-                                    editing = item; showEditor = true
+                                    editing = item; editorTarget = PermanentItemEditorTarget(item: editing)
                                 },
                                 onDelete: {
                                     guard !actionsDisabled else { return }
@@ -656,7 +658,7 @@ struct PermanentItemsAdminPilotView: View {
         .task(id: scope) {
             rows = []; customTypes = []; permissions = nil
             permissionCheckComplete = false; message = nil
-            pending = nil; pendingDelete = nil; editing = nil; showEditor = false
+            pending = nil; pendingDelete = nil; editing = nil; editorTarget = nil
             deleteTarget = nil
             await reloadPermissions()
         }
@@ -664,17 +666,17 @@ struct PermanentItemsAdminPilotView: View {
             rows = []; customTypes = []; permissions = nil
             permissionCheckComplete = false; message = nil
             pending = nil; pendingDelete = nil
-            editing = nil; showEditor = false; deleteTarget = nil
+            editing = nil; editorTarget = nil; deleteTarget = nil
         }
-        .sheet(isPresented: $showEditor) {
+        .sheet(item: $editorTarget) { target in
             if let vineyard {
                 NavigationStack {
                     PermanentItemPilotEditor(
-                        existing: editing, paddocks: store.paddocks, customTypes: customTypes,
+                        existing: target.item, paddocks: store.paddocks, customTypes: customTypes,
                         onCreateType: { name, hex in try await createCustomType(name: name, hex: hex) },
                         onSave: { draft, image in try await save(draft, image: image) }
                     )
-                }.id("\(scope)|\(editing?.id.uuidString ?? "new")")
+                }.id("\(scope)|\(target.id)")
             }
         }
         .confirmationDialog(
@@ -814,7 +816,7 @@ struct PermanentItemsAdminPilotView: View {
             saved = try await applyDurably(photoOp)
         }
         editing = saved
-        showEditor = false
+        editorTarget = nil
     }
 
     private func createCustomType(name: String, hex: String) async throws -> PermanentItemPilotType {
@@ -1420,5 +1422,14 @@ private struct PermanentItemPhotoLoader: View {
                 failed = true
             }
         }
+    }
+}
+
+private struct PermanentItemEditorTarget: Identifiable {
+    let id: String
+    let item: PermanentItemPilotRow?
+    init(item: PermanentItemPilotRow?) {
+        self.item = item
+        id = item?.id.uuidString ?? "new-\(UUID().uuidString)"
     }
 }

@@ -44,6 +44,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.luminance
@@ -369,6 +370,9 @@ fun PermanentItemsAdminPilotScreen(
 
     Scaffold(
         modifier = modifier,
+        // The main tab bar already pads for the system bar; a second bottom inset showed as a white band.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = LocalVineColors.current.appBackground,
         topBar = {
             TopAppBar(
                 title = { Text("Permanent Items") },
@@ -537,7 +541,10 @@ fun PermanentItemsAdminPilotScreen(
             }
         } else {
             Column(
-                Modifier.fillMaxSize().padding(padding).padding(16.dp),
+                // The whole page scrolls (paused while a finger is on the map) so the list is never squeezed.
+                Modifier.fillMaxSize().padding(padding)
+                    .verticalScroll(rememberScrollState(), enabled = !mapGestureActive)
+                    .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text("Fixed fixtures, independent of Repairs and Observations.",
@@ -664,7 +671,7 @@ fun PermanentItemsAdminPilotScreen(
                     }
                 }
                 Column(
-                    Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                    Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     val actionsEnabled = !busy && !pending && pendingDelete == null

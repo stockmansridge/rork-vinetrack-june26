@@ -67,7 +67,13 @@ class YieldEstimationViewModel {
         isPathGenerated = false
     }
 
-    func generateSampleSites(paddocks: [Paddock], samplesPerHectare: Int) {
+    /// Sites for one block: a fixed count per block, or density x area (min 1).
+    static func samplesForBlock(areaHectares: Double, samplesPerHectare: Int, samplesPerBlock: Int?) -> Int {
+        if let samplesPerBlock { return max(1, samplesPerBlock) }
+        return max(1, Int(round(Double(samplesPerHectare) * areaHectares)))
+    }
+
+    func generateSampleSites(paddocks: [Paddock], samplesPerHectare: Int, samplesPerBlock: Int? = nil) {
         var allSites: [SampleSite] = []
         var globalIndex = 1
 
@@ -77,7 +83,8 @@ class YieldEstimationViewModel {
             let area = paddock.areaHectares
             guard area > 0 else { continue }
 
-            let totalSamples = max(1, Int(round(Double(samplesPerHectare) * area)))
+            let totalSamples = Self.samplesForBlock(areaHectares: area, samplesPerHectare: samplesPerHectare,
+                                                    samplesPerBlock: samplesPerBlock)
 
             let sites = generateSitesOnRows(
                 paddock: paddock,
@@ -566,11 +573,14 @@ class YieldEstimationViewModel {
             .reduce(0) { $0 + $1.areaHectares }
     }
 
-    func expectedSampleCount(paddocks: [Paddock], samplesPerHectare: Int) -> Int {
+    func expectedSampleCount(paddocks: [Paddock], samplesPerHectare: Int, samplesPerBlock: Int? = nil,
+                             excluding excluded: Set<UUID> = []) -> Int {
         paddocks
-            .filter { selectedPaddockIds.contains($0.id) }
+            .filter { selectedPaddockIds.contains($0.id) && !excluded.contains($0.id) }
             .reduce(0) { total, paddock in
-                total + max(1, Int(round(Double(samplesPerHectare) * paddock.areaHectares)))
+                total + Self.samplesForBlock(areaHectares: paddock.areaHectares,
+                                             samplesPerHectare: samplesPerHectare,
+                                             samplesPerBlock: samplesPerBlock)
             }
     }
 

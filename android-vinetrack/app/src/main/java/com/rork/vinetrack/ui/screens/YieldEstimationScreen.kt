@@ -41,6 +41,9 @@ import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -597,6 +600,18 @@ private fun TripSetupScreen(
     var loadingSources by remember { mutableStateOf(false) }
     var preparingRoute by remember { mutableStateOf(false) }
     var routeSourceError by remember { mutableStateOf<String?>(null) }
+    // Blocks already asked "fixed or dynamic?" so the prompt shows once per block.
+    var promptedBlocks by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // Sample count mode: per hectare (shared default) or a fixed number per block (this device).
+    val samplingPrefs = remember(context) {
+        context.getSharedPreferences("yield_sampling", android.content.Context.MODE_PRIVATE)
+    }
+    var perBlockMode by remember { mutableStateOf(samplingPrefs.getBoolean("per_block_mode", false)) }
+    var samplesPerBlock by remember { mutableStateOf(samplingPrefs.getInt("samples_per_block", 5).coerceIn(1, 200)) }
+    fun setPerBlockMode(on: Boolean) {
+        perBlockMode = on
+        samplingPrefs.edit().putBoolean("per_block_mode", on).apply()
+    }
 
     LaunchedEffect(state.selectedVineyardId, session.selectedPaddockIds, session.sampleSites.isEmpty()) {
         val vid = state.selectedVineyardId ?: return@LaunchedEffect
@@ -620,6 +635,32 @@ private fun TripSetupScreen(
     }
 
     val selectedBlocks = blocks.filter { session.isPaddockSelected(it.id) }
+
+    // When a selected block has permanent sampling locations, ask once:
+    // use the fixed locations or generate dynamic sites?
+    val promptBlock = if (loadingSources || preparingRoute || session.sampleSites.isNotEmpty()) null
+        else selectedBlocks.firstOrNull { val k = it.id.lowercase(); k in verifiedSources && k !in promptedBlocks }
+    promptBlock?.let { block ->
+        val key = block.id.lowercase()
+        val count = verifiedSources[key]?.sites?.size ?: 0
+        AlertDialog(
+            onDismissRequest = { promptedBlocks = promptedBlocks + key },
+            title = { Text("${block.name} has permanent sampling locations") },
+            text = { Text("Use the $count pre-configured fixed locations for this block, or generate dynamic sample sites?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    savedLocationBlocks = savedLocationBlocks + key
+                    promptedBlocks = promptedBlocks + key
+                }) { Text("Use Fixed Locations") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    savedLocationBlocks = savedLocationBlocks - key
+                    promptedBlocks = promptedBlocks + key
+                }) { Text("Use Dynamic Sites") }
+            },
+        )
+    }
     // Shared, tested visibility contract for the simplified route preview
     // (mirrors iOS — map dominant, Start Sampling primary, single Regenerate
     // Path for newly generated routes only).
@@ -662,7 +703,8 @@ private fun TripSetupScreen(
                     "Vineyard/block selection changed; please retry."
                 }
                 val generated = YieldSampleGenerator.generateSampleSites(
-                    blocks, session.selectedPaddockIds, session.samplesPerHectare
+                    blocks, session.selectedPaddockIds, session.samplesPerHectare,
+                    samplesPerBlock = if (perBlockMode) samplesPerBlock else null,
                 )
                 val combined = mutableListOf<SampleSite>()
                 val versions = mutableMapOf<String, YieldSiteSetSource>()
@@ -788,7 +830,8 @@ private fun TripSetupScreen(
                     )
                     EstimationStat(
                         "Density",
-                        "${session.samplesPerHectare}/ha",
+                        if (perBlockMode && session.totalSiteCount == 0) "$samplesPerBlock/block"
+                            else "${session.samplesPerHectare}/ha",
                         VineColors.LeafGreen,
                         Modifier.weight(1f),
                     )
@@ -833,29 +876,31 @@ private fun TripSetupScreen(
                 VineyardCard {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Sampling Locations by Block", fontWeight = FontWeight.Bold, color = vine.textPrimary)
-                        Text("Choose confirmed saved locations, or generate a new route for each selected block.",
+                        Text("Blocks with permanent sampling locations can use those fixed sites or new dynamic sites.",
                             color = vine.textSecondary, fontSize = 12.sp)
                         if (loadingSources) LinearProgressIndicator(Modifier.fillMaxWidth())
                         selectedBlocks.forEach { block ->
                             val found = verifiedSources[block.id.lowercase()]
                             if (found == null) {
-                                Text("${block.name}: Generate Sampling Locations",
+                                Text("${block.name}: Dynamic sites (no permanent locations)",
                                     color = vine.textSecondary, fontSize = 12.sp)
                             } else {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(
-                                        checked = savedLocationBlocks.contains(block.id.lowercase()),
-                                        onCheckedChange = { useSaved ->
-                                            savedLocationBlocks = if (useSaved) savedLocationBlocks + block.id.lowercase()
-                                                else savedLocationBlocks - block.id.lowercase()
-                                        },
+                                val key = block.id.lowercase()
+                                val useFixed = key in savedLocationBlocks
+                                Text(block.name, color = vine.textPrimary, fontWeight = FontWeight.Medium)
+                                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                    SegmentedButton(
+                                        selected = useFixed,
+                                        onClick = { savedLocationBlocks = savedLocationBlocks + key; promptedBlocks = promptedBlocks + key },
                                         enabled = !preparingRoute && !loadingSources,
-                                    )
-                                    Column {
-                                        Text(block.name, color = vine.textPrimary)
-                                        Text("Use Saved Permanent Locations · v${found.set.version} · ${found.sites.size} sites",
-                                            color = vine.textSecondary, fontSize = 12.sp)
-                                    }
+                                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                                    ) { Text("Fixed (${found.sites.size})") }
+                                    SegmentedButton(
+                                        selected = !useFixed,
+                                        onClick = { savedLocationBlocks = savedLocationBlocks - key; promptedBlocks = promptedBlocks + key },
+                                        enabled = !preparingRoute && !loadingSources,
+                                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                                    ) { Text("Dynamic") }
                                 }
                             }
                         }
@@ -888,7 +933,40 @@ private fun TripSetupScreen(
                                 vm.saveYieldSamplingDefault(n)
                             }
                         }
-                        Text("Number of samples per hectare", fontWeight = FontWeight.Bold, color = vine.textPrimary, fontSize = 16.sp)
+                        Text("Number of sample sites", fontWeight = FontWeight.Bold, color = vine.textPrimary, fontSize = 16.sp)
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            SegmentedButton(
+                                selected = !perBlockMode, onClick = { setPerBlockMode(false) },
+                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                            ) { Text("Per Ha") }
+                            SegmentedButton(
+                                selected = perBlockMode, onClick = { setPerBlockMode(true) },
+                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                            ) { Text("Per Block") }
+                        }
+                        if (selectedBlocks.isNotEmpty() && selectedBlocks.all { it.id.lowercase() in savedLocationBlocks }) {
+                            Text("All selected blocks use fixed locations, so this number is not used.",
+                                color = vine.textSecondary, fontSize = 12.sp)
+                        }
+                        if (perBlockMode) {
+                            fun setPerBlock(n: Int) {
+                                if (n !in 1..200) return
+                                samplesPerBlock = n
+                                samplingPrefs.edit().putInt("samples_per_block", n).apply()
+                            }
+                            Text("Same number of sample sites in every dynamic block",
+                                color = vine.textSecondary, fontSize = 12.sp)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                IconButton(onClick = { setPerBlock(samplesPerBlock - 1) }, enabled = samplesPerBlock > 1) {
+                                    Icon(Icons.Filled.Remove, contentDescription = "Fewer sample sites per block")
+                                }
+                                Text("$samplesPerBlock per block", fontWeight = FontWeight.Bold, fontSize = 18.sp,
+                                    color = vine.textPrimary, modifier = Modifier.width(140.dp), textAlign = TextAlign.Center)
+                                IconButton(onClick = { setPerBlock(samplesPerBlock + 1) }, enabled = samplesPerBlock < 200) {
+                                    Icon(Icons.Filled.Add, contentDescription = "More sample sites per block")
+                                }
+                            }
+                        } else {
                         Text("Whole-number sample sites/ha · saved as the default for the next trip",
                             color = vine.textSecondary, fontSize = 12.sp)
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -920,9 +998,14 @@ private fun TripSetupScreen(
                             Text("Enter a whole number from 1 to 500 before generating a route.",
                                 color = VineColors.Warning, fontSize = 12.sp)
                         }
+                        }
+                        // Fixed blocks contribute their saved sites; dynamic blocks use the chosen mode.
+                        val dynamicIds = session.selectedPaddockIds.filter { it.lowercase() !in savedLocationBlocks }
                         val expected = YieldSampleGenerator.expectedSampleCount(
-                            blocks, session.selectedPaddockIds, session.samplesPerHectare,
-                        )
+                            blocks, dynamicIds, session.samplesPerHectare,
+                            samplesPerBlock = if (perBlockMode) samplesPerBlock else null,
+                        ) + selectedBlocks.filter { it.id.lowercase() in savedLocationBlocks }
+                            .sumOf { verifiedSources[it.id.lowercase()]?.sites?.size ?: 0 }
                         Text(
                             "${blockAreaFmt.formatArea(YieldSampleGenerator.totalSelectedArea(blocks, session.selectedPaddockIds))} selected · ~$expected sample sites",
                             color = vine.textSecondary,
