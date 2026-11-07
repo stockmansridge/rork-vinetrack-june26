@@ -15,9 +15,13 @@ struct TripTypeChoiceSheet: View {
                 Spacer()
 
                 VStack(spacing: 16) {
-                    // Native art stays available offline; blue tractor and bright vines.
-                    TripStartHeroArtwork()
-                        .frame(height: 120)
+                    // Transparent offline artwork blends into the sheet background.
+                    Image("TripStartHero")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 170)
+                        .accessibilityHidden(true)
 
                     VStack(spacing: 8) {
                         Text("Start a Trip")
@@ -103,74 +107,5 @@ struct TripTypeChoiceSheet: View {
                 }
             }
         }
-    }
-}
-
-
-/// Device-rendered replacement for the externally hosted Start Trip image.
-private struct TripStartHeroArtwork: View {
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TripStartVineArtwork()
-            Image(systemName: "tractor")
-                .resizable()
-                .scaledToFit()
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.08, green: 0.38, blue: 0.85),
-                            Color(red: 0.19, green: 0.56, blue: 0.98)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 132, height: 94)
-                .accessibilityHidden(true)
-            TripStartVineArtwork()
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 120)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Blue tractor between bright green vineyard vines")
-    }
-}
-
-private struct TripStartVineArtwork: View {
-    private let leafGradient = LinearGradient(
-        colors: [
-            Color(red: 0.17, green: 0.79, blue: 0.28),
-            Color(red: 0.58, green: 0.94, blue: 0.29)
-        ],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
-
-    var body: some View {
-        ZStack {
-            Capsule()
-                .fill(Color(red: 0.56, green: 0.39, blue: 0.23))
-                .frame(width: 4, height: 84)
-                .offset(y: 11)
-            ForEach(0..<4, id: \.self) { level in
-                HStack(spacing: 0) {
-                    Image(systemName: "leaf.fill")
-                        .resizable()
-                        .scaledToFit()
-                        .rotationEffect(.degrees(-35))
-                    Image(systemName: "leaf.fill")
-                        .resizable()
-                        .scaledToFit()
-                        .scaleEffect(x: -1, y: 1)
-                        .rotationEffect(.degrees(35))
-                }
-                .foregroundStyle(leafGradient)
-                .frame(width: 58, height: 24)
-                .offset(y: CGFloat(level) * 21 - 36)
-            }
-        }
-        .frame(width: 62, height: 110)
-        .accessibilityHidden(true)
     }
 }

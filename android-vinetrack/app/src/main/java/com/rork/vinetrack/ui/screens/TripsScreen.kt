@@ -882,8 +882,8 @@ private fun TripTypeChoiceSheet(onDismiss: () -> Unit, onSelect: (TripChoiceType
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Native offline artwork: blue tractor with bright green vines.
-            TripStartHeroArtwork(modifier = Modifier.height(110.dp))
+            // Transparent vineyard artwork sits above the Start a Trip heading.
+            TripStartHeroArtwork(modifier = Modifier.height(170.dp))
             Text("Start a Trip", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
             Text(
                 "What type of trip are you starting?",
@@ -929,9 +929,16 @@ private fun TripChoiceCard(
             .padding(14.dp),
     ) {
         BrightToolIcon(icon = icon, colors = colors, size = 44.dp)
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-            Text(subtitle, fontSize = 12.sp, color = vine.textSecondary, maxLines = 2)
+        // Reserve the same two-line description area in both cards so the
+        // titles share a baseline and the whole block stays middle-left.
+        Column(
+            modifier = Modifier.weight(1f).heightIn(min = 58.dp),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1)
+            Spacer(Modifier.height(3.dp))
+            Text(subtitle, fontSize = 12.sp, color = vine.textSecondary, minLines = 2, maxLines = 2)
         }
         Icon(
             Icons.AutoMirrored.Filled.KeyboardArrowRight,
