@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -479,11 +480,20 @@ private fun BunchCountTripHome(
                     Spacer(Modifier.width(8.dp))
                     Text("Start Yield Estimate Trip", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
-                OutlinedButton(
+                // Solid light-purple fill with purple label, matching the iOS bordered purple button.
+                Button(
                     onClick = onPermanentSites,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("yield.sites.open"),
                     enabled = blocks.isNotEmpty(),
-                ) { Text("Set Permanent Locations (Optional)", color = VineColors.Purple) }
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = VineColors.Purple.copy(alpha = 0.15f),
+                        contentColor = VineColors.Purple,
+                    ),
+                ) {
+                    Icon(Icons.Filled.Place, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Set Permanent Locations (Optional)", fontWeight = FontWeight.SemiBold)
+                }
 
             if (blocks.isEmpty()) {
                 VineyardCard {
