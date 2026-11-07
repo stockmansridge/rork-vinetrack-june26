@@ -2902,7 +2902,7 @@ private fun PinHeaderSyncIcon(sync: PinSyncState, tint: Color) {
  * backgrounds and high-contrast content in both colour schemes.
  */
 @Composable
-private fun PinActionButton(
+internal fun PinActionButton(
     icon: ImageVector,
     label: String,
     color: Color,

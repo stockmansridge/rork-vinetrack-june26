@@ -54,7 +54,7 @@ class LegacySpraySaveStore(context: Context) {
     }
     private val access = FieldStoreAccess(context)
     private val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-    private val json = Json { encodeDefaults = true; ignoreUnknownKeys = false }
+    private val json = CODEC
     private fun read(): List<Attempt> {
         val raw = prefs.getString("attempts", null) ?: return emptyList()
         strictRead(raw)?.let { return it }
@@ -75,13 +75,13 @@ class LegacySpraySaveStore(context: Context) {
     }
 
     private fun strictRead(raw: String): List<Attempt>? = runCatching {
-        val items = json.decodeFromString<List<Attempt>>(raw)
+        val items = (Json.parseToJsonElement(raw) as JsonArray).map(::decodeValidated)
         check(items.map { it.recordId }.distinct().size == items.size && items.map { it.trip.id }.distinct().size == items.size)
         items.forEach(::validate)
         items
     }.getOrNull()
 
-    private fun decodeValidated(row: JsonElement): Attempt = json.decodeFromJsonElement<Attempt>(row).also(::validate)
+    private fun decodeValidated(row: JsonElement): Attempt = decodeLossless(row).also(::validate)
 
     /** Support-safe lines describing rows set aside from this store (no payload content). */
     fun quarantineDiagnostics(): List<String> = access.admitted { synchronized(this) {
@@ -257,25 +257,46 @@ class LegacySpraySaveStore(context: Context) {
      */
     fun replayInspection(): LegacyReplayIsolation.Inspection = access.admitted { synchronized(this) {
         val accepted: (JsonElement) -> Boolean = { row ->
-            val item = json.decodeFromJsonElement<Attempt>(row)
-            validate(item)
-            !item.isHeld
+            !decodeValidated(row).isHeld
         }
         val current = LegacyReplayIsolation.inspect(prefs.getString("attempts", null), accepted)
         // Rows set aside from Start still hold dependent sync exactly as before (Issue #41):
         // their original bytes are inspected unchanged.
-        LegacySprayJournalQuarantine.originals(prefs.getString(QUARANTINE_KEY, null)).fold(current) { acc, original ->
+        val all = LegacySprayJournalQuarantine.originals(prefs.getString(QUARANTINE_KEY, null)).fold(current) { acc, original ->
             val set = LegacyReplayIsolation.inspect(original, accepted)
             LegacyReplayIsolation.Inspection(acc.held + set.held, acc.fingerprint + ":" + set.fingerprint)
         }
+        // Owner-reviewed originals the server never received stop holding sync;
+        // their original bytes stay retained (never rewritten or sent).
+        val retired = retiredKeys()
+        if (retired.isEmpty()) all
+        else LegacyReplayIsolation.Inspection(all.held.filterNot { retiredKey(it.trip, it.record) in retired }, all.fingerprint)
+    } }
+
+    private fun retiredKey(trip: String?, record: String?) = "${trip?.lowercase()}|${record?.lowercase()}"
+    private fun retiredKeys(): Set<String> = prefs.getStringSet(RETIRED_KEY, null)?.toSet() ?: emptySet()
+
+    /**
+     * Owner-reviewed removal of a held original Save for Later whose Trip and
+     * Spray record were verified absent on the server. Nothing is deleted:
+     * the original bytes stay in this store and its set-aside history; only
+     * presentation and replay of this exact Trip/Spray pair stop.
+     */
+    fun retireNeverUploaded(ownerUserId: String, tripId: String, recordId: String) = access.admittedForOwner(ownerUserId) { synchronized(this) {
+        val key = retiredKey(tripId, recordId)
+        val next = retiredKeys() + key
+        check(prefs.edit().putStringSet(RETIRED_KEY, next).commit() && key in retiredKeys()) { "Legacy save review could not be durably retained." }
     } }
 
     /** Uncertain REST outcomes remain contained until immutable acceptance can be verified. */
     fun pending(vineyardId: String): List<Attempt> = access.admitted { synchronized(this) {
-        read().filter { it.actorId == access.ownerUserId && it.trip.vineyardId == vineyardId && it.isHeld }
+        val retired = retiredKeys()
+        read().filter { it.actorId == access.ownerUserId && it.trip.vineyardId == vineyardId && it.isHeld &&
+            retiredKey(it.trip.id, it.recordId) !in retired }
     } }
     fun blocks(tripId: String): Boolean = access.admitted { synchronized(this) {
-        read().any { it.trip.id == tripId && it.isHeld }
+        val retired = retiredKeys()
+        read().any { it.trip.id == tripId && it.isHeld && retiredKey(it.trip.id, it.recordId) !in retired }
     } }
     companion object {
         /** Successful initial REST responses must echo all submitted fields; a recovery read is NOT this proof. */
@@ -298,9 +319,30 @@ class LegacySpraySaveStore(context: Context) {
             }
             check(same(expected, actual)) { MESSAGE }
         }
+        /**
+         * Chemical codecs only preserve label wording they don't recognise (e.g. a "%"
+         * concentration unit or an extra registered-use / rate field) when unknown keys
+         * are allowed; in strict mode they refuse to read back what they themselves
+         * wrote. That made every Free Drive spray Start with such a chemical fail
+         * (written, then unreadable). Reads stay lossless: [decodeLossless] re-encodes
+         * each row and refuses it if any original field or value would be dropped.
+         */
+        internal val CODEC = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+
+        /** Lenient decode, then proof that re-encoding keeps every original field and value. */
+        internal fun decodeLossless(row: JsonElement): Attempt {
+            val item = CODEC.decodeFromJsonElement<Attempt>(row)
+            val original = row as? JsonObject ?: throw kotlinx.serialization.SerializationException("Legacy save row is not an object")
+            try { requireEcho(original, CODEC.encodeToJsonElement(Attempt.serializer(), item).jsonObject) }
+            catch (_: IllegalStateException) { throw kotlinx.serialization.SerializationException("Legacy save row would lose data on rewrite") }
+            return item
+        }
+
         const val PREFERENCES = "vinetrack_legacy_spray_saves_v1"
         /** Same preferences file, so account-transition handling covers it unchanged. */
         const val QUARANTINE_KEY = "attempts_set_aside_v1"
+        /** Same preferences file. Trip|Spray pairs reviewed as never received by the server. */
+        const val RETIRED_KEY = "attempts_retired_never_uploaded_v1"
         const val UNSENT_MESSAGE = "Spray job saved on this device — not sent yet. The original job will send when online with the same authorised account. Start is unavailable until the original pair has a verified acceptance receipt."
         fun status(items: List<Attempt>, currentEpoch: Long? = null): String? = when {
             items.isEmpty() -> null

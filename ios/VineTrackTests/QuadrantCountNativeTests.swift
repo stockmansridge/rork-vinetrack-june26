@@ -14,11 +14,11 @@ struct QuadrantCountNativeTests {
         vm.startNewTrip(); vm.countMethod = "quadrant"; vm.selectedPaddockIds = [block]
         vm.sampleSites = [SampleSite(paddockId: block, rowNumber: 1, latitude: 1, longitude: 2, siteIndex: 1),
                           SampleSite(paddockId: block, rowNumber: 2, latitude: 3, longitude: 4, siteIndex: 2)]
-        let a = try #require(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: 60, vineSpacingCm: 100, isSystemAdmin: true))
-        let b = try #require(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: 50, vineSpacingCm: 100, isSystemAdmin: true))
+        let a = try #require(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: 60, vineSpacingCm: 100))
+        let b = try #require(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: 50, vineSpacingCm: 100))
         #expect(a.bunchesPerVine == 20); #expect(b.bunchesPerVine == 24)
-        #expect(vm.recordQuadrantCount(siteId: vm.sampleSites[0].id, measurement: a, recordedBy: "fixture", isSystemAdmin: true))
-        #expect(vm.recordQuadrantCount(siteId: vm.sampleSites[1].id, measurement: b, recordedBy: "fixture", isSystemAdmin: true))
+        #expect(vm.recordQuadrantCount(siteId: vm.sampleSites[0].id, measurement: a, recordedBy: "fixture"))
+        #expect(vm.recordQuadrantCount(siteId: vm.sampleSites[1].id, measurement: b, recordedBy: "fixture"))
         let original = vm.toSession(vineyardId: vineyard, samplesPerHectare: 20)
         try YieldRepository(persistence: disk).saveLocalSession(original, at: Date())
         let repo = YieldRepository(persistence: PersistenceStore(directory: root))
@@ -57,51 +57,51 @@ struct QuadrantCountNativeTests {
         let vm = YieldEstimationViewModel(); vm.startNewTrip(); vm.countMethod = "quadrant"
         vm.sampleSites = [SampleSite(paddockId: block, rowNumber: 1, latitude: 1, longitude: 2, siteIndex: 1)]
         let site = vm.sampleSites[0].id
-        #expect(store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20), isSystemAdmin: true))
+        #expect(store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20)))
         let token = store.yieldRepo.pendingSessionIntents()[vm.sessionId!]?.token
         disk.durableSaveFailureForTesting = { _ in CocoaError(.fileWriteOutOfSpace) }
-        let measurement = try #require(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: 50, vineSpacingCm: 100, isSystemAdmin: true))
-        let accepted = vm.saveQuadrantCount(siteId: site, measurement: measurement, recordedBy: "fixture", isSystemAdmin: true) {
-            store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20), isSystemAdmin: true)
+        let measurement = try #require(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: 50, vineSpacingCm: 100))
+        let accepted = vm.saveQuadrantCount(siteId: site, measurement: measurement, recordedBy: "fixture") {
+            store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20))
         }
         #expect(!accepted); #expect(vm.recordedSiteCount == 0); #expect(vm.quadrantSectionLengthCm == 60)
         #expect(store.yieldRepo.pendingSessionIntents()[vm.sessionId!]?.token == token)
         disk.durableSaveFailureForTesting = nil
-        #expect(vm.saveQuadrantCount(siteId: site, measurement: measurement, recordedBy: "fixture", isSystemAdmin: true) {
-            store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20), isSystemAdmin: true)
+        #expect(vm.saveQuadrantCount(siteId: site, measurement: measurement, recordedBy: "fixture") {
+            store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20))
         })
         #expect(vm.recordedSiteCount == 1 && vm.quadrantSectionLengthCm == 50)
     }
 
-    @Test func durableRoleGatePreventsMetadataStrippingButLeavesLegacyAvailable() throws {
+    @Test func vineyardUsersCanSaveQuadrantWhileMethodStrippingStaysBlocked() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MigratedDataStore(persistence: PersistenceStore(directory: root)), vineyard = UUID()
         store.selectedVineyardId = vineyard
         let quadrant = YieldEstimationSession(vineyardId: vineyard, countMethod: "quadrant", quadrantSectionLengthCm: 60)
-        #expect(!store.saveYieldSession(quadrant))
-        #expect(store.yieldRepo.loadAllSessions().isEmpty)
-        #expect(store.saveYieldSession(quadrant, isSystemAdmin: true))
+        #expect(store.saveYieldSession(quadrant))
+        #expect(store.yieldRepo.loadAllSessions().count == 1)
+        #expect(store.saveYieldSession(quadrant))
         var stripped = quadrant; stripped.countMethod = nil; stripped.quadrantSectionLengthCm = nil
-        #expect(!store.saveYieldSession(stripped, isSystemAdmin: true))
-        #expect(!store.saveYieldSession(quadrant, isSystemAdmin: false))
+        #expect(!store.saveYieldSession(stripped))
+        #expect(store.saveYieldSession(quadrant))
         #expect(store.saveYieldSession(YieldEstimationSession(vineyardId: vineyard)))
         #expect(store.yieldRepo.loadAllSessions().count == 2)
     }
 
-    @Test func invalidMeasurementsAndNonAdminAreRejectedAndZeroIsValid() {
+    @Test func invalidMeasurementsAreRejectedAndZeroIsValid() {
         for count in [-1.0, 1.5, .infinity, .nan] {
-            #expect(QuadrantCountMeasurement.make(rawBunchCount: count, sectionLengthCm: 60, vineSpacingCm: 100, isSystemAdmin: true) == nil)
+            #expect(QuadrantCountMeasurement.make(rawBunchCount: count, sectionLengthCm: 60, vineSpacingCm: 100) == nil)
         }
         for spacing: Double? in [nil, 0, -1, .infinity, .nan] {
-            #expect(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: 60, vineSpacingCm: spacing, isSystemAdmin: true) == nil)
+            #expect(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: 60, vineSpacingCm: spacing) == nil)
         }
         for length in [0.0, -1, .infinity, .nan] {
-            #expect(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: length, vineSpacingCm: 100, isSystemAdmin: true) == nil)
+            #expect(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: length, vineSpacingCm: 100) == nil)
         }
-        #expect(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: 60, vineSpacingCm: 100, isSystemAdmin: false) == nil)
-        #expect(QuadrantCountMeasurement.make(rawBunchCount: 0, sectionLengthCm: 60, vineSpacingCm: 100, isSystemAdmin: true)?.bunchesPerVine == 0)
+        #expect(QuadrantCountMeasurement.make(rawBunchCount: 12, sectionLengthCm: 60, vineSpacingCm: 100)?.bunchesPerVine == 20)
+        #expect(QuadrantCountMeasurement.make(rawBunchCount: 0, sectionLengthCm: 60, vineSpacingCm: 100)?.bunchesPerVine == 0)
     }
 
     @Test func rejectedCompletionDoesNotLockOrChangeSnapshots() throws {
@@ -111,17 +111,17 @@ struct QuadrantCountNativeTests {
         let disk = PersistenceStore(directory: root), vineyard = UUID()
         let store = MigratedDataStore(persistence: disk); store.selectedVineyardId = vineyard
         let vm = YieldEstimationViewModel(); vm.startNewTrip(); vm.countMethod = "quadrant"
-        #expect(store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20), isSystemAdmin: true))
+        #expect(store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20)))
         let original = store.yieldRepo.pendingSessionIntents()[vm.sessionId!]?.token
         disk.durableSaveFailureForTesting = { _ in CocoaError(.fileWriteOutOfSpace) }
         #expect(!vm.saveCompletion(paddocks: []) {
-            store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20), isSystemAdmin: true)
+            store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20))
         })
         #expect(!vm.isCompleted && vm.completedAt == nil && vm.blockVineCounts.isEmpty)
         #expect(store.yieldRepo.pendingSessionIntents()[vm.sessionId!]?.token == original)
         disk.durableSaveFailureForTesting = nil
         #expect(vm.saveCompletion(paddocks: []) {
-            store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20), isSystemAdmin: true)
+            store.saveYieldSession(vm.toSession(vineyardId: vineyard, samplesPerHectare: 20))
         })
         #expect(vm.isCompleted && store.yieldRepo.loadAllSessions().first?.isCompleted == true)
     }

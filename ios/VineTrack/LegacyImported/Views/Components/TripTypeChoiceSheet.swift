@@ -15,16 +15,13 @@ struct TripTypeChoiceSheet: View {
                 Spacer()
 
                 VStack(spacing: 16) {
-                    AsyncImage(url: URL(string: "https://r2-pub.rork.com/projects/u8ega94cbdz6azh6dulre/assets/9c0a966b-50ac-4bf5-990e-15701eb5616b.png")) { phase in
-                        if let image = phase.image {
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                        } else {
-                            Color.clear
-                        }
-                    }
-                    .frame(height: 120)
+                    // Transparent offline artwork blends into the sheet background.
+                    Image("TripStartHero")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 170)
+                        .accessibilityHidden(true)
 
                     VStack(spacing: 8) {
                         Text("Start a Trip")
@@ -41,12 +38,10 @@ struct TripTypeChoiceSheet: View {
                         onSelect(.maintenance)
                     } label: {
                         HStack(spacing: 14) {
-                            Image(systemName: "wrench.and.screwdriver.fill")
-                                .font(.title2)
-                                .foregroundStyle(VineyardTheme.earthBrown)
-                                .frame(width: 44, height: 44)
-                                .background(VineyardTheme.earthBrown.opacity(0.12))
-                                .clipShape(.rect(cornerRadius: 10))
+                            BrightToolIcon(
+                                symbol: "wrench.and.screwdriver.fill",
+                                colors: [VineyardTheme.earthBrown, .orange]
+                            )
 
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Maintenance Trip")
@@ -73,12 +68,10 @@ struct TripTypeChoiceSheet: View {
                         onSelect(.spray)
                     } label: {
                         HStack(spacing: 14) {
-                            Image(systemName: "sprinkler.and.droplets.fill")
-                                .font(.title2)
-                                .foregroundStyle(VineyardTheme.leafGreen)
-                                .frame(width: 44, height: 44)
-                                .background(VineyardTheme.leafGreen.opacity(0.12))
-                                .clipShape(.rect(cornerRadius: 10))
+                            BrightToolIcon(
+                                symbol: "sprinkler.and.droplets.fill",
+                                colors: [VineyardTheme.leafGreen, .cyan]
+                            )
 
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Spray Trip")

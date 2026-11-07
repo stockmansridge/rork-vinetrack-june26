@@ -22,6 +22,10 @@ struct GrapeAllocationView: View {
     @State private var editorContext: EditorContext?
     @State private var deleteCandidate: GrapeAllocation?
     @State private var expandedVarieties: Set<String> = []
+    /// Full-width toggle under Income Breakdown: Varieties or Allocations.
+    @State private var breakdownMode: BreakdownMode = .varieties
+
+    private enum BreakdownMode: Hashable { case varieties, allocations }
 
     private var scopedAllocations: [GrapeAllocation] {
         allocationService.allocations.filter { $0.vineyardId == store.selectedVineyardId }
@@ -104,8 +108,16 @@ struct GrapeAllocationView: View {
                 if canViewFinancials {
                     incomeSection
                 }
-                varietySection
-                allocationsSection
+                Picker("Show", selection: $breakdownMode) {
+                    Text("By Varieties").tag(BreakdownMode.varieties)
+                    Text("By Allocation").tag(BreakdownMode.allocations)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: .infinity)
+                switch breakdownMode {
+                case .varieties: varietySection
+                case .allocations: allocationsSection
+                }
             }
             .padding(.horizontal)
             .padding(.bottom, 24)

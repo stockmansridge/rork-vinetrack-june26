@@ -25,6 +25,33 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Directions
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.theme.LocalVineColors
+import com.rork.vinetrack.ui.theme.VineColors
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -72,6 +99,7 @@ import com.rork.vinetrack.data.PermanentItemPilotRow
 import com.rork.vinetrack.data.PermanentItemPilotType
 import com.rork.vinetrack.data.PermanentItemsPilotRepository
 import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.ui.components.mapGestureOwnership
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -123,6 +151,8 @@ fun PermanentItemsAdminPilotScreen(
     val repository = remember { PermanentItemsPilotRepository(context) }
     val location = remember { LocationTracker(context) }
     val scope = rememberCoroutineScope()
+    // While a finger is on a map, the scrolling form must not steal the pan/zoom drag.
+    var mapGestureActive by remember { mutableStateOf(false) }
     val user = state.currentUserId
     val vineyard = state.selectedVineyardId
     var allowed by remember(user, vineyard) { mutableStateOf(false) }
@@ -141,7 +171,12 @@ fun PermanentItemsAdminPilotScreen(
     var search by remember(user, vineyard) { mutableStateOf("") }
     var editing by remember(user, vineyard) { mutableStateOf(false) }
     var selected by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
-    var archiveTarget by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
+    var typeFilter by remember(user, vineyard) { mutableStateOf<String?>(null) }
+    var directionsItem by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
+    var userLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var photoItem by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
+    var photoBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var photoError by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember(user, vineyard) { mutableStateOf<PermanentItemPilotRow?>(null) }
     var name by remember(user, vineyard) { mutableStateOf("") }
     var type by remember(user, vineyard) { mutableStateOf("irrigation_valve") }
@@ -230,7 +265,7 @@ fun PermanentItemsAdminPilotScreen(
                     pending = false
                     selected = saved
                     editing = false
-                    notice = "Synced · revision " + saved.serverRevision
+                    notice = "Saved"
                 }
             } catch (e: Exception) {
                 if (state.selectedVineyardId == target && state.currentUserId == user) {
@@ -247,7 +282,7 @@ fun PermanentItemsAdminPilotScreen(
         if (locked || !canHardDelete || busy || pending) return
         val already = pendingDelete
         if (already != null && item != null && already.itemId != item.id) {
-            error = "Finish the pending hard delete before deleting another item."
+            error = "Finish the pending delete before deleting another item."
             return
         }
         val intent = already ?: item?.let { repository.hardDeleteIntent(it) } ?: return
@@ -259,7 +294,7 @@ fun PermanentItemsAdminPilotScreen(
                 if (state.selectedVineyardId == target && state.currentUserId == user) {
                     pendingDelete = null
                     rows = repository.list(target)
-                    notice = "Permanently deleted. All attached photos removed."
+                    notice = "Deleted."
                     deleteTarget = null
                     selected = null
                 }
@@ -335,6 +370,9 @@ fun PermanentItemsAdminPilotScreen(
 
     Scaffold(
         modifier = modifier,
+        // The main tab bar already pads for the system bar; a second bottom inset showed as a white band.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = LocalVineColors.current.appBackground,
         topBar = {
             TopAppBar(
                 title = { Text("Permanent Items") },
@@ -364,7 +402,8 @@ fun PermanentItemsAdminPilotScreen(
             }
         } else if (editing) {
             Column(
-                Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
+                Modifier.fillMaxSize().padding(padding)
+                    .verticalScroll(rememberScrollState(), enabled = !mapGestureActive)
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -444,10 +483,14 @@ fun PermanentItemsAdminPilotScreen(
                     position = CameraPosition.fromLatLngZoom(focus, if (picked != null) 17f else 9f)
                 }
                 GoogleMap(
-                    modifier = Modifier.fillMaxWidth().height(270.dp),
+                    modifier = Modifier.fillMaxWidth().height(270.dp)
+                        .mapGestureOwnership { mapGestureActive = it },
                     cameraPositionState = camera,
                     properties = MapProperties(mapType = MapType.HYBRID),
-                    uiSettings = MapUiSettings(zoomControlsEnabled = true),
+                    uiSettings = MapUiSettings(
+                        zoomControlsEnabled = true, scrollGesturesEnabled = true,
+                        zoomGesturesEnabled = true, rotationGesturesEnabled = true
+                    ),
                     onMapClick = { point ->
                         lat = point.latitude.toString()
                         lon = point.longitude.toString()
@@ -498,17 +541,20 @@ fun PermanentItemsAdminPilotScreen(
             }
         } else {
             Column(
-                Modifier.fillMaxSize().padding(padding).padding(16.dp),
+                // The whole page scrolls (paused while a finger is on the map) so the list is never squeezed.
+                Modifier.fillMaxSize().padding(padding)
+                    .verticalScroll(rememberScrollState(), enabled = !mapGestureActive)
+                    .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text("Fixed fixtures, independent of Repairs and Observations.",
                     style = MaterialTheme.typography.bodySmall)
                 if (pendingDelete != null && canHardDelete) {
-                    Text("Permanent delete or private photo cleanup pending.",
+                    Text("A delete is still pending.",
                         color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.SemiBold)
                     Button(onClick = { hardDelete() }, enabled = !busy) {
-                        Text("Retry same permanent delete")
+                        Text("Retry delete")
                     }
                 }
                 if (pending && canManage) {
@@ -521,7 +567,7 @@ fun PermanentItemsAdminPilotScreen(
                         scope.launch {
                             try {
                                 val row = repository.retry(target)
-                                notice = "Synced · revision " + row.serverRevision
+                                notice = "Saved"
                                 error = null
                                 rows = repository.list(target)
                             } catch (e: Exception) {
@@ -542,6 +588,34 @@ fun PermanentItemsAdminPilotScreen(
                         Text("New Permanent Item")
                     }
                 }
+                // Type filter at the top: All + each type that has an item.
+                val active = rows.filter { it.archivedAt == null }
+                val typesPresent = active.map { it.itemType }.distinct()
+                    .sortedBy { PermanentItemPilotPolicy.label(it, customTypes) }
+                val activeFilter = typeFilter?.takeIf { it in typesPresent }
+                if (typesPresent.size > 1) Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val chipColors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = VineColors.Primary.copy(alpha = 0.18f),
+                        selectedLabelColor = VineColors.Primary,
+                    )
+                    FilterChip(selected = activeFilter == null, onClick = { typeFilter = null },
+                        label = { Text("All") }, colors = chipColors)
+                    typesPresent.forEach { key ->
+                        FilterChip(
+                            selected = activeFilter == key,
+                            onClick = { typeFilter = if (activeFilter == key) null else key },
+                            label = { Text(PermanentItemPilotPolicy.label(key, customTypes)) },
+                            leadingIcon = {
+                                Box(Modifier.size(10.dp).background(
+                                    permanentItemColor(key, customTypes), CircleShape))
+                            },
+                            colors = chipColors,
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = search, onValueChange = { search = it },
                     label = { Text("Search permanent items") },
@@ -552,13 +626,12 @@ fun PermanentItemsAdminPilotScreen(
                         }
                     }
                 )
-                val visible = rows.filter { (canHardDelete || it.archivedAt == null) &&
+                val visible = active.filter { (activeFilter == null || it.itemType == activeFilter) &&
                     (search.isBlank() || it.name.contains(search, true) ||
                         PermanentItemPilotPolicy.label(it.itemType, customTypes).contains(search, true))
                 }
-                val allMarkers = rows.filter { it.archivedAt == null }
-                // Overview always renders every pin and vineyard block boundary.
-                // Search filters the list only; future type/layer filters are deliberately omitted.
+                // The map shows the same filtered items as the list.
+                val allMarkers = visible
                 val fallback = state.paddocks.firstNotNullOfOrNull { block ->
                     block.polygonPoints?.firstOrNull()?.let { LatLng(it.latitude, it.longitude) }
                 } ?: LatLng(-34.0, 138.0)
@@ -568,9 +641,14 @@ fun PermanentItemsAdminPilotScreen(
                     position = CameraPosition.fromLatLngZoom(center, 14f)
                 }
                 GoogleMap(
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
+                    modifier = Modifier.fillMaxWidth().height(300.dp)
+                        .mapGestureOwnership { mapGestureActive = it },
                     cameraPositionState = mapCamera,
                     properties = MapProperties(mapType = MapType.HYBRID),
+                    uiSettings = MapUiSettings(
+                        zoomControlsEnabled = true, scrollGesturesEnabled = true,
+                        zoomGesturesEnabled = true, rotationGesturesEnabled = true
+                    ),
                 ) {
                     state.paddocks.forEach { block ->
                         val points = block.polygonPoints.orEmpty()
@@ -593,52 +671,53 @@ fun PermanentItemsAdminPilotScreen(
                     }
                 }
                 Column(
-                    Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    visible.sortedBy { it.name }.forEach { item ->
-                        Column(
-                            Modifier.fillMaxWidth().clickable { startEditor(item) }.padding(vertical = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(item.name, fontWeight = FontWeight.SemiBold)
-                                if (item.archivedAt != null) Text(" · Archived",
-                                    style = MaterialTheme.typography.labelSmall)
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Box(Modifier.size(14.dp).background(
-                                    Color(android.graphics.Color.parseColor(
-                                        PermanentItemPilotPolicy.hex(item.itemType, customTypes))),
-                                    CircleShape))
-                                Text(PermanentItemPilotPolicy.label(item.itemType, customTypes) +
-                                    " · revision " + item.serverRevision,
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
-                            Text("%.6f, %.6f".format(item.latitude, item.longitude),
-                                style = MaterialTheme.typography.bodySmall)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (canManage && item.archivedAt == null) {
-                                    OutlinedButton(onClick = { startEditor(item) },
-                                        enabled = !busy && !pending && pendingDelete == null) {
-                                        Text("Edit / Move")
-                                    }
-                                    OutlinedButton(onClick = { archiveTarget = item },
-                                        enabled = !busy && !pending && pendingDelete == null) {
-                                        Text("Archive")
+                    val actionsEnabled = !busy && !pending && pendingDelete == null
+                    visible.sortedBy { it.name.lowercase() }.forEach { item ->
+                        PermanentItemListRow(
+                            item = item,
+                            typeLabel = PermanentItemPilotPolicy.label(item.itemType, customTypes),
+                            color = permanentItemColor(item.itemType, customTypes),
+                            blockName = state.paddocks.firstOrNull {
+                                it.id.equals(item.paddockId, true)
+                            }?.name,
+                            canEdit = canManage,
+                            canDelete = canHardDelete,
+                            onViewImage = item.photoPath?.let { path -> {
+                                photoItem = item; photoBitmap = null; photoError = null
+                                scope.launch {
+                                    try {
+                                        val bytes = repository.downloadPhoto(path)
+                                        val bitmap = withContext(Dispatchers.Default) {
+                                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                        }
+                                        if (photoItem?.id == item.id) {
+                                            if (bitmap != null) photoBitmap = bitmap.asImageBitmap()
+                                            else photoError = "This photo could not be opened."
+                                        }
+                                    } catch (e: Exception) {
+                                        if (photoItem?.id == item.id) photoError =
+                                            "Could not load the photo. Check your connection and try again."
                                     }
                                 }
-                                if (canHardDelete) {
-                                    OutlinedButton(onClick = { deleteTarget = item },
-                                        enabled = !busy && !pending && pendingDelete == null) {
-                                        Text("Hard Delete", color = MaterialTheme.colorScheme.error)
+                            } },
+                            onOpen = { if (actionsEnabled) startEditor(item) },
+                            onDirections = {
+                                directionsItem = item
+                                scope.launch {
+                                    location.currentLocation()?.let {
+                                        userLocation = it.latitude to it.longitude
                                     }
                                 }
-                            }
-                        }
+                            },
+                            onEdit = { if (actionsEnabled) startEditor(item) },
+                            onDelete = { if (actionsEnabled) deleteTarget = item },
+                        )
                     }
-                    if (visible.isEmpty()) Text("No Permanent Items in this filter.")
+                    if (visible.isEmpty()) Text(
+                        if (active.isEmpty()) "No Permanent Items yet." else "No Permanent Items match this filter.")
                 }
             }
         }
@@ -738,10 +817,9 @@ fun PermanentItemsAdminPilotScreen(
         val current = deleteTarget
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            title = { Text("Permanently delete " + (current?.name ?: "this item") + "?") },
+            title = { Text("Delete " + (current?.name ?: "this item") + "?") },
             text = {
-                Text("This cannot be undone. The Permanent Item, its history entries " +
-                    "and all attached photos will be permanently removed from iOS, Android and Portal.")
+                Text("This cannot be undone. The item and its photos will be removed from iOS, Android and Portal.")
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -749,7 +827,7 @@ fun PermanentItemsAdminPilotScreen(
                     deleteTarget = null
                     hardDelete(item)
                 }, enabled = canHardDelete && !busy && !pending && pendingDelete == null) {
-                    Text("Delete Permanently", color = MaterialTheme.colorScheme.error)
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -758,22 +836,128 @@ fun PermanentItemsAdminPilotScreen(
         )
     }
 
-    if (archiveTarget != null) {
-        AlertDialog(
-            onDismissRequest = { archiveTarget = null },
-            title = { Text("Archive Permanent Item?") },
-            text = { Text("This fixture will leave the active map, but remain in history.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    val item = archiveTarget ?: return@TextButton
-                    archiveTarget = null
-                    selected = item
-                    name = item.name; type = item.itemType; lat = item.latitude.toString()
-                    lon = item.longitude.toString(); notes = item.notes ?: ""; blockId = item.paddockId
-                    save("archive", item)
-                }) { Text("Archive") }
-            },
-            dismissButton = { TextButton(onClick = { archiveTarget = null }) { Text("Cancel") } }
+    photoItem?.let { item ->
+        PermanentItemPhotoViewer(
+            title = item.name, bitmap = photoBitmap, error = photoError,
+            onDismiss = { photoItem = null; photoBitmap = null; photoError = null },
         )
+    }
+    directionsItem?.let { item ->
+        CoordinateDirectionsDialog(
+            id = item.id,
+            title = item.name,
+            latitude = item.latitude,
+            longitude = item.longitude,
+            color = permanentItemColor(item.itemType, customTypes),
+            userLocation = userLocation,
+            onDismiss = { directionsItem = null },
+        )
+    }
+}
+
+private fun permanentItemColor(type: String, custom: List<PermanentItemPilotType>): Color =
+    runCatching { Color(android.graphics.Color.parseColor(PermanentItemPilotPolicy.hex(type, custom))) }
+        .getOrDefault(Color(0xFFA8559A))
+
+/** Pins-list style row: header bar in the item's pin colour and compact actions. */
+@Composable
+private fun PermanentItemListRow(
+    item: PermanentItemPilotRow,
+    typeLabel: String,
+    color: Color,
+    blockName: String?,
+    canEdit: Boolean,
+    canDelete: Boolean,
+    /** Non-null only when the item has a photo. */
+    onViewImage: (() -> Unit)?,
+    onOpen: () -> Unit,
+    onDirections: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val onColor = if (color.luminance() > 0.6f) Color.Black else Color.White
+    VineyardCard {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(color)
+                    .clickable(onClick = onOpen)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(Icons.Filled.Place, contentDescription = null, tint = onColor,
+                    modifier = Modifier.size(18.dp))
+                Text(item.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = onColor,
+                    maxLines = 1, modifier = Modifier.weight(1f))
+                Icon(Icons.Filled.ChevronRight, contentDescription = null,
+                    tint = onColor.copy(alpha = 0.8f), modifier = Modifier.size(18.dp))
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(typeLabel + (blockName?.let { " · $it" } ?: ""), fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                if (!item.notes.isNullOrBlank()) Text(item.notes, fontSize = 13.sp,
+                    color = vine.textSecondary, maxLines = 2)
+            }
+            Row(modifier = Modifier.fillMaxWidth()) {
+                if (onViewImage != null) PinActionButton(Icons.Filled.Photo, "View Image", VineColors.Purple,
+                    modifier = Modifier.weight(1f), onClick = onViewImage)
+                PinActionButton(Icons.Filled.Directions, "Directions", VineColors.Primary,
+                    modifier = Modifier.weight(1f), onClick = onDirections)
+                if (canEdit) PinActionButton(Icons.Filled.Edit, "Edit", VineColors.Purple,
+                    modifier = Modifier.weight(1f), onClick = onEdit)
+                if (canDelete) PinActionButton(Icons.Filled.Delete, "Delete", VineColors.Destructive,
+                    modifier = Modifier.weight(1f), onClick = onDelete)
+            }
+        }
+    }
+}
+
+/** Full-screen photo with pinch to zoom; tap X to close. */
+@Composable
+private fun PermanentItemPhotoViewer(
+    title: String,
+    bitmap: ImageBitmap?,
+    error: String?,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        var scale by remember { mutableStateOf(1f) }
+        var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            when {
+                bitmap != null -> Image(
+                    bitmap = bitmap,
+                    contentDescription = "Photo of $title",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(1f, 5f)
+                                offset = if (scale == 1f) androidx.compose.ui.geometry.Offset.Zero else offset + pan
+                            }
+                        }
+                        .graphicsLayer(scaleX = scale, scaleY = scale,
+                            translationX = offset.x, translationY = offset.y),
+                )
+                error != null -> Text(error, color = Color.White,
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp))
+                else -> CircularProgressIndicator(color = Color.White,
+                    modifier = Modifier.align(Alignment.Center))
+            }
+            Row(Modifier.fillMaxWidth().background(Color.Black.copy(alpha = 0.45f))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(title, color = Color.White, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close photo", tint = Color.White)
+                }
+            }
+        }
     }
 }

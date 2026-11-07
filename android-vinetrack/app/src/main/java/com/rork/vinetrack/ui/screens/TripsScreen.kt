@@ -203,6 +203,8 @@ import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.rork.vinetrack.ui.components.CurrentLocationPuck
+import com.rork.vinetrack.ui.components.BrightToolIcon
+import com.rork.vinetrack.ui.components.TripStartHeroArtwork
 import com.rork.vinetrack.data.AppPreferencesStore
 import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.RowAttachment
@@ -880,11 +882,8 @@ private fun TripTypeChoiceSheet(onDismiss: () -> Unit, onSelect: (TripChoiceType
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            AsyncImage(
-                model = "https://r2-pub.rork.com/projects/u8ega94cbdz6azh6dulre/assets/9c0a966b-50ac-4bf5-990e-15701eb5616b.png",
-                contentDescription = null,
-                modifier = Modifier.height(110.dp),
-            )
+            // Transparent vineyard artwork sits above the Start a Trip heading.
+            TripStartHeroArtwork(modifier = Modifier.height(170.dp))
             Text("Start a Trip", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
             Text(
                 "What type of trip are you starting?",
@@ -894,14 +893,14 @@ private fun TripTypeChoiceSheet(onDismiss: () -> Unit, onSelect: (TripChoiceType
             Spacer(Modifier.height(8.dp))
             TripChoiceCard(
                 icon = Icons.Filled.Build,
-                tint = VineColors.EarthBrown,
+                colors = listOf(VineColors.EarthBrown, VineColors.Orange),
                 title = "Maintenance Trip",
                 subtitle = "Track a general vineyard trip without spray data",
                 onClick = { onSelect(TripChoiceType.MAINTENANCE) },
             )
             TripChoiceCard(
                 icon = Icons.Filled.WaterDrop,
-                tint = VineColors.LeafGreen,
+                colors = listOf(VineColors.LeafGreen, VineColors.Cyan),
                 title = "Spray Trip",
                 subtitle = "Open the Spray Calculator to configure and start a spray job",
                 onClick = { onSelect(TripChoiceType.SPRAY) },
@@ -913,7 +912,7 @@ private fun TripTypeChoiceSheet(onDismiss: () -> Unit, onSelect: (TripChoiceType
 @Composable
 private fun TripChoiceCard(
     icon: ImageVector,
-    tint: Color,
+    colors: List<Color>,
     title: String,
     subtitle: String,
     onClick: () -> Unit,
@@ -929,15 +928,17 @@ private fun TripChoiceCard(
             .clickable(onClick = onClick)
             .padding(14.dp),
     ) {
-        Box(
-            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(tint.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center,
+        BrightToolIcon(icon = icon, colors = colors, size = 44.dp)
+        // Reserve the same two-line description area in both cards so the
+        // titles share a baseline and the whole block stays middle-left.
+        Column(
+            modifier = Modifier.weight(1f).heightIn(min = 58.dp),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = tint)
-        }
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-            Text(subtitle, fontSize = 12.sp, color = vine.textSecondary, maxLines = 2)
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1)
+            Spacer(Modifier.height(3.dp))
+            Text(subtitle, fontSize = 12.sp, color = vine.textSecondary, minLines = 2, maxLines = 2)
         }
         Icon(
             Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -3582,20 +3583,11 @@ private fun StartTripSheet(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(76.dp)
-                        .clip(CircleShape)
-                        .background(VineColors.EarthBrown.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Filled.Build,
-                        contentDescription = null,
-                        tint = VineColors.EarthBrown,
-                        modifier = Modifier.size(34.dp),
-                    )
-                }
+                BrightToolIcon(
+                    icon = Icons.Filled.Build,
+                    colors = listOf(VineColors.EarthBrown, VineColors.Orange),
+                    size = 76.dp,
+                )
                 Spacer(Modifier.height(4.dp))
                 Text("Maintenance Trip", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
                 Text(
@@ -4086,7 +4078,11 @@ private fun StartTripSheet(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(Icons.Filled.Person, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(26.dp))
+                    BrightToolIcon(
+                        icon = Icons.Filled.Person,
+                        colors = listOf(VineColors.Orange, VineColors.Destructive),
+                        size = 32.dp,
+                    )
                     TextField(
                         value = operatorName,
                         onValueChange = { operatorName = it },
@@ -4161,7 +4157,19 @@ private fun StartTripSheet(
     }
 }
 
-/** Uppercase section header with a tinted icon (iOS `sectionContainer` parity). */
+/** Gradients used only for setup icon badges, never trip status or map markers. */
+private fun maintenanceBadgeColors(tint: Color): List<Color> = when (tint) {
+    VineColors.EarthBrown -> listOf(VineColors.EarthBrown, VineColors.Orange)
+    VineColors.LeafGreen -> listOf(VineColors.LeafGreen, VineColors.Cyan)
+    VineColors.Indigo -> listOf(VineColors.Indigo, VineColors.Cyan)
+    VineColors.Purple -> listOf(VineColors.Purple, VineColors.Indigo)
+    VineColors.Orange -> listOf(VineColors.Orange, VineColors.Destructive)
+    VineColors.Cyan -> listOf(VineColors.Cyan, VineColors.LeafGreen)
+    VineColors.Info -> listOf(VineColors.Info, VineColors.Cyan)
+    else -> listOf(tint, tint.copy(alpha = 0.78f))
+}
+
+/** Uppercase section header with a bright gradient icon (iOS parity). */
 @Composable
 private fun StartTripSection(
     title: String,
@@ -4175,7 +4183,7 @@ private fun StartTripSection(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(15.dp))
+            BrightToolIcon(icon = icon, colors = maintenanceBadgeColors(tint), size = 24.dp)
             Text(
                 title.uppercase(),
                 fontSize = 13.sp,
@@ -4209,15 +4217,7 @@ private fun StartTripSelectorCard(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(tint.copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
-        }
+        BrightToolIcon(icon = icon, colors = maintenanceBadgeColors(tint), size = 44.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
             Text(subtitle, fontSize = 12.sp, color = vine.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -4250,20 +4250,11 @@ private fun StartTripPatternCard(pattern: TrackingPattern, selected: Boolean, on
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background((if (selected) accent else vine.textSecondary).copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                trackingPatternIcon(pattern),
-                contentDescription = null,
-                tint = if (selected) accent else vine.textSecondary,
-                modifier = Modifier.size(22.dp),
-            )
-        }
+        BrightToolIcon(
+            icon = trackingPatternIcon(pattern),
+            colors = listOf(VineColors.Purple, VineColors.Indigo),
+            size = 32.dp,
+        )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(pattern.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
             Text(pattern.subtitle, fontSize = 12.sp, color = vine.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)

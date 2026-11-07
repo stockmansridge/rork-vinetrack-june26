@@ -32,6 +32,8 @@ import com.rork.vinetrack.ui.theme.VineColors
 internal fun PanelCountDialog(
     site: SampleSite,
     saveLabel: String = "Record Panel",
+    /** Block config Intermediate Post Spacing (metres) — the post-to-post panel length. */
+    blockPanelLengthMetres: Double? = null,
     onDismiss: () -> Unit,
     onSave: (PanelCountMeasurement) -> Boolean,
 ) {
@@ -43,8 +45,11 @@ internal fun PanelCountDialog(
     var nonproductive by rememberSaveable(site.id, "nonproductive") { mutableStateOf(prior?.nonproductiveVines?.toString() ?: "") }
     var panelLength by rememberSaveable(site.id, "length") { mutableStateOf(prior?.panelLengthMetres?.toString() ?: "") }
     var saveFailed by rememberSaveable(site.id, "failed") { mutableStateOf(false) }
-    val optionalLength = if (panelLength.isBlank()) null else panelLength.replace(',', '.').toDoubleOrNull()
-    val measurement = if (panelLength.isNotBlank() && optionalLength == null) null else {
+    // Panel length comes from the block config; the user only types it when the block has none.
+    val configuredLength = blockPanelLengthMetres?.takeIf { it.isFinite() && it > 0 }
+    val typedLength = if (panelLength.isBlank()) null else panelLength.replace(',', '.').toDoubleOrNull()
+    val optionalLength = configuredLength ?: typedLength
+    val measurement = if (configuredLength == null && panelLength.isNotBlank() && typedLength == null) null else {
         val t = total.toIntOrNull()
         val p = planted.toIntOrNull()
         val f = fruiting.toIntOrNull()
@@ -81,14 +86,21 @@ internal fun PanelCountDialog(
                 integerField("Fruiting vines counted", fruiting) { fruiting = it }
                 integerField("Missing positions", missing) { missing = it }
                 integerField("Nonproductive vines", nonproductive) { nonproductive = it }
-                OutlinedTextField(
-                    value = panelLength,
-                    onValueChange = { panelLength = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' } },
-                    label = { Text("Panel length (metres, optional)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                if (configuredLength != null) {
+                    Text("Panel length: ${"%.2f".format(configuredLength)} m (from block Intermediate Post Spacing)",
+                        fontSize = 13.sp)
+                } else {
+                    Text("This block has no Intermediate Post Spacing set. Add it in the block settings so panel length fills in automatically.",
+                        color = VineColors.Orange, fontSize = 12.sp)
+                    OutlinedTextField(
+                        value = panelLength,
+                        onValueChange = { panelLength = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' } },
+                        label = { Text("Panel length (metres, optional)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 if (measurement == null) {
                     Text("Total planted positions must equal fruiting + missing + nonproductive. Enter whole numbers and at least one planted position.",
                         color = VineColors.Orange, fontSize = 12.sp)

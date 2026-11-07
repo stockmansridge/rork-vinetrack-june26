@@ -41,8 +41,10 @@ class SyncDownloadStatusTest {
     }
 
     @Test fun untrackedDomainTimestampIsOnlyHistoricalEvidence() {
-        assertEquals("Last download recorded", syncDownloadStatus(null, true, false, true).label)
+        assertEquals("Last synced", syncDownloadStatus(null, true, false, true).label)
         assertNotEquals(SyncDownloadTone.Current, syncDownloadStatus(null, true, false, true).tone)
+        assertEquals("A recorded past download is not a warning",
+            SyncDownloadTone.Neutral, syncDownloadStatus(null, true, false, true).tone)
         assertEquals("Not downloaded", syncDownloadStatus(null, false, false, true).label)
     }
 }

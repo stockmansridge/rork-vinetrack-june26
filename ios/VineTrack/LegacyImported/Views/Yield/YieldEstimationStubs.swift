@@ -174,11 +174,10 @@ struct QuadrantCountFields: View {
     @Binding var countText: String
     @Binding var lengthText: String
     let vineSpacingCm: Double?
-    let isSystemAdmin: Bool
     private var measurement: QuadrantCountMeasurement? {
         guard let count = Double(countText.replacingOccurrences(of: ",", with: ".")),
               let length = Double(lengthText.replacingOccurrences(of: ",", with: ".")) else { return nil }
-        return .make(rawBunchCount: count, sectionLengthCm: length, vineSpacingCm: vineSpacingCm, isSystemAdmin: isSystemAdmin)
+        return .make(rawBunchCount: count, sectionLengthCm: length, vineSpacingCm: vineSpacingCm)
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -212,7 +211,6 @@ struct QuadrantCountEntrySheet: View {
     let site: SampleSite
     let defaultLengthCm: Double
     let vineSpacingCm: Double?
-    let isSystemAdmin: Bool
     let onSave: (QuadrantCountMeasurement, String) -> Bool
     @Environment(\.dismiss) private var dismiss
     @State private var countText = ""
@@ -223,7 +221,7 @@ struct QuadrantCountEntrySheet: View {
         guard let count = Double(countText.replacingOccurrences(of: ",", with: ".")),
               let length = Double(lengthText.replacingOccurrences(of: ",", with: ".")) else { return nil }
         return .make(rawBunchCount: count, sectionLengthCm: length,
-            vineSpacingCm: site.bunchCountEntry?.quadrant?.vineSpacingCm ?? vineSpacingCm, isSystemAdmin: isSystemAdmin)
+            vineSpacingCm: site.bunchCountEntry?.quadrant?.vineSpacingCm ?? vineSpacingCm)
     }
     var body: some View {
         NavigationStack {
@@ -234,7 +232,7 @@ struct QuadrantCountEntrySheet: View {
                 }
                 Section("Quadrant Count") {
                     QuadrantCountFields(countText: $countText, lengthText: $lengthText,
-                        vineSpacingCm: site.bunchCountEntry?.quadrant?.vineSpacingCm ?? vineSpacingCm, isSystemAdmin: isSystemAdmin)
+                        vineSpacingCm: site.bunchCountEntry?.quadrant?.vineSpacingCm ?? vineSpacingCm)
                     TextField("Recorded by", text: $nameText)
                 }
             }

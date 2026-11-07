@@ -204,6 +204,21 @@ private struct PermanentItemTypeCreateParams: Encodable {
     let p_color_hex: String
 }
 
+/// Postgres returns float8 with 15 significant digits (extra_float_digits = 0),
+/// so a GPS value such as -33.29641018308584 reads back as -33.2964101830858.
+/// Exact equality made every successful save look unverified. 1e-9 degrees is
+/// about 0.1 mm, far below GPS precision but still catches a real mismatch.
+enum PermanentItemPilotCoordinate {
+    static let tolerance = 1e-9
+    static func same(_ a: Double?, _ b: Double?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case let (x?, y?): return abs(x - y) <= tolerance
+        default: return false
+        }
+    }
+}
+
 private struct PermanentItemPilotRepository {
     private let client = SupabaseClientProvider.shared.client
 
@@ -280,12 +295,18 @@ private struct PermanentItemPilotRepository {
               (op.p_action == "archive") == (row.archivedAt != nil),
               op.p_action == "archive" ||
               (row.name == op.p_name && row.itemType == op.p_item_type &&
-               row.latitude == op.p_latitude && row.longitude == op.p_longitude &&
+               PermanentItemPilotCoordinate.same(row.latitude, op.p_latitude) &&
+               PermanentItemPilotCoordinate.same(row.longitude, op.p_longitude) &&
                row.paddockId == op.p_paddock_id && row.notes == op.p_notes &&
                row.photoPath == op.p_photo_path) else {
             throw PermanentItemsPilotError.receipt
         }
         return row
+    }
+
+    /// Private photo download; storage RLS allows active vineyard members only.
+    func downloadPhoto(path: String) async throws -> Data {
+        try await client.storage.from("permanent-item-photos").download(path: path)
     }
 
     func uploadPhoto(_ data: Data, vineyardId: UUID, itemId: UUID) async throws -> String {
@@ -336,7 +357,7 @@ struct PermanentItemsPilotShortcut: View {
                         BrightToolIcon(symbol: "mappin.circle.fill",
                                        colors: [.indigo, .purple], size: 36)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Permanent Item").font(.subheadline.weight(.semibold))
+                            Text("Permanent Item Pins").font(.subheadline.weight(.semibold))
                             Text(subtitle)
                                 .font(.caption)
                                 .foregroundStyle(.white.opacity(0.85))
@@ -389,12 +410,16 @@ struct PermanentItemsAdminPilotView: View {
     @State private var rows: [PermanentItemPilotRow] = []
     @State private var customTypes: [PermanentItemPilotType] = []
     @State private var search = ""
-    @State private var showEditor = false
     @State private var editing: PermanentItemPilotRow?
+    /// The sheet is driven by the item itself, so Edit always opens that item
+    /// (a separate Bool flag let SwiftUI present the editor with a stale nil = "New").
+    @State private var editorTarget: PermanentItemEditorTarget?
     @State private var pending: PermanentItemPilotOperation?
     @State private var busy = false
     @State private var message: String?
-    @State private var archiveTarget: PermanentItemPilotRow?
+    @State private var typeFilter: String?
+    @State private var directionsItem: PermanentItemPilotRow?
+    @State private var photoItem: PermanentItemPilotRow?
     @State private var deleteTarget: PermanentItemPilotRow?
     @State private var pendingDelete: PermanentItemHardDeleteIntent?
     @State private var camera: MapCameraPosition = .automatic
@@ -421,11 +446,58 @@ struct PermanentItemsAdminPilotView: View {
     private var pendingKey: String {
         "permanent-item-op-v1|\(account?.uuidString ?? "none")|\(vineyard?.uuidString ?? "none")"
     }
+    private var activeRows: [PermanentItemPilotRow] { rows.filter { $0.archivedAt == nil } }
+    private var typesPresent: [String] {
+        Array(Set(activeRows.map(\.itemType)))
+            .sorted { PermanentItemsPilotPolicy.label($0, custom: customTypes)
+                < PermanentItemsPilotPolicy.label($1, custom: customTypes) }
+    }
+    /// A filter whose type no longer has any items falls back to All.
+    private var activeFilter: String? {
+        guard let typeFilter, typesPresent.contains(typeFilter) else { return nil }
+        return typeFilter
+    }
     private var visible: [PermanentItemPilotRow] {
-        rows.filter { (canHardDelete || $0.archivedAt == nil) &&
+        activeRows.filter { (activeFilter == nil || $0.itemType == activeFilter) &&
             (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) ||
              PermanentItemsPilotPolicy.label($0.itemType, custom: customTypes).localizedCaseInsensitiveContains(search)) }
-            .sorted { $0.name < $1.name }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+    private var actionsDisabled: Bool { busy || pending != nil || pendingDelete != nil }
+
+    @ViewBuilder
+    private var typeFilterBar: some View {
+        if typesPresent.count > 1 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    filterChip("All", color: nil, selected: activeFilter == nil) { typeFilter = nil }
+                    ForEach(typesPresent, id: \.self) { key in
+                        filterChip(PermanentItemsPilotPolicy.label(key, custom: customTypes),
+                                   color: PermanentItemsPilotPolicy.color(key, custom: customTypes),
+                                   selected: activeFilter == key) {
+                            typeFilter = activeFilter == key ? nil : key
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func filterChip(_ title: String, color: Color?, selected: Bool,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let color { Circle().fill(color).frame(width: 10, height: 10) }
+                Text(title).font(.subheadline.weight(selected ? .semibold : .regular))
+            }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .foregroundStyle(selected ? Color.blue : Color.primary)
+            .background(selected ? Color.blue.opacity(0.15) : Color(uiColor: .secondarySystemGroupedBackground),
+                        in: .capsule)
+            .overlay(Capsule().stroke(selected ? Color.blue.opacity(0.6) : Color(uiColor: .separator),
+                                      lineWidth: 0.6))
+        }
+        .buttonStyle(.plain)
     }
 
     var body: some View {
@@ -460,12 +532,12 @@ struct PermanentItemsAdminPilotView: View {
                         }
                         if let pendingDelete {
                             VStack(alignment: .leading, spacing: 8) {
-                                Label("Permanent delete pending confirmation or photo cleanup",
+                                Label("A delete is still pending",
                                       systemImage: "exclamationmark.triangle")
                                     .font(.footnote.bold())
                                 Text("Item \(pendingDelete.p_item_id.uuidString.prefix(8)); no second delete will be started.")
                                     .font(.caption)
-                                Button("Retry same permanent delete") {
+                                Button("Retry delete") {
                                     Task { await retryHardDelete() }
                                 }.disabled(!canHardDelete || busy)
                             }
@@ -477,7 +549,7 @@ struct PermanentItemsAdminPilotView: View {
                         if canManage {
                             Button {
                                 editing = nil
-                                showEditor = true
+                                editorTarget = PermanentItemEditorTarget(item: editing)
                             } label: {
                                 Label("New Permanent Item", systemImage: "mappin.and.ellipse")
                                     .frame(maxWidth: .infinity)
@@ -485,6 +557,7 @@ struct PermanentItemsAdminPilotView: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(busy || pending != nil || pendingDelete != nil)
                         }
+                        typeFilterBar
                         HStack(spacing: 9) {
                             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                             TextField("Search permanent items", text: $search)
@@ -513,13 +586,13 @@ struct PermanentItemsAdminPilotView: View {
                                     .stroke(.yellow.opacity(0.9), lineWidth: 2)
                                 }
                             }
-                            // All fixtures remain visible regardless of text search.
-                            ForEach(rows.filter { $0.archivedAt == nil }) { item in
+                            // The map shows the same filtered items as the list.
+                            ForEach(visible) { item in
                                 Annotation(item.name, coordinate: item.coordinate) {
                                     Button {
                                         if canManage {
                                             editing = item
-                                            showEditor = true
+                                            editorTarget = PermanentItemEditorTarget(item: editing)
                                         } else if canHardDelete {
                                             deleteTarget = item
                                         }
@@ -538,44 +611,32 @@ struct PermanentItemsAdminPilotView: View {
                         .frame(height: 290)
                         .clipShape(.rect(cornerRadius: 12))
                         ForEach(visible) { item in
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text(item.name).font(.headline)
-                                    if item.archivedAt != nil {
-                                        Text("Archived").font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
+                            PermanentItemListRow(
+                                item: item,
+                                typeLabel: PermanentItemsPilotPolicy.label(item.itemType, custom: customTypes),
+                                color: PermanentItemsPilotPolicy.color(item.itemType, custom: customTypes),
+                                blockName: store.paddocks.first { $0.id == item.paddockId }?.name,
+                                canEdit: canManage,
+                                canDelete: canHardDelete,
+                                onViewImage: item.photoPath == nil ? nil : { photoItem = item },
+                                onOpen: {
+                                    guard !actionsDisabled else { return }
+                                    if canManage { editing = item; editorTarget = PermanentItemEditorTarget(item: editing) }
+                                },
+                                onDirections: { directionsItem = item },
+                                onEdit: {
+                                    guard !actionsDisabled else { return }
+                                    editing = item; editorTarget = PermanentItemEditorTarget(item: editing)
+                                },
+                                onDelete: {
+                                    guard !actionsDisabled else { return }
+                                    deleteTarget = item
                                 }
-                                Text("\(PermanentItemsPilotPolicy.label(item.itemType, custom: customTypes)) · revision \(item.serverRevision)")
-                                    .foregroundStyle(PermanentItemsPilotPolicy.color(item.itemType, custom: customTypes))
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text(String(format: "%.6f, %.6f", item.latitude, item.longitude))
-                                    .font(.caption.monospaced())
-                                HStack {
-                                    Button("View on Map") {
-                                        camera = .region(MKCoordinateRegion(
-                                            center: item.coordinate,
-                                            span: MKCoordinateSpan(latitudeDelta: 0.002, longitudeDelta: 0.002)))
-                                    }
-                                    if canManage && item.archivedAt == nil {
-                                        Button("Edit / Move") {
-                                            editing = item; showEditor = true
-                                        }.disabled(busy || pending != nil || pendingDelete != nil)
-                                        Button("Archive") {
-                                            archiveTarget = item
-                                        }.disabled(busy || pending != nil || pendingDelete != nil)
-                                    }
-                                    if canHardDelete {
-                                        Button("Hard Delete", role: .destructive) {
-                                            deleteTarget = item
-                                        }.disabled(busy || pending != nil || pendingDelete != nil)
-                                    }
-                                }.buttonStyle(.bordered)
-                            }.frame(maxWidth: .infinity, alignment: .leading)
-                                .padding().background(.regularMaterial, in: .rect(cornerRadius: 12))
+                            )
                         }
-                        if rows.isEmpty && !busy {
-                            Text("No Permanent Items yet.").foregroundStyle(.secondary)
+                        if !busy && visible.isEmpty {
+                            Text(activeRows.isEmpty ? "No Permanent Items yet." : "No Permanent Items match this filter.")
+                                .foregroundStyle(.secondary)
                         }
                     }.padding()
                 }
@@ -597,7 +658,7 @@ struct PermanentItemsAdminPilotView: View {
         .task(id: scope) {
             rows = []; customTypes = []; permissions = nil
             permissionCheckComplete = false; message = nil
-            pending = nil; pendingDelete = nil; editing = nil; showEditor = false
+            pending = nil; pendingDelete = nil; editing = nil; editorTarget = nil
             deleteTarget = nil
             await reloadPermissions()
         }
@@ -605,49 +666,46 @@ struct PermanentItemsAdminPilotView: View {
             rows = []; customTypes = []; permissions = nil
             permissionCheckComplete = false; message = nil
             pending = nil; pendingDelete = nil
-            editing = nil; showEditor = false; deleteTarget = nil
+            editing = nil; editorTarget = nil; deleteTarget = nil
         }
-        .sheet(isPresented: $showEditor) {
+        .sheet(item: $editorTarget) { target in
             if let vineyard {
                 NavigationStack {
                     PermanentItemPilotEditor(
-                        existing: editing, paddocks: store.paddocks, customTypes: customTypes,
+                        existing: target.item, paddocks: store.paddocks, customTypes: customTypes,
                         onCreateType: { name, hex in try await createCustomType(name: name, hex: hex) },
                         onSave: { draft, image in try await save(draft, image: image) }
                     )
-                }.id("\(scope)|\(editing?.id.uuidString ?? "new")")
+                }.id("\(scope)|\(target.id)")
             }
         }
         .confirmationDialog(
-            deleteTarget.map { "Permanently delete \($0.name)?" } ?? "Hard Delete Permanent Item?",
+            deleteTarget.map { "Delete \($0.name)?" } ?? "Delete Permanent Item?",
             isPresented: Binding(
                 get: { deleteTarget != nil },
                 set: { if !$0 { deleteTarget = nil } }
             ),
             titleVisibility: .visible
         ) {
-            Button("Delete Permanently", role: .destructive) {
+            Button("Delete", role: .destructive) {
                 if let target = deleteTarget { Task { await hardDelete(target) } }
                 deleteTarget = nil
             }
             Button("Cancel", role: .cancel) { deleteTarget = nil }
         } message: {
-            Text("This cannot be undone. The fixture, history entries and all attached photos will be permanently removed from every platform.")
+            Text("This cannot be undone. The item and its photos will be removed from iOS, Android and Portal.")
         }
-        .confirmationDialog("Archive this Permanent Item?",
-                            isPresented: Binding(
-                                get: { archiveTarget != nil },
-                                set: { if !$0 { archiveTarget = nil } }
-                            ), titleVisibility: .visible) {
-            Button("Archive", role: .destructive) {
-                if let target = archiveTarget {
-                    Task { await archive(target) }
-                }
-                archiveTarget = nil
+        .fullScreenCover(item: $photoItem) { item in
+            if let path = item.photoPath {
+                PermanentItemPhotoLoader(path: path, repository: repository)
             }
-            Button("Cancel", role: .cancel) { archiveTarget = nil }
-        } message: {
-            Text("The fixture will disappear from the active map. Its history will remain.")
+        }
+        .sheet(item: $directionsItem) { item in
+            PermanentItemDirectionsSheet(
+                title: item.name,
+                coordinate: item.coordinate,
+                color: PermanentItemsPilotPolicy.color(item.itemType, custom: customTypes)
+            )
         }
     }
 
@@ -722,7 +780,7 @@ struct PermanentItemsAdminPilotView: View {
         pending = nil
         rows.removeAll { $0.id == result.id }
         rows.append(result)
-        message = "Synced · revision \(result.serverRevision)"
+        message = "Saved"
         return result
     }
 
@@ -758,7 +816,7 @@ struct PermanentItemsAdminPilotView: View {
             saved = try await applyDurably(photoOp)
         }
         editing = saved
-        showEditor = false
+        editorTarget = nil
     }
 
     private func createCustomType(name: String, hex: String) async throws -> PermanentItemPilotType {
@@ -1188,5 +1246,190 @@ private struct PermanentItemCameraPicker: UIViewControllerRepresentable {
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             parent.dismiss()
         }
+    }
+}
+
+/// Pins-list style row: header bar in the item's pin colour and compact actions.
+private struct PermanentItemListRow: View {
+    let item: PermanentItemPilotRow
+    let typeLabel: String
+    let color: Color
+    let blockName: String?
+    let canEdit: Bool
+    let canDelete: Bool
+    /// Non-nil only when the item has a photo.
+    let onViewImage: (() -> Void)?
+    let onOpen: () -> Void
+    let onDirections: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(action: onOpen) {
+                HStack(spacing: 8) {
+                    Image(systemName: "mappin.circle.fill").foregroundStyle(.white)
+                    Text(item.name).font(.headline).foregroundStyle(.white).lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold()).foregroundStyle(.white.opacity(0.8))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(color.gradient)
+                .clipShape(.rect(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(typeLabel + (blockName.map { " · \($0)" } ?? ""))
+                    .font(.subheadline.weight(.semibold))
+                if let notes = item.notes, !notes.isEmpty {
+                    Text(notes).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+
+            HStack(spacing: 0) {
+                if let onViewImage {
+                    ActionButton(icon: "photo", label: "View Image", color: .purple, action: onViewImage)
+                    Spacer()
+                }
+                ActionButton(icon: "arrow.triangle.turn.up.right.diamond", label: "Directions",
+                             color: VineyardTheme.leafGreen, action: onDirections)
+                if canEdit {
+                    Spacer()
+                    ActionButton(icon: "pencil", label: "Edit", color: .blue, action: onEdit)
+                }
+                if canDelete {
+                    Spacer()
+                    ActionButton(icon: "trash", label: "Delete", color: .red, action: onDelete)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(12)
+        .background(.regularMaterial, in: .rect(cornerRadius: 12))
+    }
+}
+
+/// Direct-line directions to a Permanent Item (same as the Pins directions sheet).
+private struct PermanentItemDirectionsSheet: View {
+    let title: String
+    let coordinate: CLLocationCoordinate2D
+    let color: Color
+    @Environment(\.dismiss) private var dismiss
+    @Environment(LocationService.self) private var locationService
+    @Environment(MigratedDataStore.self) private var store
+    @State private var position: MapCameraPosition = .automatic
+
+    private var userCoordinate: CLLocationCoordinate2D? { locationService.location?.coordinate }
+
+    private var distanceText: String {
+        guard let userLocation = locationService.location else { return "—" }
+        let target = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        return "\(store.settings.regionFormatter.formatShortDistance(metres: userLocation.distance(from: target))) away"
+    }
+
+    private var bearing: Double {
+        guard let user = userCoordinate else { return 0 }
+        let lat1 = user.latitude * .pi / 180
+        let lat2 = coordinate.latitude * .pi / 180
+        let dLon = (coordinate.longitude - user.longitude) * .pi / 180
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        return atan2(y, x) * 180 / .pi
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Map(position: $position) {
+                    Annotation(title, coordinate: coordinate) {
+                        ZStack {
+                            Circle().fill(color.gradient).frame(width: 36, height: 36)
+                            Image(systemName: "mappin").font(.caption.bold()).foregroundStyle(.white)
+                        }
+                    }
+                    if let user = userCoordinate {
+                        MapPolyline(coordinates: [user, coordinate])
+                            .stroke(.blue, style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
+                    }
+                    UserAnnotation()
+                }
+                .mapStyle(.hybrid)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(.headline)
+                        Text(distanceText).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "location.north.line")
+                        .font(.title2)
+                        .foregroundStyle(VineyardTheme.info)
+                        .rotationEffect(.degrees(bearing))
+                }
+                .padding()
+                .background(Color(.secondarySystemGroupedBackground))
+            }
+            .navigationTitle("Directions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+            }
+            .onAppear {
+                locationService.requestPermission()
+                locationService.startUpdating()
+            }
+        }
+    }
+}
+
+/// Loads a private Permanent Item photo, then shows it full screen (Pins viewer).
+private struct PermanentItemPhotoLoader: View {
+    let path: String
+    let repository: PermanentItemPilotRepository
+    @Environment(\.dismiss) private var dismiss
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                PhotoViewerSheet(image: image)
+            } else {
+                NavigationStack {
+                    ZStack {
+                        Color.black.ignoresSafeArea()
+                        if failed {
+                            Text("Could not load the photo. Check your connection and try again.")
+                                .foregroundStyle(.white).multilineTextAlignment(.center).padding()
+                        } else {
+                            ProgressView().tint(.white)
+                        }
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+                    }
+                }
+            }
+        }
+        .task(id: path) {
+            do {
+                let data = try await repository.downloadPhoto(path: path)
+                if let decoded = UIImage(data: data) { image = decoded } else { failed = true }
+            } catch {
+                failed = true
+            }
+        }
+    }
+}
+
+private struct PermanentItemEditorTarget: Identifiable {
+    let id: String
+    let item: PermanentItemPilotRow?
+    init(item: PermanentItemPilotRow?) {
+        self.item = item
+        id = item?.id.uuidString ?? "new-\(UUID().uuidString)"
     }
 }

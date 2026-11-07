@@ -43,6 +43,7 @@ struct YieldPermanentSamplingLocationsView: View {
         NavigationStack {
             Form {
                 blockPickerSection
+                draftStartSection
                 locationMapSection
                 permanentSamplingSection
                 statusSections
@@ -55,7 +56,8 @@ struct YieldPermanentSamplingLocationsView: View {
             }
             .overlay { if busy { ProgressView("Checking server…").padding().background(.regularMaterial, in: .rect(cornerRadius: 14)) } }
             .task {
-                if selectedBlockId == nil { selectedBlockId = paddocks.first?.id }
+                // No default block: the map shows every block until one is chosen.
+                zoomToBlock()
                 // Request permission on this map so the native blue location
                 // annotation can appear without starting a Trip.
                 if locationService.authorizationStatus == .notDetermined {
@@ -99,6 +101,7 @@ struct YieldPermanentSamplingLocationsView: View {
     private var blockPickerSection: some View {
                 Section {
                     Picker("Block", selection: $selectedBlockId) {
+                        Text("Select a block").tag(nil as UUID?)
                         ForEach(paddocks) { block in
                             Text(block.name).tag(block.id as UUID?)
                         }
@@ -110,13 +113,16 @@ struct YieldPermanentSamplingLocationsView: View {
 
     private var locationMapSection: some View {
                 Section("Location map") {
-                    if let block = selectedBlock {
+                    if !mappedPaddocks.isEmpty {
                         MapReader { proxy in
                             Map(position: $mapPosition) {
                                 UserAnnotation()
-                                MapPolygon(coordinates: block.polygonPoints.map(\.coordinate))
-                                    .foregroundStyle(Color.purple.opacity(0.16))
-                                    .stroke(Color.purple, lineWidth: 2)
+                                ForEach(mappedPaddocks) { block in
+                                    let isSelected = block.id == selectedBlockId
+                                    MapPolygon(coordinates: block.polygonPoints.map(\.coordinate))
+                                        .foregroundStyle(isSelected ? Color.purple.opacity(0.16) : Color.yellow.opacity(0.08))
+                                        .stroke(isSelected ? Color.purple : Color.yellow, lineWidth: isSelected ? 3 : 1.5)
+                                }
                                 ForEach(displaySites) { site in
                                     Annotation(site.name, coordinate: CLLocationCoordinate2D(
                                         latitude: site.latitude, longitude: site.longitude
@@ -140,20 +146,66 @@ struct YieldPermanentSamplingLocationsView: View {
                                 MapCompass()
                             }
                             .onTapGesture(coordinateSpace: .local) { point in
-                                guard draft != nil, !busy,
-                                      let coordinate = proxy.convert(point, from: .local) else { return }
-                                openNewSite(at: coordinate)
+                                guard !busy, let coordinate = proxy.convert(point, from: .local) else { return }
+                                handleMapTap(at: coordinate)
                             }
                         }
                         .frame(height: 320)
                         .clipShape(.rect(cornerRadius: 12))
-                        Text(draft != nil ? "Tap inside the purple block to add a site, or tap a draft pin to edit it." :
-                             "Confirmed sites are locked. Start a new draft revision to add or move locations.")
-                            .font(.caption).foregroundStyle(.secondary)
+                        Text(mapHint).font(.caption).foregroundStyle(.secondary)
                     } else {
-                        Text("Choose a mapped block.").foregroundStyle(.secondary)
+                        Text("No mapped blocks yet.").foregroundStyle(.secondary)
                     }
                 }
+    }
+
+    private var mappedPaddocks: [Paddock] { paddocks.filter { $0.polygonPoints.count >= 3 } }
+
+    private var draftButtonTitle: String {
+        confirmed == nil ? "Create Draft Locations" : "Revise Confirmed Locations"
+    }
+
+    private var mapHint: String {
+        if selectedBlock == nil { return "Select a block above (or tap one on the map) to manage its sampling sites." }
+        if draft != nil { return "Tap inside the purple block to add a site, or tap a draft pin to edit it." }
+        if confirmed != nil { return "Confirmed sites are locked. Press Revise Confirmed Locations above to make changes." }
+        return "Press Create Draft Locations above, then tap inside the block."
+    }
+
+    /// Step 1 sits at the top so it is obvious a draft is needed before pins.
+    @ViewBuilder
+    private var draftStartSection: some View {
+        if selectedBlock != nil, draft == nil, !busy {
+            Section {
+                Button {
+                    Task { await beginDraft() }
+                } label: {
+                    Label(draftButtonTitle, systemImage: "plus.circle.fill")
+                        .font(.headline)
+                }
+                .disabled(accessControl?.canEditRecords != true)
+            } footer: {
+                Text("Create a draft first, then tap inside the block on the map to drop sampling pins.")
+            }
+        }
+    }
+
+    private func handleMapTap(at coordinate: CLLocationCoordinate2D) {
+        guard selectedBlock != nil else {
+            if let hit = mappedPaddocks.first(where: {
+                YieldSamplingSiteGeometry.contains(coordinate, polygon: $0.polygonPoints)
+            }) {
+                selectedBlockId = hit.id
+            } else {
+                statusText = "Select a block from the picker first."
+            }
+            return
+        }
+        guard draft != nil else {
+            statusText = "Press \(draftButtonTitle) at the top first."
+            return
+        }
+        openNewSite(at: coordinate)
     }
 
     private var permanentSamplingSection: some View {
@@ -168,15 +220,7 @@ struct YieldPermanentSamplingLocationsView: View {
                         Label("Draft version \(draft.version) · \(draftSites.count) sites — not shared as confirmed", systemImage: "pencil.circle")
                             .foregroundStyle(.purple)
                     }
-                    if draft == nil {
-                        Button {
-                            Task { await beginDraft() }
-                        } label: {
-                            Label(confirmed == nil ? "Create Draft Locations" : "Revise Confirmed Locations",
-                                  systemImage: "plus.circle")
-                        }
-                        .disabled(busy || selectedBlock == nil || accessControl?.canEditRecords != true)
-                    } else {
+                    if draft != nil {
                         Button {
                             Task { await captureFieldLocation() }
                         } label: {
@@ -257,14 +301,16 @@ struct YieldPermanentSamplingLocationsView: View {
                         Text(String(format: "Lat %.7f · Long %.7f", c.latitude, c.longitude))
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    TextField("Site name", text: $nameText)
+                    TextField(editingSite?.name ?? "Sample \((draftSites.map(\.siteNumber).max() ?? 0) + 1)",
+                              text: $nameText)
+                    Text("Site name is optional").font(.caption2).foregroundStyle(.secondary)
                     TextField("Row (optional)", text: $rowText)
                     TextField("Panel (optional)", text: $panelText)
                     TextField("Notes (optional)", text: $notesText, axis: .vertical)
                 }
                 Section {
                     Button("Save Site") { Task { await saveEditor() } }
-                        .disabled(busy || nameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(busy)
                 }
             }
             .navigationTitle(editingSite == nil ? "Add Yield Site" : "Edit Draft Site")
@@ -333,10 +379,9 @@ struct YieldPermanentSamplingLocationsView: View {
             errorText = "The pin must be inside the selected block boundary."
             return
         }
-        let next = (draftSites.map(\.siteNumber).max() ?? 0) + 1
         editCoordinate = coordinate
         editingSite = nil
-        nameText = "Sample \(next)"
+        nameText = "" // Optional; blank saves as "Sample N".
         rowText = ""
         panelText = ""
         notesText = ""
@@ -356,9 +401,10 @@ struct YieldPermanentSamplingLocationsView: View {
     }
 
     private func zoomToBlock() {
-        guard let block = selectedBlock, !block.polygonPoints.isEmpty else { return }
-        let lat = block.polygonPoints.map(\.latitude)
-        let lon = block.polygonPoints.map(\.longitude)
+        let points = selectedBlock?.polygonPoints ?? mappedPaddocks.flatMap(\.polygonPoints)
+        guard !points.isEmpty else { return }
+        let lat = points.map(\.latitude)
+        let lon = points.map(\.longitude)
         let centre = CLLocationCoordinate2D(latitude: ((lat.min() ?? 0) + (lat.max() ?? 0)) / 2,
                                             longitude: ((lon.min() ?? 0) + (lon.max() ?? 0)) / 2)
         let span = MKCoordinateSpan(latitudeDelta: max(0.0008, ((lat.max() ?? 0) - (lat.min() ?? 0)) * 1.5),
@@ -428,12 +474,14 @@ struct YieldPermanentSamplingLocationsView: View {
             busy = false
             if selectedBlockId != block.id { Task { await reload() } }
         }
+        let siteNumber = editingSite?.siteNumber ?? ((draftSites.map(\.siteNumber).max() ?? 0) + 1)
+        let typedName = nameText.trimmingCharacters(in: .whitespacesAndNewlines)
         let row = YieldSamplingSiteRow(
             id: editingSite?.id ?? UUID(),
             siteSetId: draft.id, vineyardId: vineyardId, paddockId: block.id,
             siteId: editingSite?.siteId ?? UUID(),
-            siteNumber: editingSite?.siteNumber ?? ((draftSites.map(\.siteNumber).max() ?? 0) + 1),
-            name: nameText.trimmingCharacters(in: .whitespacesAndNewlines),
+            siteNumber: siteNumber,
+            name: typedName.isEmpty ? (editingSite?.name ?? "Sample \(siteNumber)") : typedName,
             rowNumber: rowText.isEmpty ? nil : rowText, panelNumber: panelText.isEmpty ? nil : panelText,
             latitude: coordinate.latitude, longitude: coordinate.longitude,
             notes: notesText.isEmpty ? nil : notesText
@@ -449,6 +497,8 @@ struct YieldPermanentSamplingLocationsView: View {
         } catch {
             guard selectedBlockId == block.id else { return }
             errorText = "Site was not confirmed saved: \(error.localizedDescription)"
+            // Re-read so a save that did land is shown rather than duplicated on retry.
+            Task { await reload() }
         }
     }
 

@@ -5,7 +5,14 @@ import SwiftUI
 struct PanelCountEntrySheet: View {
     @Environment(\.dismiss) private var dismiss
     let site: SampleSite
+    /// Block config Intermediate Post Spacing (metres) — the post-to-post panel length.
+    var blockPanelLengthMetres: Double? = nil
     let onSave: (PanelCountMeasurement, String) -> Bool
+
+    private var configuredLength: Double? {
+        guard let value = blockPanelLengthMetres, value.isFinite, value > 0 else { return nil }
+        return value
+    }
 
     @State private var totalBunches = ""
     @State private var plantedPositions = ""
@@ -23,7 +30,10 @@ struct PanelCountEntrySheet: View {
               let missing = Int(missingPositions),
               let nonproductive = Int(nonproductiveVines) else { return nil }
         let optionalLength: Double?
-        if panelLength.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if let configuredLength {
+            // Panel length comes from the block config; never typed when it is set.
+            optionalLength = configuredLength
+        } else if panelLength.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             optionalLength = nil
         } else {
             optionalLength = Double(panelLength.replacingOccurrences(of: ",", with: "."))
@@ -56,13 +66,23 @@ struct PanelCountEntrySheet: View {
                     integerField("Fruiting vines counted", text: $fruitingVines)
                     integerField("Missing positions", text: $missingPositions)
                     integerField("Nonproductive vines", text: $nonproductiveVines)
-                    HStack {
-                        Text("Panel length (metres, optional)")
-                        Spacer()
-                        TextField("e.g. 6.0", text: $panelLength)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(maxWidth: 105)
+                    if let configuredLength {
+                        LabeledContent("Panel length") {
+                            Text(String(format: "%.2f m", configuredLength))
+                        }
+                        Text("From the block's Intermediate Post Spacing.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("This block has no Intermediate Post Spacing set. Add it in the block settings so panel length fills in automatically.")
+                            .font(.caption).foregroundStyle(.orange)
+                        HStack {
+                            Text("Panel length (metres, optional)")
+                            Spacer()
+                            TextField("e.g. 6.0", text: $panelLength)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(maxWidth: 105)
+                        }
                     }
                     TextField("Recorded by", text: $recordedBy)
                         .textInputAutocapitalization(.words)
