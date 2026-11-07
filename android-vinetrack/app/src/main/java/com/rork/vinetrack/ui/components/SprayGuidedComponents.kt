@@ -393,16 +393,23 @@ fun GuidedChip(
         color = if (isSelected) accent else MaterialTheme.colorScheme.surfaceVariant,
         onClick = onClick,
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Medium,
-            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(
-                horizontal = if (compact) 10.dp else 12.dp,
-                vertical = if (compact) 7.dp else 10.dp,
-            ),
-        )
+        // Keep every label at the same left inset and vertically centred,
+        // including two-line options on the compact Target grids.
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(
+                    horizontal = if (compact) 10.dp else 12.dp,
+                    vertical = if (compact) 7.dp else 10.dp,
+                ),
+            )
+        }
     }
 }
 
